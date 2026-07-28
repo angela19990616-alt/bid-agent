@@ -58,6 +58,8 @@ services:
       ]
     expose:
       - "8000"
+    volumes:
+      - document_storage:/app/storage
     healthcheck:
       test:
         [
@@ -86,3 +88,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  document_storage:
