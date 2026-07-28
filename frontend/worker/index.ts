@@ -2,6 +2,8 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
+const BID_AGENT_API_ORIGIN = "http://101.200.154.141";
+
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
@@ -28,6 +30,24 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/")) {
+      const upstream = new URL(url.pathname + url.search, BID_AGENT_API_ORIGIN);
+      const headers = new Headers(request.headers);
+      headers.delete("host");
+      headers.delete("cf-connecting-ip");
+      headers.delete("cf-ray");
+      headers.delete("cf-visitor");
+
+      return fetch(upstream, {
+        method: request.method,
+        headers,
+        body: request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : request.body,
+        redirect: "manual",
+      });
+    }
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];

@@ -38,10 +38,11 @@ test("renders the bid proposal workspace", async () => {
 });
 
 test("keeps the simplified V1 workflow in the client source", async () => {
-  const [page, css, layout] = await Promise.all([
+  const [page, css, layout, worker] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /project.*requirements.*writer.*export/s);
@@ -57,4 +58,6 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.doesNotMatch(page, /setTimeout|演示模式|sampleContent/);
   assert.match(css, /@media \(max-width: 980px\)/);
   assert.match(layout, /标书智能工作台/);
+  assert.match(worker, /url\.pathname\.startsWith\("\/api\/v1\/"\)/);
+  assert.match(worker, /BID_AGENT_API_ORIGIN/);
 });
