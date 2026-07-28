@@ -5,33 +5,25 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from difflib import SequenceMatcher
 from uuid import UUID
 
 from psycopg.rows import dict_row
 
-from app.database.db import connect
-
-
-TRIGGER_WORDS = (
-    "应",
-    "须",
-    "要求",
-    "评分",
-    "分值",
-    "不得",
-    "需要",
-    "提供",
-    "提交",
-    "具备",
-    "包含",
+from app.agents.requirement_agent import (
+    AgentRequirement,
+    RequirementAgent,
+    RequirementAgentError,
 )
-SENTENCE_SPLIT = re.compile(r"(?<=[。；;！？!?])|\n+")
+from app.database.db import connect
 
 
 @dataclass(frozen=True)
 class Candidate:
-    source_id: UUID
-    text: str
+    source_ids: tuple[UUID, ...]
+    title: str
+    normalized_text: str
+    quote: str
     requirement_type: str
     importance: str
     confidence: float
@@ -46,7 +38,14 @@ class RequirementValidationError(Exception):
     pass
 
 
+class RequirementExtractionError(Exception):
+    pass
+
+
 class RequirementService:
+    def __init__(self, requirement_agent: RequirementAgent | None = None):
+        self.requirement_agent = requirement_agent
+
     def extract(
         self,
         project_id: UUID,
@@ -57,37 +56,25 @@ class RequirementService:
             raise RequirementValidationError(
                 "没有找到可用于提取的已解析文件。"
             )
-        candidates: list[Candidate] = []
-        seen: set[str] = set()
-        for source in sources:
-            for sentence in SENTENCE_SPLIT.split(source["content"]):
-                text = " ".join(sentence.split()).strip(" -—\t")
-                if not self._is_candidate(text):
-                    continue
-                text = text[:1000]
-                fingerprint = hashlib.sha256(text.encode()).hexdigest()
-                if fingerprint in seen:
-                    continue
-                seen.add(fingerprint)
-                candidates.append(
-                    Candidate(
-                        source_id=source["id"],
-                        text=text,
-                        requirement_type=self._classify(text),
-                        importance=self._importance(text),
-                        confidence=self._confidence(text),
-                        fingerprint=fingerprint,
-                    )
-                )
-                if len(candidates) >= 200:
-                    break
-            if len(candidates) >= 200:
-                break
+        try:
+            agent_items = (
+                self.requirement_agent or RequirementAgent()
+            ).extract(sources)
+        except RequirementAgentError as exc:
+            raise RequirementExtractionError(
+                "Requirement Agent 未能完成提取，请检查模型配置后重试。"
+            ) from exc
+        candidates = self._deduplicate(agent_items)[:200]
 
         created = 0
         skipped = 0
         with connect() as conn:
             with conn.cursor() as cursor:
+                self._remove_unconfirmed_for_documents(
+                    cursor,
+                    project_id,
+                    document_ids,
+                )
                 for candidate in candidates:
                     cursor.execute(
                         """
@@ -103,9 +90,9 @@ class RequirementService:
                         (
                             project_id,
                             candidate.requirement_type,
-                            candidate.text[:80],
-                            candidate.text,
-                            candidate.text,
+                            candidate.title,
+                            candidate.normalized_text,
+                            candidate.quote,
                             candidate.importance,
                             candidate.confidence,
                             candidate.fingerprint,
@@ -115,15 +102,17 @@ class RequirementService:
                     if row is None:
                         skipped += 1
                         continue
-                    cursor.execute(
-                        """
-                        INSERT INTO requirement_sources (
-                            requirement_id, source_chunk_id
+                    for source_id in candidate.source_ids:
+                        cursor.execute(
+                            """
+                            INSERT INTO requirement_sources (
+                                requirement_id, source_chunk_id
+                            )
+                            VALUES (%s, %s)
+                            ON CONFLICT DO NOTHING
+                            """,
+                            (row[0], source_id),
                         )
-                        VALUES (%s, %s)
-                        """,
-                        (row[0], candidate.source_id),
-                    )
                     created += 1
                 cursor.execute(
                     """
@@ -251,7 +240,13 @@ class RequirementService:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
                     """
-                    SELECT source_chunks.id, source_chunks.content
+                    SELECT
+                        source_chunks.id,
+                        source_chunks.content,
+                        source_chunks.locator_kind,
+                        source_chunks.page_no,
+                        source_chunks.paragraph_start,
+                        source_chunks.paragraph_end
                     FROM source_chunks
                     JOIN documents
                         ON documents.id = source_chunks.document_id
@@ -265,35 +260,121 @@ class RequirementService:
                 return cursor.fetchall()
 
     @staticmethod
-    def _is_candidate(text: str) -> bool:
-        return 8 <= len(text) <= 1000 and any(
-            word in text for word in TRIGGER_WORDS
+    def _deduplicate(items: list[AgentRequirement]) -> list[Candidate]:
+        merged: list[dict] = []
+        for item in items:
+            canonical = RequirementService._canonical(
+                item.normalized_text
+            )
+            duplicate = next(
+                (
+                    current
+                    for current in merged
+                    if RequirementService._is_semantic_duplicate(
+                        canonical,
+                        current["canonical"],
+                        item.title,
+                        current["title"],
+                    )
+                ),
+                None,
+            )
+            if duplicate is None:
+                merged.append(
+                    {
+                        "canonical": canonical,
+                        "source_ids": [item.source_id],
+                        "title": item.title,
+                        "normalized_text": item.normalized_text,
+                        "quote": item.quote,
+                        "requirement_type": item.requirement_type,
+                        "importance": item.importance,
+                        "confidence": item.confidence,
+                    }
+                )
+                continue
+            if item.source_id not in duplicate["source_ids"]:
+                duplicate["source_ids"].append(item.source_id)
+            if item.confidence > duplicate["confidence"]:
+                duplicate.update(
+                    {
+                        "canonical": canonical,
+                        "title": item.title,
+                        "normalized_text": item.normalized_text,
+                        "quote": item.quote,
+                        "requirement_type": item.requirement_type,
+                        "importance": item.importance,
+                        "confidence": item.confidence,
+                    }
+                )
+        return [
+            Candidate(
+                source_ids=tuple(item["source_ids"]),
+                title=item["title"],
+                normalized_text=item["normalized_text"],
+                quote=item["quote"],
+                requirement_type=item["requirement_type"],
+                importance=item["importance"],
+                confidence=item["confidence"],
+                fingerprint=hashlib.sha256(
+                    item["canonical"].encode()
+                ).hexdigest(),
+            )
+            for item in merged
+            if item["canonical"]
+        ]
+
+    @staticmethod
+    def _is_semantic_duplicate(
+        left: str,
+        right: str,
+        left_title: str,
+        right_title: str,
+    ) -> bool:
+        if left == right:
+            return True
+        body_similarity = SequenceMatcher(None, left, right).ratio()
+        title_similarity = SequenceMatcher(
+            None,
+            RequirementService._canonical(left_title),
+            RequirementService._canonical(right_title),
+        ).ratio()
+        return body_similarity >= 0.86 or (
+            title_similarity >= 0.9 and body_similarity >= 0.62
+        ) or (
+            title_similarity >= 0.98 and body_similarity >= 0.5
         )
 
     @staticmethod
-    def _classify(text: str) -> str:
-        if any(word in text for word in ("评分", "得分", "分值", "加分")):
-            return "scoring"
-        if any(word in text for word in ("资格", "资质", "证书", "业绩")):
-            return "qualification"
-        if any(word in text for word in ("交付", "工期", "提交", "验收")):
-            return "delivery"
-        return "technical"
+    def _canonical(value: str) -> str:
+        return re.sub(r"[\W_]+", "", value).lower()
 
     @staticmethod
-    def _importance(text: str) -> str:
-        if any(word in text for word in ("必须", "不得", "否决", "评分", "分值")):
-            return "high"
-        if any(word in text for word in ("应", "须", "要求")):
-            return "medium"
-        return "low"
-
-    @staticmethod
-    def _confidence(text: str) -> float:
-        score = 0.55
-        score += 0.15 if any(word in text for word in ("必须", "须", "不得")) else 0
-        score += 0.1 if any(word in text for word in ("评分", "分值", "要求")) else 0
-        return min(score, 0.9)
+    def _remove_unconfirmed_for_documents(
+        cursor,
+        project_id: UUID,
+        document_ids: list[UUID],
+    ) -> None:
+        cursor.execute(
+            """
+            DELETE FROM requirements
+            WHERE project_id = %s
+              AND status <> 'confirmed'
+              AND EXISTS (
+                  SELECT 1
+                  FROM requirement_sources
+                  JOIN source_chunks
+                    ON source_chunks.id =
+                       requirement_sources.source_chunk_id
+                  JOIN documents
+                    ON documents.id = source_chunks.document_id
+                  WHERE requirement_sources.requirement_id =
+                        requirements.id
+                    AND documents.public_id = ANY(%s)
+              )
+            """,
+            (project_id, document_ids),
+        )
 
     @staticmethod
     def _select_sql() -> str:

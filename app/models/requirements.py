@@ -12,6 +12,8 @@ RequirementType = Literal[
     "scoring",
     "delivery",
     "qualification",
+    "compliance",
+    "commercial",
 ]
 RequirementStatus = Literal["pending", "confirmed", "rejected"]
 Importance = Literal["low", "medium", "high"]

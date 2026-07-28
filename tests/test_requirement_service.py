@@ -1,18 +1,52 @@
+from uuid import uuid4
+
+from app.agents.requirement_agent import AgentRequirement
 from app.services.requirement_service import RequirementService
 
 
-def test_requirement_classification_and_importance():
-    service = RequirementService()
+def item(
+    text: str,
+    *,
+    title: str = "响应文件有效期要求",
+    confidence: float = 0.9,
+):
+    return AgentRequirement(
+        source_id=uuid4(),
+        title=title,
+        normalized_text=text,
+        quote=text,
+        requirement_type="compliance",
+        importance="high",
+        confidence=confidence,
+    )
 
-    assert service._classify("评分标准：实施方案完整得 10 分") == "scoring"
-    assert service._classify("投标人须提供相关资质证书") == "qualification"
-    assert service._classify("成果应在十日内提交并验收") == "delivery"
-    assert service._classify("系统应支持数据备份") == "technical"
-    assert service._importance("投标文件不得包含虚假材料") == "high"
+
+def test_semantic_duplicates_are_merged_with_all_sources():
+    first = item("供应商应在响应文件中载明不少于90天的有效期。")
+    second = item(
+        "响应文件中应载明有效期，且有效期不得少于90天。",
+        confidence=0.95,
+    )
+
+    result = RequirementService._deduplicate([first, second])
+
+    assert len(result) == 1
+    assert set(result[0].source_ids) == {
+        first.source_id,
+        second.source_id,
+    }
+    assert result[0].confidence == 0.95
 
 
-def test_short_noise_is_not_candidate():
-    service = RequirementService()
+def test_distinct_requirements_are_not_merged():
+    result = RequirementService._deduplicate(
+        [
+            item("供应商应在响应文件中载明不少于90天的有效期。"),
+            item(
+                "供应商应提交依法缴纳社会保障资金的证明材料。",
+                title="提交社保缴纳证明",
+            ),
+        ]
+    )
 
-    assert service._is_candidate("须知") is False
-    assert service._is_candidate("本系统应支持完整的数据备份功能。") is True
+    assert len(result) == 2

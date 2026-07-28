@@ -23,7 +23,7 @@ type Source = {
 };
 type Requirement = {
   id: string;
-  type: "technical" | "scoring" | "delivery" | "qualification";
+  type: "technical" | "scoring" | "delivery" | "qualification" | "compliance" | "commercial";
   title: string;
   normalized_text: string;
   quote: string;
@@ -70,6 +70,8 @@ const typeLabels: Record<Requirement["type"], string> = {
   scoring: "评分点",
   delivery: "交付要求",
   qualification: "资格约束",
+  compliance: "响应文件规范",
+  commercial: "报价与商务",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -84,11 +86,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 function sourceLabel(source: Source) {
   if (source.locator.kind === "page") {
-    return `${source.filename} · 第 ${source.locator.page} 页`;
+    return `原文位置：第 ${source.locator.page} 页`;
   }
   const start = source.locator.paragraph_start;
   const end = source.locator.paragraph_end;
-  return `${source.filename} · 第 ${start === end ? start : `${start}-${end}`} 段`;
+  return `原文位置：第 ${start === end ? start : `${start}-${end}`} 段`;
 }
 
 export default function Home() {
@@ -460,13 +462,21 @@ export default function Home() {
                   <article key={item.id} className={`requirement-card ${item.status}`}>
                     <div className="requirement-top">
                       <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
-                      <span className="confidence">{Math.round(item.confidence * 100)}% 置信度</span>
+                      <span className="confidence">AI 判断 {Math.round(item.confidence * 100)}% · 待人工确认</span>
                     </div>
                     <h3>{item.title}</h3>
-                    <p>{item.normalized_text}</p>
-                    <blockquote>{item.quote}</blockquote>
+                    <div className="response-brief">
+                      <span>需要响应什么</span>
+                      <p>{item.normalized_text}</p>
+                    </div>
+                    <div className="evidence-box">
+                      <span>招标原文依据</span>
+                      <blockquote>{item.quote}</blockquote>
+                    </div>
                     <div className="source-row">
-                      {item.sources.map((source) => <span key={source.id}>{sourceLabel(source)}</span>)}
+                      {item.sources.map((source) => (
+                        <span key={source.id} title={source.filename}>{sourceLabel(source)}</span>
+                      ))}
                     </div>
                     <div className="card-actions">
                       <button className="ghost danger" onClick={() => setRequirementStatus(item, "rejected")}>排除</button>

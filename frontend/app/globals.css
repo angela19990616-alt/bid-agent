@@ -117,10 +117,14 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .type-tag.scoring { color: #7c5a1f; background: var(--gold-soft); }
 .type-tag.delivery { color: #3d6682; background: #e7f0f6; }
 .type-tag.qualification { color: #754f72; background: #f1e8f0; }
+.type-tag.compliance { color: #315f68; background: #e3f0f1; }
+.type-tag.commercial { color: #7b5329; background: #f4eadf; }
 .confidence { color: var(--muted); font-size: 9px; }
 .requirement-card h3 { margin: 10px 0 6px; font-size: 15px; }
-.requirement-card > p { margin: 0; line-height: 1.65; }
-.requirement-card blockquote { margin: 12px 0; padding: 10px 12px; border-left: 2px solid #c9d8d0; color: #5d6b64; background: #f7f9f7; font-size: 11px; line-height: 1.65; }
+.response-brief, .evidence-box { margin-top: 12px; }
+.response-brief > span, .evidence-box > span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+.response-brief p { margin: 0; padding: 11px 12px; border-radius: 7px; color: var(--green-900); background: #edf5f0; font-weight: 600; line-height: 1.65; }
+.requirement-card blockquote { margin: 0; padding: 10px 12px; border-left: 2px solid #c9d8d0; color: #5d6b64; background: #f7f9f7; font-size: 11px; line-height: 1.65; }
 .source-row { flex-wrap: wrap; gap: 6px; }
 .source-row span { padding: 4px 7px; border: 1px solid #dce4df; border-radius: 5px; color: #5f6e66; font-size: 9px; background: #fafbf9; }
 .card-actions { justify-content: flex-end; gap: 8px; margin-top: 12px; }

@@ -11,6 +11,7 @@ from app.models.requirements import (
     RequirementUpdate,
 )
 from app.services.requirement_service import (
+    RequirementExtractionError,
     RequirementNotFoundError,
     RequirementService,
     RequirementValidationError,
@@ -48,6 +49,13 @@ def extract_requirements(
             "REQUIREMENT_EXTRACTION_INPUT_INVALID",
             str(exc),
         ) from exc
+    except RequirementExtractionError as exc:
+        raise AppError(
+            502,
+            "REQUIREMENT_AGENT_FAILED",
+            str(exc),
+            {"retryable": True},
+        ) from exc
     return RequirementExtractResponse(
         created_count=created,
         skipped_count=skipped,
@@ -61,7 +69,12 @@ def list_requirements(
         "pending", "confirmed", "rejected"
     ] | None = Query(default=None, alias="status"),
     requirement_type: Literal[
-        "technical", "scoring", "delivery", "qualification"
+        "technical",
+        "scoring",
+        "delivery",
+        "qualification",
+        "compliance",
+        "commercial",
     ] | None = Query(default=None, alias="type"),
     document_id: UUID | None = None,
     service: RequirementService = Depends(get_requirement_service),
