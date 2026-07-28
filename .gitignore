@@ -1,0 +1,37 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+.codex/
+
+# Python
+.venv/
+.venv-*/
+.git-corrupt-backup/
+venv/
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Runtime files and private project materials
+storage/
+uploads/
+exports/
+database/历史案例（投标文件）/
+database/输入（招标文件）/
+
+# Coverage and build artifacts
+.coverage
+htmlcov/
+build/
+dist/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,7 @@
+.git
+.openai
+node_modules
+dist
+.next
+.wrangler
+npm-debug.log*
