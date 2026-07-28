@@ -24,7 +24,7 @@ def test_health_when_dependencies_are_healthy(monkeypatch):
     )
     monkeypatch.setattr(main, "check_redis", lambda: {"status": "healthy"})
 
-    response = client.get("/health")
+    response = client.get("/ready")
 
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
@@ -38,10 +38,17 @@ def test_health_when_a_dependency_is_unhealthy(monkeypatch):
     )
     monkeypatch.setattr(main, "check_redis", lambda: {"status": "healthy"})
 
-    response = client.get("/health")
+    response = client.get("/ready")
 
     assert response.status_code == 200
     assert response.json()["status"] == "unhealthy"
+
+
+def test_health_does_not_require_dependencies():
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "healthy"}
 
 
 def test_upload_text_document(monkeypatch):

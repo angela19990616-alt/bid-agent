@@ -36,6 +36,9 @@ class Settings:
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "1200"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "200"))
     max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20"))
+    database_connect_timeout: int = int(
+        os.getenv("DATABASE_CONNECT_TIMEOUT", "5")
+    )
 
     @property
     def model_api_key(self) -> str:
@@ -50,6 +53,14 @@ class Settings:
             f"user={self.postgres_user} "
             f"password={self.postgres_password}"
         )
+
+    def validate_runtime(self) -> list[str]:
+        errors: list[str] = []
+        if self.app_env == "production" and not self.postgres_password:
+            errors.append("POSTGRES_PASSWORD is required in production")
+        if self.chunk_overlap >= self.chunk_size:
+            errors.append("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
+        return errors
 
 
 settings = Settings()

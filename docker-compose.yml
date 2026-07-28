@@ -50,6 +50,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    command:
+      [
+        "sh",
+        "-c",
+        "python -m app.database.migrate && uvicorn app.main:app --host 0.0.0.0 --port 8000",
+      ]
     expose:
       - "8000"
     healthcheck:

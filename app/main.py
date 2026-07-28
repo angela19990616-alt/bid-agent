@@ -1,9 +1,16 @@
-from fastapi import FastAPI
+from uuid import uuid4
+
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.documents import router as documents_router
+from app.api.projects import router as projects_router
 from app.api.rag import router as rag_router
 from app.config.settings import settings
+from app.core.errors import AppError
 from app.database.db import check_postgres, check_redis
 
 app = FastAPI(
@@ -26,6 +33,49 @@ app.add_middleware(
 )
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
+app.include_router(projects_router, prefix="/api/v1")
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "request_id": request.state.request_id,
+                "details": exc.details,
+            }
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "请求参数不符合要求。",
+                "request_id": request.state.request_id,
+                "details": {"errors": jsonable_encoder(exc.errors())},
+            }
+        },
+    )
 
 
 @app.get("/")
@@ -39,6 +89,11 @@ def root():
 
 @app.get("/health")
 def health():
+    return {"status": "healthy"}
+
+
+@app.get("/ready")
+def ready():
     postgres = check_postgres()
     redis = check_redis()
 
