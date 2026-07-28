@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from uuid import UUID, uuid4
+
+from psycopg.rows import dict_row
+
+from app.config.settings import settings
+from app.database.db import connect
+from app.services.docx_builder import build_proposal_docx
+
+
+class ExportNotFoundError(Exception):
+    pass
+
+
+class ExportValidationError(Exception):
+    pass
+
+
+class ExportService:
+    def create(
+        self,
+        project_id: UUID,
+        section_id: UUID,
+        section_version_id: UUID,
+    ) -> dict:
+        data = self._load_export_input(
+            project_id,
+            section_id,
+            section_version_id,
+        )
+        export_id = uuid4()
+        safe_title = re.sub(
+            r'[\\/:*?"<>|\s]+',
+            "_",
+            data["section_title"],
+        ).strip("_")[:80] or "技术方案"
+        filename = f"{safe_title}_{export_id.hex[:8]}.docx"
+        storage_key = f"{project_id}/{filename}"
+        destination = self.resolve_path(storage_key)
+        temporary = destination.with_suffix(".tmp")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO export_records (
+                        id, project_id, section_id, section_version_id,
+                        format, status, storage_key, filename
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, 'docx', 'running', %s, %s
+                    )
+                    """,
+                    (
+                        export_id,
+                        project_id,
+                        section_id,
+                        section_version_id,
+                        storage_key,
+                        filename,
+                    ),
+                )
+        try:
+            build_proposal_docx(
+                temporary,
+                project_name=data["project_name"],
+                section_title=data["section_title"],
+                content=data["content"],
+                requirements=data["requirements"],
+            )
+            temporary.replace(destination)
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            self._mark_failed(export_id, type(exc).__name__)
+            raise ExportValidationError(
+                "DOCX 导出失败，请稍后重试。"
+            ) from exc
+
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE export_records
+                    SET status = 'succeeded', updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (export_id,),
+                )
+                cursor.execute(
+                    """
+                    UPDATE projects
+                    SET status = 'exported', updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (project_id,),
+                )
+        return self.get(project_id, export_id)
+
+    def get(self, project_id: UUID, export_id: UUID) -> dict:
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        id, project_id, section_id, section_version_id,
+                        format, status, filename, error_code, error_message,
+                        created_at, updated_at
+                    FROM export_records
+                    WHERE project_id = %s AND id = %s
+                    """,
+                    (project_id, export_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            raise ExportNotFoundError(str(export_id))
+        return dict(row)
+
+    def download_info(
+        self,
+        project_id: UUID,
+        export_id: UUID,
+    ) -> tuple[Path, str]:
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT storage_key, filename, status
+                    FROM export_records
+                    WHERE project_id = %s AND id = %s
+                    """,
+                    (project_id, export_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            raise ExportNotFoundError(str(export_id))
+        if row["status"] != "succeeded":
+            raise ExportValidationError("导出文件尚未生成完成。")
+        path = self.resolve_path(row["storage_key"])
+        if not path.is_file():
+            raise ExportValidationError("导出文件不存在，请重新导出。")
+        return path, row["filename"]
+
+    @staticmethod
+    def resolve_path(storage_key: str) -> Path:
+        root = Path(settings.export_root).resolve()
+        destination = (root / storage_key).resolve()
+        if root not in destination.parents:
+            raise ValueError("非法导出路径")
+        return destination
+
+    @staticmethod
+    def _load_export_input(
+        project_id: UUID,
+        section_id: UUID,
+        version_id: UUID,
+    ) -> dict:
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        projects.name AS project_name,
+                        sections.title AS section_title,
+                        sections.status AS section_status,
+                        section_versions.content
+                    FROM sections
+                    JOIN projects ON projects.id = sections.project_id
+                    JOIN section_versions
+                        ON section_versions.section_id = sections.id
+                    WHERE sections.project_id = %s
+                      AND sections.id = %s
+                      AND section_versions.id = %s
+                    """,
+                    (project_id, section_id, version_id),
+                )
+                section = cursor.fetchone()
+                if section is None:
+                    raise ExportValidationError(
+                        "章节或章节版本不存在。"
+                    )
+                if section["section_status"] != "approved":
+                    raise ExportValidationError(
+                        "只有人工确认后的章节可以导出。"
+                    )
+                cursor.execute(
+                    """
+                    SELECT
+                        requirements.normalized_text,
+                        requirements.quote,
+                        documents.filename,
+                        source_chunks.locator_kind,
+                        source_chunks.page_no,
+                        source_chunks.paragraph_start,
+                        source_chunks.paragraph_end
+                    FROM section_requirements
+                    JOIN requirements
+                        ON requirements.id =
+                           section_requirements.requirement_id
+                    JOIN requirement_sources
+                        ON requirement_sources.requirement_id =
+                           requirements.id
+                    JOIN source_chunks
+                        ON source_chunks.id =
+                           requirement_sources.source_chunk_id
+                    JOIN documents
+                        ON documents.id = source_chunks.document_id
+                    WHERE section_requirements.section_id = %s
+                    ORDER BY requirements.id, source_chunks.id
+                    """,
+                    (section_id,),
+                )
+                rows = cursor.fetchall()
+        requirements: list[dict] = []
+        by_text: dict[str, dict] = {}
+        for row in rows:
+            requirement = by_text.get(row["normalized_text"])
+            if requirement is None:
+                requirement = {
+                    "normalized_text": row["normalized_text"],
+                    "quote": row["quote"],
+                    "sources": [],
+                }
+                by_text[row["normalized_text"]] = requirement
+                requirements.append(requirement)
+            requirement["sources"].append(
+                {
+                    "filename": row["filename"],
+                    "locator": {
+                        "kind": row["locator_kind"],
+                        "page": row["page_no"],
+                        "paragraph_start": row["paragraph_start"],
+                        "paragraph_end": row["paragraph_end"],
+                    },
+                }
+            )
+        return {
+            "project_name": section["project_name"],
+            "section_title": section["section_title"],
+            "content": section["content"],
+            "requirements": requirements,
+        }
+
+    @staticmethod
+    def _mark_failed(export_id: UUID, error_code: str) -> None:
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE export_records
+                    SET status = 'failed', error_code = %s,
+                        error_message = 'DOCX 导出失败',
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (error_code, export_id),
+                )

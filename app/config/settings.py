@@ -37,6 +37,7 @@ class Settings:
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "200"))
     max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20"))
     storage_root: str = os.getenv("STORAGE_ROOT", "storage")
+    export_root: str = os.getenv("EXPORT_ROOT", "exports")
     database_connect_timeout: int = int(
         os.getenv("DATABASE_CONNECT_TIMEOUT", "5")
     )

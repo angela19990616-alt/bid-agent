@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.documents import router as documents_router
+from app.api.exports import router as exports_router
 from app.api.projects import router as projects_router
 from app.api.project_documents import router as project_documents_router
 from app.api.rag import router as rag_router
@@ -40,6 +41,7 @@ app.include_router(projects_router, prefix="/api/v1")
 app.include_router(project_documents_router, prefix="/api/v1")
 app.include_router(requirements_router, prefix="/api/v1")
 app.include_router(sections_router, prefix="/api/v1")
+app.include_router(exports_router, prefix="/api/v1")
 
 
 @app.middleware("http")
