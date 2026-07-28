@@ -8,7 +8,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = incomingHeaders.get("x-forwarded-proto") ?? "https";
   const base = host ? `${protocol}://${host}` : "http://localhost:3000";
   const title = "标书智能工作台｜大岳咨询";
-  const description = "上传项目材料、检索历史案例并生成有依据的投标方案草稿。";
+  const description = "上传招标文件、确认可追溯要求、生成技术方案章节并导出 Word。";
 
   return {
     metadataBase: new URL(base),

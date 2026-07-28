@@ -44,13 +44,15 @@ test("keeps the simplified V1 workflow in the client source", async () => {
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /materials.*requirements.*proposal.*export/s);
+  assert.match(page, /project.*requirements.*writer.*export/s);
   assert.match(page, /Requirement/);
   assert.match(page, /Section/);
-  assert.match(page, /原文依据/);
-  assert.match(page, /逐章生成/);
-  assert.match(page, /自动校核/);
-  assert.match(page, /下载技术方案演示稿/);
-  assert.match(css, /@media \(max-width: 900px\)/);
+  assert.match(page, /API_BASE/);
+  assert.match(page, /提取招标要求/);
+  assert.match(page, /原文页码\/段落来源/);
+  assert.match(page, /生成一个章节/);
+  assert.match(page, /生成 Word 文件/);
+  assert.doesNotMatch(page, /setTimeout|演示模式|sampleContent/);
+  assert.match(css, /@media \(max-width: 980px\)/);
   assert.match(layout, /标书智能工作台/);
 });

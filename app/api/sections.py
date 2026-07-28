@@ -51,6 +51,14 @@ def create_section(
         ) from exc
 
 
+@router.get("", response_model=list[SectionResponse])
+def list_sections(
+    project_id: UUID,
+    service: SectionService = Depends(get_section_service),
+):
+    return service.list(project_id)
+
+
 @router.post(
     "/{section_id}/generate",
     response_model=SectionResponse,

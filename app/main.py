@@ -24,11 +24,14 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
+    # Local development ports; production uses the same-origin /api gateway.
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:3100",
+        "http://127.0.0.1:3100",
     ],
     allow_origin_regex=r"https://.*\.openai\.site",
     allow_credentials=False,

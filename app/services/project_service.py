@@ -62,11 +62,15 @@ class ProjectService:
                         projects.created_at,
                         projects.updated_at,
                         COUNT(DISTINCT documents.id) AS document_count,
-                        0::bigint AS requirement_count,
-                        0::bigint AS section_count
+                        COUNT(DISTINCT requirements.id) AS requirement_count,
+                        COUNT(DISTINCT sections.id) AS section_count
                     FROM projects
                     LEFT JOIN documents
                         ON documents.project_id = projects.id
+                    LEFT JOIN requirements
+                        ON requirements.project_id = projects.id
+                    LEFT JOIN sections
+                        ON sections.project_id = projects.id
                     WHERE projects.id = %s
                     GROUP BY projects.id
                     """,

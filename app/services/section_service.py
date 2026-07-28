@@ -92,6 +92,21 @@ class SectionService:
                 )
         return self.get(project_id, section_id)
 
+    def list(self, project_id: UUID) -> list[dict]:
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM sections
+                    WHERE project_id = %s
+                    ORDER BY updated_at DESC
+                    """,
+                    (project_id,),
+                )
+                section_ids = [row[0] for row in cursor.fetchall()]
+        return [self.get(project_id, item) for item in section_ids]
+
     def generate(self, project_id: UUID, section_id: UUID) -> dict:
         section, requirements = self._load_generation_input(
             project_id,
