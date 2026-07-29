@@ -10,6 +10,7 @@ def test_ecs_deploy_script_has_safety_and_recovery_gates():
     assert 'EXPECTED_DIR="${BID_AGENT_DIR:-/opt/bid-agent}"' in content
     assert "git status --porcelain" in content
     assert "git pull --ff-only" in content
+    assert "git switch --track -c" in content
     assert "pg_dump" in content
     assert "test -s" in content
     assert "chmod 600" in content

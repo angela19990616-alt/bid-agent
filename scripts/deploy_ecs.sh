@@ -24,7 +24,11 @@ echo "部署前提交：$previous_commit"
 echo "目标分支：$DEPLOY_BRANCH"
 
 git fetch --prune origin
-git switch "$DEPLOY_BRANCH"
+if git show-ref --verify --quiet "refs/heads/$DEPLOY_BRANCH"; then
+  git switch "$DEPLOY_BRANCH"
+else
+  git switch --track -c "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+fi
 git pull --ff-only origin "$DEPLOY_BRANCH"
 target_commit="$(git rev-parse HEAD)"
 
