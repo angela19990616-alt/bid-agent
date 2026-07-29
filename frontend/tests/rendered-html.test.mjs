@@ -54,6 +54,9 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /查看原文依据/);
   assert.match(page, /生成本章/);
   assert.match(page, /生成整本 Word/);
+  assert.match(page, /执行交付审查/);
+  assert.match(page, /下载可读 Review/);
+  assert.match(page, /recommended_for_delivery/);
   assert.doesNotMatch(page, /createProject|创建项目/);
   assert.doesNotMatch(page, /演示模式|sampleContent/);
   assert.match(page, /workspaces\/\$\{workspaceId\}/);

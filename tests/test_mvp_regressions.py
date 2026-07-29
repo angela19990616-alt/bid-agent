@@ -107,6 +107,10 @@ def test_section_save_locks_only_sections_table(monkeypatch):
             "status": "edited",
         },
     )
+    monkeypatch.setattr(
+        "app.services.section_service.ProvenanceService.persist",
+        lambda *args, **kwargs: None,
+    )
 
     result = SectionService(rule_engine=_FileRuleEngine()).save_content(
         project_id,

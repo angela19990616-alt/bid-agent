@@ -28,6 +28,8 @@ def test_default_rules_are_external_versioned_and_valid():
             "qualification_file"
         ]
     )
+    assert writing.version == 2
+    assert compliance.version == 2
     assert writing.content["policies"]["allow_invented_capability"] is False
     assert (
         writing.content["knowledge_category_policy"]["historical_bid"]
