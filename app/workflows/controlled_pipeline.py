@@ -22,6 +22,10 @@ STAGES = (
     "proposal_planner",
     "chapter_writer",
     "compliance_checker",
+    "proposal_review",
+    "auto_fix",
+    "final_review",
+    "deliverability_gate",
     "export",
 )
 

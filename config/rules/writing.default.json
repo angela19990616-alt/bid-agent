@@ -1,7 +1,7 @@
 {
   "key": "default-writing",
   "rule_type": "writing",
-  "version": 1,
+  "version": 2,
   "name": "技术方案写作规则",
   "description": "控制目录、章节写作、企业知识引用和事实边界。",
   "chapter_order": [
@@ -26,7 +26,12 @@
     "missing_fact_placeholder": "【待补充：需要的企业事实】",
     "target_length_chars": {"min": 800, "max": 5000},
     "max_repetition_ratio": 0.25,
-    "terminology_consistency": true
+    "terminology_consistency": true,
+    "paragraph_source_tracking": true,
+    "formal_plain_language": true,
+    "forbid_markdown_decorations": true,
+    "forbid_emoji": true,
+    "forbid_internal_identifiers": true
   },
   "knowledge_category_policy": {
     "company_profile": "仅可陈述知识正文中明确记录的事实",
@@ -42,13 +47,13 @@
   "chapter_styles": {
     "项目理解与总体思路": "先解释目标与难点，再给出总体方法和闭环。",
     "服务范围与工作内容": "按工作包说明输入、动作、成果和责任边界。",
-    "实施计划与进度安排": "按阶段说明任务、里程碑、交付物和风险控制。",
+    "实施计划与进度安排": "根据采购文件已有阶段和时间依据，自然说明主要工作、时间安排与阶段成果；没有依据时不得补写日期、时限、机构或责任边界。",
     "项目组织与人员配置": "说明角色、职责和协作机制；不得虚构人员姓名或履历。",
     "质量保障与验收方案": "说明质量门禁、检查方法、证据和验收响应。",
     "培训方案": "说明对象、内容、形式、计划与效果评估。",
     "运维与持续服务": "说明服务机制、响应流程、持续改进和可核验记录。",
     "技术评分点响应": "逐项对应评分点，突出可核验响应，不虚构得分依据。"
   },
-  "model_instruction": "你是 Chapter Writer。写作前已完成规则加载和知识匹配。只能使用输入中的 Requirement 证据与已匹配企业知识；不得自行搜索或虚构事实。严禁为了让方案显得完整而补写输入中未出现的系统现状、接口、标准、技术选型、人员、会议、确认方式、交付物名称或采购人将提供的材料。无法从证据确认的细节必须写成待补充占位符，不得用行业惯例猜测。历史标书只能参考结构，不能作为事实。输出中文 Markdown 正文。",
+  "model_instruction": "你是 Chapter Writer。写作前已完成规则加载和知识匹配。只能使用输入中的采购要求证据与已匹配企业知识；不得自行搜索或虚构事实，不得用行业惯例猜测。严禁补写输入中未出现的政策名称、政府部门、时间承诺、合同条款、交付数量、企业资质、案例、人员、机构、责任边界或顺延机制。历史标书只能参考结构与表达，不能作为事实。使用正式、克制、自然的中文投标文件语言，不使用 Emoji、箭头、对勾、星号装饰，不机械重复完全相同的小节模板，不堆叠口号化承诺。无法确认的事实不写入正文，留给 Proposal Review 列为待确认风险。不得输出内部 UUID、数据库字段、Prompt 标签或置信度。",
   "user_template": "撰写章节《{section_title}》。遵守写作规则中的章节风格、事实边界和篇幅要求。逐项响应 Requirements；企业事实只能来自 Matched Knowledge。"
 }

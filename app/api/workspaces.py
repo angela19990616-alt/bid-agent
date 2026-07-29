@@ -32,6 +32,7 @@ from app.services.proposal_plan_service import (
     ProposalPlanError,
     ProposalPlanService,
 )
+from app.services.proposal_review_service import ProposalReviewService
 from app.services.requirement_service import (
     RequirementExtractionError,
     RequirementService,
@@ -261,6 +262,51 @@ def export_full_proposal(workspace_id: UUID):
         return ExportService().create_full(workspace_id)
     except ExportValidationError as exc:
         raise AppError(422, "EXPORT_NOT_ALLOWED", str(exc)) from exc
+
+
+@router.get("/{workspace_id}/review")
+def get_proposal_review(workspace_id: UUID):
+    try:
+        return ProposalReviewService().latest(workspace_id)
+    except ValueError as exc:
+        raise AppError(404, "REVIEW_NOT_FOUND", str(exc)) from exc
+
+
+@router.post("/{workspace_id}/review")
+def run_proposal_review(workspace_id: UUID):
+    try:
+        return ProposalReviewService().prepare_for_export(
+            workspace_id, enforce=False
+        )
+    except ValueError as exc:
+        raise AppError(422, "REVIEW_FAILED", str(exc)) from exc
+
+
+@router.get("/{workspace_id}/review/download")
+def download_proposal_review(
+    workspace_id: UUID,
+    format: Literal["json", "md"] = "md",
+):
+    try:
+        json_path, markdown_path = ProposalReviewService().report_files(
+            workspace_id
+        )
+    except ValueError as exc:
+        raise AppError(404, "REVIEW_NOT_FOUND", str(exc)) from exc
+    path = json_path if format == "json" else markdown_path
+    return FileResponse(
+        path,
+        media_type=(
+            "application/json"
+            if format == "json"
+            else "text/markdown; charset=utf-8"
+        ),
+        filename=(
+            "proposal_review.json"
+            if format == "json"
+            else "Proposal_Review.md"
+        ),
+    )
 
 
 @router.get("/{workspace_id}/exports/{export_id}/download")

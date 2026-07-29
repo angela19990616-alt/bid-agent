@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -11,6 +12,10 @@ from app.database.db import connect
 from app.services.docx_builder import (
     build_full_proposal_docx,
     build_proposal_docx,
+)
+from app.services.proposal_review_service import (
+    ProposalNotDeliverableError,
+    ProposalReviewService,
 )
 from app.workflows.controlled_pipeline import ControlledPipeline
 
@@ -25,9 +30,26 @@ class ExportValidationError(Exception):
 
 class ExportService:
     def create_full(self, project_id: UUID) -> dict:
+        try:
+            ProposalReviewService().prepare_for_export(project_id)
+        except ProposalNotDeliverableError as exc:
+            overall = exc.report["overall"]
+            raise ExportValidationError(
+                "最终审查未通过："
+                f"{overall['blocking_risk_count']} 个阻断项，"
+                f"需求覆盖率 {overall['requirement_coverage_rate']:.0%}，"
+                f"评分点覆盖率 {overall['scoring_coverage_rate']:.0%}。"
+                "请先查看 Proposal Review。"
+            ) from exc
         data = self._load_full_export_input(project_id)
         export_id = uuid4()
-        filename = f"技术方案_{export_id.hex[:8]}.docx"
+        safe_project = re.sub(
+            r'[\\/:*?"<>|\s]+', "_", data["project_name"]
+        ).strip("_")[:80] or "项目"
+        filename = (
+            f"{safe_project}_技术方案_"
+            f"{datetime.now().astimezone():%Y%m%d_%H%M%S}.docx"
+        )
         storage_key = f"{project_id}/{filename}"
         destination = self.resolve_path(storage_key)
         temporary = destination.with_suffix(".tmp")
@@ -99,7 +121,9 @@ class ExportService:
             "_",
             data["section_title"],
         ).strip("_")[:80] or "技术方案"
-        filename = f"{safe_title}_{export_id.hex[:8]}.docx"
+        filename = (
+            f"{safe_title}_{datetime.now().astimezone():%Y%m%d_%H%M%S}.docx"
+        )
         storage_key = f"{project_id}/{filename}"
         destination = self.resolve_path(storage_key)
         temporary = destination.with_suffix(".tmp")
