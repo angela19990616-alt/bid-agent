@@ -56,3 +56,29 @@ def test_generated_section_summary_only_exposes_counts():
     assert summary["blocking"] is True
     assert "content" not in summary
     assert "message" not in summary
+
+
+def test_acceptance_waits_for_async_workspace_before_generation():
+    class FakeClient:
+        timeout = 1
+
+        def __init__(self):
+            self.reads = 0
+
+        def workspace(self, workspace_id):
+            self.reads += 1
+            return {
+                "id": workspace_id,
+                "status": "outline_ready",
+                "outline": [],
+            }
+
+    client = FakeClient()
+    result = MODULE.AcceptanceClient.wait_until_ready(
+        client,
+        {"id": "W1", "status": "extracting"},
+        poll_interval=0,
+    )
+
+    assert result["status"] == "outline_ready"
+    assert client.reads == 1

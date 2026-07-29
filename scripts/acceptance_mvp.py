@@ -8,6 +8,7 @@ import hashlib
 import json
 import mimetypes
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -108,6 +109,38 @@ class AcceptanceClient:
         )
         return self._json(request)
 
+    def workspace(self, workspace_id: str) -> dict:
+        request = urllib.request.Request(
+            f"{self.base_url}/api/v1/workspaces/{workspace_id}",
+            method="GET",
+        )
+        return self._json(request)
+
+    def wait_until_ready(
+        self,
+        workspace: dict,
+        *,
+        poll_interval: float = 2.0,
+    ) -> dict:
+        workspace_id = str(workspace["id"])
+        deadline = time.monotonic() + self.timeout
+        current = workspace
+        while current.get("status") not in {
+            "outline_ready",
+            "draft",
+        }:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"workspace {workspace_id} processing timed out"
+                )
+            time.sleep(poll_interval)
+            current = self.workspace(workspace_id)
+        if current.get("status") != "outline_ready":
+            raise RuntimeError(
+                f"workspace {workspace_id} processing failed"
+            )
+        return current
+
     def _json(self, request: urllib.request.Request) -> dict:
         with urllib.request.urlopen(
             request, timeout=self.timeout
@@ -116,7 +149,7 @@ class AcceptanceClient:
 
 
 def run(path: Path, client: AcceptanceClient) -> dict:
-    workspace = client.upload(path)
+    workspace = client.wait_until_ready(client.upload(path))
     summary = summarize_workspace(workspace)
     generated = []
     for section in workspace.get("outline", []):
