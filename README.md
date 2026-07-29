@@ -116,10 +116,15 @@ GET  /api/v1/workspaces/{workspace_id}/exports/{export_id}/download
 上传接口先完成文件校验和解析，立即返回内部 workspace 及 `extracting` 状态；
 Requirement 提取、知识匹配和推荐目录规划在受控后台任务中继续执行。前端轮询
 `GET /workspaces/{workspace_id}`，状态变为 `outline_ready` 后进入技术要点页面。
-这样真实大文件不会因模型处理耗时而占用一个长连接。当前 MVP 使用进程内后台
-任务；生产环境需要进一步接入持久化任务队列，以支持进程重启后的自动恢复。
+这样真实大文件不会因模型处理耗时而占用一个长连接。长任务写入 PostgreSQL
+`processing_jobs` 持久队列，由独立 `worker` 容器领取执行；Web 容器始终只负责
+短请求。Worker 重启会恢复超时未完成任务，多个 Worker 领取任务时使用数据库锁
+避免重复执行。
 处理失败时 workspace 回到 `draft`，前端可调用 `POST /retry`，复用已保存的有效
 文档、Requirement 指纹去重和工作流快照，从中断后的提取/规划阶段继续执行。
+
+前端 Nginx 固定代理到唯一容器名 `bid-backend`，避免开发机上其他 Compose 项目
+占用通用 `backend` 网络别名后随机命中新旧接口。
 
 ### 等待时间与临时会话边界
 

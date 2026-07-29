@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.api.workspaces import (
     get_workspace_access_service,
+    get_workspace_job_service,
     get_workspace_service,
 )
 from app.main import app
@@ -68,9 +69,26 @@ class FakeAccessService:
         return None
 
 
+class FakeJobService:
+    def __init__(self):
+        self.enqueued = None
+
+    def enqueue(self, workspace_id, document_id, run_id):
+        self.enqueued = (workspace_id, document_id, run_id)
+        return uuid4()
+
+
+job_service = FakeJobService()
+
+
 def setup_function():
+    global job_service
+    job_service = FakeJobService()
     app.dependency_overrides[get_workspace_access_service] = (
         lambda: FakeAccessService()
+    )
+    app.dependency_overrides[get_workspace_job_service] = (
+        lambda: job_service
     )
 
 
@@ -136,7 +154,7 @@ class PreparedWorkspaceService(FakeWorkspaceService):
         self.completed = True
 
 
-def test_upload_schedules_long_running_extraction_after_response():
+def test_upload_queues_long_running_extraction_without_running_it_inline():
     service = PreparedWorkspaceService()
     app.dependency_overrides[get_workspace_service] = lambda: service
     client = TestClient(app)
@@ -148,7 +166,9 @@ def test_upload_schedules_long_running_extraction_after_response():
 
     assert response.status_code == 201
     assert response.json()["status"] == "extracting"
-    assert service.completed is True
+    assert service.completed is False
+    assert job_service.enqueued is not None
+    assert job_service.enqueued[0] == service.id
 
 
 def test_other_session_cannot_read_review_or_download_files():
@@ -198,4 +218,5 @@ def test_failed_workspace_can_resume_saved_document_processing():
     assert response.status_code == 202
     assert response.json()["id"] == str(service.id)
     assert response.json()["status"] == "extracting"
-    assert service.completed is True
+    assert service.completed is False
+    assert job_service.enqueued is not None

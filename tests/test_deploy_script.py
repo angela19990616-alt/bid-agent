@@ -14,7 +14,8 @@ def test_ecs_deploy_script_has_safety_and_recovery_gates():
     assert "pg_dump" in content
     assert "test -s" in content
     assert "chmod 600" in content
-    assert "docker compose build backend frontend" in content
+    assert "docker compose build backend worker frontend" in content
+    assert "docker compose logs --tail=200 worker" in content
     assert "curl --fail" in content
     assert "代码回滚点" in content
     assert "rm -rf" not in content

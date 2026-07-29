@@ -5,7 +5,6 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Request,
@@ -56,6 +55,7 @@ from app.services.workspace_access_service import (
     WorkspaceAccessDeniedError,
     WorkspaceAccessService,
 )
+from app.services.workspace_job_service import WorkspaceJobService
 
 
 router = APIRouter(prefix="/workspaces", tags=["proposal-workspaces"])
@@ -67,6 +67,10 @@ def get_workspace_service() -> WorkspaceService:
 
 def get_workspace_access_service() -> WorkspaceAccessService:
     return WorkspaceAccessService()
+
+
+def get_workspace_job_service() -> WorkspaceJobService:
+    return WorkspaceJobService()
 
 
 def authorize_workspace(
@@ -95,12 +99,12 @@ def authorize_workspace(
 async def create_workspace(
     request: Request,
     response: Response,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     service: WorkspaceService = Depends(get_workspace_service),
     access_service: WorkspaceAccessService = Depends(
         get_workspace_access_service
     ),
+    job_service: WorkspaceJobService = Depends(get_workspace_job_service),
 ):
     filename = file.filename or "upload"
     if not filename.lower().endswith((".pdf", ".docx")):
@@ -120,8 +124,7 @@ async def create_workspace(
                 file.content_type,
                 content,
             )
-            background_tasks.add_task(
-                service.complete_prepared_upload,
+            job_service.enqueue(
                 workspace["id"],
                 document_id,
                 run_id,
@@ -181,14 +184,13 @@ def get_workspace(
 )
 def retry_workspace(
     workspace_id: UUID,
-    background_tasks: BackgroundTasks,
     _access: None = Depends(authorize_workspace),
     service: WorkspaceService = Depends(get_workspace_service),
+    job_service: WorkspaceJobService = Depends(get_workspace_job_service),
 ):
     try:
         workspace, document_id, run_id = service.prepare_retry(workspace_id)
-        background_tasks.add_task(
-            service.complete_prepared_upload,
+        job_service.enqueue(
             workspace_id,
             document_id,
             run_id,

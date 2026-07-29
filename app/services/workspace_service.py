@@ -154,6 +154,7 @@ class WorkspaceService:
         except Exception as exc:
             self._set_status(workspace_id, "draft")
             pipeline.fail(run_id, type(exc).__name__, str(exc))
+            raise
 
     def prepare_retry(self, workspace_id: UUID) -> tuple[dict, UUID, UUID]:
         workspace = ProjectService().get(workspace_id)

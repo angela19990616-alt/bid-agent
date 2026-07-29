@@ -39,7 +39,7 @@ test -s "$backup_file"
 chmod 600 "$backup_file"
 echo "数据库备份完成：$backup_file"
 
-docker compose build backend frontend
+docker compose build backend worker frontend
 docker compose up -d
 
 healthy=0
@@ -55,6 +55,7 @@ if [[ "$healthy" != "1" ]]; then
   echo "错误：部署后健康检查失败。" >&2
   docker compose ps >&2
   docker compose logs --tail=200 backend >&2
+  docker compose logs --tail=200 worker >&2
   echo "代码回滚点：$previous_commit" >&2
   echo "数据库备份：$backup_file" >&2
   exit 4
