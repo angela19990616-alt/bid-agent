@@ -103,6 +103,9 @@ PUT  /api/v1/workspaces/{workspace_id}/outline
 POST /api/v1/workspaces/{workspace_id}/sections/{section_id}/generate
 PUT  /api/v1/workspaces/{workspace_id}/sections/{section_id}/content
 POST /api/v1/workspaces/{workspace_id}/sections/{section_id}/approve
+POST /api/v1/workspaces/{workspace_id}/review
+GET  /api/v1/workspaces/{workspace_id}/review
+GET  /api/v1/workspaces/{workspace_id}/review/download?format=md|json
 POST /api/v1/workspaces/{workspace_id}/exports
 GET  /api/v1/workspaces/{workspace_id}/exports/{export_id}/download
 ```
@@ -125,6 +128,8 @@ Requirement 提取、知识匹配和推荐目录规划在受控后台任务中�
   私有知识资格、推荐目录顺序。
 - `010_rule_knowledge_engine.sql`：规则版本、企业知识、工作流轨迹、知识匹配、
   生成快照和整本方案导出。
+- `012_proposal_review.sql`：段落级来源、历史案例使用记录、双轮 Proposal
+  Review、自动修复版本和导出审查关联。
 
 迁移文件应用后禁止修改，否则校验和保护会拒绝启动；后续变更应新增迁移。
 
@@ -196,3 +201,35 @@ BID_AGENT_BRANCH=codex/feat-frontend-integration \
 - 逐章真实模型生成、人工编辑和阻断校核；
 - 整本 DOCX 可打开、章节顺序正确、来源总表完整；
 - Docker 健康检查、失败重试和隐私边界检查。
+
+## Proposal Review 与交付门禁
+
+正式交付流程为：
+
+```text
+需求确认 → 知识匹配 → 章节生成 → 初次 Proposal Review
+→ Auto Fix → 最终 Proposal Review → Deliverability Gate → DOCX
+```
+
+章节每个非空内容块都会在 `content_provenance` 中记录来源类型、可读来源名称、
+采购文件位置或知识条目、使用方式、核验状态和置信度。历史案例一旦影响正文，
+还会写入 `historical_case_usage`；历史案例默认只能用于结构或语言参考，未经核验
+的企业事实不得进入最终文档。
+
+点击前端“执行交付审查”，或调用 `POST /workspaces/{id}/review`，系统会生成：
+
+- `exports/{workspace}/reviews/proposal_review.json`：机器可读报告；
+- `exports/{workspace}/reviews/Proposal_Review.md`：用户可读报告。
+
+报告分别列出 Requirement Coverage、Scoring Coverage、Knowledge Usage、
+Truth and Privacy Review、Language and AI Style Review 以及每一项交付门禁。
+用户可见报告不展示 Requirement UUID、数据库 ID 或其他内部标识。
+
+Auto Fix 只执行可确定的安全修复：删除内部标识、敏感字段、未经核验的高风险
+企业事实和无依据的政策/机构/时间承诺，清理 Markdown 装饰、Emoji、箭头及
+口号化表达。无法确认的评分缺口或事实不会被补造，而是保留为 Review 风险项。
+
+门禁阈值位于 `config/rules/compliance.default.json` 的
+`deliverability_gate`，不是写死在 Prompt 中。只有最终复检完成且真实性、
+隐私、需求覆盖、评分点覆盖和来源追溯全部达到配置阈值，正式 DOCX 导出才会
+放行；否则 Review 会明确标记“不建议正式交付”。
