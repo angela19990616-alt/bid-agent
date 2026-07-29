@@ -14,6 +14,7 @@ from app.knowledge.engine import (
     KnowledgeMatchRepository,
 )
 from app.rules.engine import RuleDocument, RuleEngine
+from app.services.provenance_service import ProvenanceService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -212,6 +213,12 @@ class SectionService:
             rule_snapshot=compliance_rules.snapshot(),
         )
         findings = self.review(content, compliance_rules)
+        provenance, case_usage = ProvenanceService.build(
+            section_title=section["title"],
+            content=content,
+            requirements=requirements,
+            matches=matches,
+        )
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
@@ -274,6 +281,7 @@ class SectionService:
                     """,
                     (job_id,),
                 )
+        ProvenanceService.persist(version_id, provenance, case_usage)
         result = self.get(project_id, section_id)
         result["job_id"] = job_id
         return result
@@ -300,6 +308,7 @@ class SectionService:
                     """
                     SELECT
                         sections.current_version_id,
+                        sections.title,
                         section_versions.rule_snapshot,
                         section_versions.knowledge_snapshot
                     FROM sections
@@ -316,6 +325,14 @@ class SectionService:
                     raise SectionNotFoundError(str(section_id))
                 if section["current_version_id"] != base_version_id:
                     raise SectionVersionConflictError(str(section_id))
+                provenance, case_usage = ProvenanceService.build(
+                    section_title=section.get("title")
+                    or "人工编辑章节",
+                    content=content,
+                    requirements=[],
+                    matches=[],
+                    origin="edited",
+                )
                 cursor.execute(
                     """
                     SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version
@@ -374,6 +391,7 @@ class SectionService:
                     """,
                     (version_id, section_id),
                 )
+        ProvenanceService.persist(version_id, provenance, case_usage)
         return self.get(project_id, section_id)
 
     def approve(self, project_id: UUID, section_id: UUID) -> dict:
@@ -564,6 +582,8 @@ class SectionService:
                     """
                     SELECT
                         requirements.id,
+                        requirements.title,
+                        requirements.type,
                         requirements.normalized_text,
                         requirements.quote
                     FROM requirements

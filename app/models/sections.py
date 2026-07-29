@@ -14,7 +14,7 @@ class SectionVersionResponse(BaseModel):
     id: UUID
     version_no: int
     content: str
-    origin: Literal["generated", "edited"]
+    origin: Literal["generated", "edited", "auto_fixed"]
     created_at: datetime
 
 
