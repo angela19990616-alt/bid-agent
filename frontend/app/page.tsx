@@ -55,6 +55,20 @@ type Workspace = {
   outline: SectionItem[];
 };
 type ExportItem = { id: string; status: string; filename?: string | null };
+type ProposalReview = {
+  overall: {
+    recommended_for_delivery: boolean;
+    has_blocking_risk: boolean;
+    requirement_coverage_rate: number;
+    scoring_coverage_rate: number;
+    traceability_rate: number;
+    enterprise_fact_verification_rate: number;
+    unverified_assertion_count: number;
+    internal_identifier_leak_count: number;
+    high_risk_count: number;
+    blocking_risk_count: number;
+  };
+};
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
 const ACTIVE_WORKSPACE_KEY = "bid-agent-active-workspace";
@@ -104,6 +118,7 @@ export default function Home() {
   const [activeSectionId, setActiveSectionId] = useState("");
   const [editorContent, setEditorContent] = useState("");
   const [exportItem, setExportItem] = useState<ExportItem | null>(null);
+  const [proposalReview, setProposalReview] = useState<ProposalReview | null>(null);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -355,6 +370,22 @@ export default function Home() {
     });
   }
 
+  async function reviewProposal() {
+    if (!workspace) return;
+    await run("正在执行来源、真实性和交付审查", async () => {
+      const review = await request<ProposalReview>(
+        `/workspaces/${workspace.id}/review`,
+        { method: "POST" },
+      );
+      setProposalReview(review);
+      setNotice(
+        review.overall.recommended_for_delivery
+          ? "双轮审查和自动修复已完成，当前满足正式交付门禁。"
+          : `审查完成，仍有 ${review.overall.blocking_risk_count} 个阻断项，不建议正式交付。`,
+      );
+    });
+  }
+
   return (
     <main className="workbench">
       <header className="masthead">
@@ -529,8 +560,20 @@ export default function Home() {
               </div>
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
-                <p>Word 中包含正文、响应要求和原文来源，便于复核。</p>
-                <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>生成整本 Word</button>
+                <p>先执行双轮 Proposal Review 和自动修复，再通过交付门禁生成 Word。</p>
+                <button className="secondary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={reviewProposal}>执行交付审查</button>
+                {proposalReview && (
+                  <div className={`review-summary ${proposalReview.overall.recommended_for_delivery ? "ready" : "blocked"}`}>
+                    <strong>{proposalReview.overall.recommended_for_delivery ? "建议正式交付" : "暂不建议正式交付"}</strong>
+                    <span>需求覆盖 {(proposalReview.overall.requirement_coverage_rate * 100).toFixed(0)}%</span>
+                    <span>评分点覆盖 {(proposalReview.overall.scoring_coverage_rate * 100).toFixed(0)}%</span>
+                    <span>来源追溯 {(proposalReview.overall.traceability_rate * 100).toFixed(0)}%</span>
+                    <span>阻断项 {proposalReview.overall.blocking_risk_count}</span>
+                    <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=md`}>下载可读 Review</a>
+                    <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=json`}>下载 JSON</a>
+                  </div>
+                )}
+                <button className="primary large" disabled={!proposalReview?.overall.recommended_for_delivery || !sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>生成整本 Word</button>
                 {exportItem?.status === "succeeded" && workspace && (
                   <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
                 )}

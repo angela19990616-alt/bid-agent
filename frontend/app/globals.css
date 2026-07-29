@@ -65,6 +65,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .stage-header p { margin: 0; color: var(--muted); }
 .busy-pill { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 99px; color: var(--green-800); background: var(--green-100); font-size: 11px; }
 .busy-pill i { width: 8px; height: 8px; border: 2px solid #a8c0b4; border-top-color: var(--green-700); border-radius: 50%; animation: spin .8s linear infinite; }
+.review-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 14px; border: 1px solid #d7dedb; border-radius: 8px; background: #f7f9f8; font-size: 12px; }
+.review-summary strong { grid-column: 1 / -1; font-size: 14px; }
+.review-summary.ready strong { color: var(--green-800); }
+.review-summary.blocked strong { color: var(--red); }
+.review-summary a { color: var(--green-800); text-decoration: underline; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .message { max-width: 1360px; margin: 0 auto 16px; padding: 11px 14px; border-radius: 9px; font-size: 12px; }
 .message.error {
