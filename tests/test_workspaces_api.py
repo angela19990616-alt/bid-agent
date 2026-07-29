@@ -47,6 +47,9 @@ class FakeWorkspaceService:
             "招标文件.pdf", "application/pdf", b"pdf"
         )
 
+    def get_latest(self):
+        return self.get(self.id)
+
 
 def teardown_function():
     app.dependency_overrides.clear()
@@ -124,6 +127,17 @@ def test_upload_schedules_long_running_extraction_after_response():
     assert response.status_code == 201
     assert response.json()["status"] == "extracting"
     assert service.completed is True
+
+
+def test_latest_workspace_can_be_recovered_without_exposing_internal_id():
+    service = FakeWorkspaceService()
+    app.dependency_overrides[get_workspace_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.get("/api/v1/workspaces/recent/latest")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "outline_ready"
 
 
 class RetryWorkspaceService(PreparedWorkspaceService):

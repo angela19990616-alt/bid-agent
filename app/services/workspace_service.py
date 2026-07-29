@@ -205,6 +205,12 @@ class WorkspaceService:
             "outline": SectionService().list(workspace_id),
         }
 
+    def get_latest(self) -> dict:
+        workspaces = ProjectService().list()
+        if not workspaces:
+            raise ProjectNotFoundError("latest")
+        return self.get(workspaces[0].id)
+
     @staticmethod
     def _set_status(workspace_id: UUID, status: str) -> None:
         with connect() as conn:

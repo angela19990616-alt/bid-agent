@@ -123,6 +123,16 @@ def get_workspace(
         raise AppError(404, "WORKSPACE_NOT_FOUND", "未找到该方案。") from exc
 
 
+@router.get("/recent/latest", response_model=WorkspaceResponse)
+def get_latest_workspace(
+    service: WorkspaceService = Depends(get_workspace_service),
+):
+    try:
+        return service.get_latest()
+    except ProjectNotFoundError as exc:
+        raise AppError(404, "WORKSPACE_NOT_FOUND", "暂时没有可恢复的方案。") from exc
+
+
 @router.post(
     "/{workspace_id}/retry",
     response_model=WorkspaceResponse,

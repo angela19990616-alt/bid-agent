@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useCallback, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type Step = "upload" | "requirements" | "outline" | "writer" | "export";
 type Source = {
@@ -57,6 +57,12 @@ type Workspace = {
 type ExportItem = { id: string; status: string; filename?: string | null };
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
+const ACTIVE_WORKSPACE_KEY = "bid-agent-active-workspace";
+const workspaceStatusLabels: Record<string, string> = {
+  validating: "正在检查招标文件有效性",
+  extracting: "正在提取技术要求与评分点",
+  planning: "正在生成推荐目录",
+};
 const steps: Array<{ id: Step; title: string; subtitle: string }> = [
   { id: "upload", title: "上传文件", subtitle: "自动识别与解析" },
   { id: "requirements", title: "技术要点", subtitle: "要求与评分点" },
@@ -112,6 +118,45 @@ export default function Home() {
   }, [requirements]);
   const progress = workspace ? Math.max(20, (steps.findIndex((item) => item.id === step) + 1) * 20) : 0;
 
+  function openCompletedWorkspace(completed: Workspace, message?: string) {
+    setWorkspace(completed);
+    setRequirements(completed.technical_requirements);
+    setSections(completed.outline);
+    setActiveSectionId(completed.outline[0]?.id ?? "");
+    setEditorContent(completed.outline[0]?.current_version?.content ?? "");
+    setStep("requirements");
+    setNotice(
+      message
+      ?? `处理完成，已提取 ${completed.technical_requirements.length} 条技术写作要点。`,
+    );
+  }
+
+  async function waitForWorkspace(workspaceId: string, initial: Workspace) {
+    const startedAt = Date.now();
+    let completed = initial;
+    let consecutiveNetworkErrors = 0;
+    while (completed.status !== "outline_ready") {
+      if (completed.status === "draft") {
+        throw new Error("文件处理未成功，可点击“继续处理”从已保存位置重试。");
+      }
+      const elapsedMinutes = Math.max(1, Math.ceil((Date.now() - startedAt) / 60_000));
+      const stageLabel = workspaceStatusLabels[completed.status] ?? "正在处理招标文件";
+      setBusy(`${stageLabel} · 已等待 ${elapsedMinutes} 分钟，完成后会自动打开`);
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      try {
+        completed = await request<Workspace>(`/workspaces/${workspaceId}`);
+        consecutiveNetworkErrors = 0;
+        setWorkspace(completed);
+      } catch (caught) {
+        consecutiveNetworkErrors += 1;
+        if (consecutiveNetworkErrors >= 5) {
+          throw new Error("网络连接暂时中断，刷新页面后系统会自动恢复当前方案进度。");
+        }
+      }
+    }
+    return completed;
+  }
+
   const run = useCallback(async (label: string, action: () => Promise<void>) => {
     setBusy(label);
     setError("");
@@ -125,6 +170,40 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    const workspaceId = window.localStorage.getItem(ACTIVE_WORKSPACE_KEY);
+    if (!workspaceId) return;
+    let active = true;
+    void (async () => {
+      setBusy("正在恢复上次方案进度");
+      setError("");
+      try {
+        const saved = await request<Workspace>(`/workspaces/${workspaceId}`);
+        if (!active) return;
+        setWorkspace(saved);
+        if (saved.status === "outline_ready") {
+          openCompletedWorkspace(saved, "上次方案已经处理完成，已自动恢复。");
+          return;
+        }
+        if (saved.status === "draft") {
+          setError("上次方案处理未成功，可点击“继续处理”从已保存位置重试。");
+          return;
+        }
+        const completed = await waitForWorkspace(workspaceId, saved);
+        if (active) openCompletedWorkspace(completed);
+      } catch (caught) {
+        if (active) {
+          setError(caught instanceof Error ? caught.message : "恢复方案失败，请稍后重试。");
+        }
+      } finally {
+        if (active) setBusy("");
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   async function upload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -134,24 +213,12 @@ export default function Home() {
       form.append("file", file);
       const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
       setWorkspace(created);
-      let completed = created;
-      for (let attempt = 0; attempt < 180 && completed.status !== "outline_ready"; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 2000));
-        completed = await request<Workspace>(`/workspaces/${created.id}`);
-        setWorkspace(completed);
-        if (completed.status === "draft") {
-          throw new Error("文件解析或技术要求提取失败，请检查文件后重试。");
-        }
-      }
-      if (completed.status !== "outline_ready") {
-        throw new Error("处理时间较长，请稍后重新打开该方案查看结果。");
-      }
-      setRequirements(completed.technical_requirements);
-      setSections(completed.outline);
-      setActiveSectionId(completed.outline[0]?.id ?? "");
-      setEditorContent(completed.outline[0]?.current_version?.content ?? "");
-      setStep("requirements");
-      setNotice(`已识别《${completed.document?.filename}》，提取 ${completed.technical_requirements.length} 条技术写作要点。`);
+      window.localStorage.setItem(ACTIVE_WORKSPACE_KEY, created.id);
+      const completed = await waitForWorkspace(created.id, created);
+      openCompletedWorkspace(
+        completed,
+        `已识别《${completed.document?.filename}》，提取 ${completed.technical_requirements.length} 条技术写作要点。`,
+      );
     });
   }
 
@@ -163,24 +230,24 @@ export default function Home() {
         { method: "POST" },
       );
       setWorkspace(resumed);
-      let completed = resumed;
-      for (let attempt = 0; attempt < 180 && completed.status !== "outline_ready"; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 2000));
-        completed = await request<Workspace>(`/workspaces/${workspace.id}`);
-        setWorkspace(completed);
-        if (completed.status === "draft") {
-          throw new Error("继续处理仍未成功，请检查模型或文件配置。");
-        }
+      window.localStorage.setItem(ACTIVE_WORKSPACE_KEY, resumed.id);
+      const completed = await waitForWorkspace(workspace.id, resumed);
+      openCompletedWorkspace(completed, "已从中断位置继续并完成目录规划。");
+    });
+  }
+
+  async function restoreRecentWorkspace() {
+    await run("正在恢复最近一次方案", async () => {
+      const recent = await request<Workspace>("/workspaces/recent/latest");
+      setWorkspace(recent);
+      window.localStorage.setItem(ACTIVE_WORKSPACE_KEY, recent.id);
+      if (recent.status === "draft") {
+        throw new Error("最近一次方案处理未成功，可点击“继续处理”重试。");
       }
-      if (completed.status !== "outline_ready") {
-        throw new Error("处理尚未完成，可稍后再次点击继续处理。");
-      }
-      setRequirements(completed.technical_requirements);
-      setSections(completed.outline);
-      setActiveSectionId(completed.outline[0]?.id ?? "");
-      setEditorContent(completed.outline[0]?.current_version?.content ?? "");
-      setStep("requirements");
-      setNotice("已从中断位置继续并完成目录规划。");
+      const completed = recent.status === "outline_ready"
+        ? recent
+        : await waitForWorkspace(recent.id, recent);
+      openCompletedWorkspace(completed, "最近一次方案已经恢复。");
     });
   }
 
@@ -355,6 +422,9 @@ export default function Home() {
                 <strong>选择 PDF 或 DOCX 招标文件</strong>
                 <span>文件仅在机构私有环境中处理</span>
               </label>
+              <button className="secondary" disabled={Boolean(busy)} onClick={restoreRecentWorkspace}>
+                恢复最近一次方案
+              </button>
               <div className="pipeline">
                 {["有效性检查", "文档解析", "技术要求提取", "质量复核", "目录规划"].map((item, index) => (
                   <div key={item}><b>{index + 1}</b><span>{item}</span></div>

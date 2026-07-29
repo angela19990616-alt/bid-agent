@@ -56,8 +56,15 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /生成整本 Word/);
   assert.doesNotMatch(page, /createProject|创建项目/);
   assert.doesNotMatch(page, /演示模式|sampleContent/);
-  assert.match(page, /workspaces\/\$\{created\.id\}/);
+  assert.match(page, /workspaces\/\$\{workspaceId\}/);
   assert.match(page, /completed\.status !== "outline_ready"/);
+  assert.match(page, /bid-agent-active-workspace/);
+  assert.match(page, /完成后会自动打开/);
+  assert.match(page, /正在恢复上次方案进度/);
+  assert.match(page, /恢复最近一次方案/);
+  assert.match(page, /workspaces\/recent\/latest/);
+  assert.doesNotMatch(page, /attempt < 180/);
+  assert.doesNotMatch(page, /处理时间较长，请稍后重新打开/);
   assert.match(page, /workspaces\/\$\{workspace\.id\}\/retry/);
   assert.match(page, /继续处理/);
   assert.match(css, /@media \(max-width: 980px\)/);
