@@ -583,7 +583,7 @@ class SectionService:
                     SELECT
                         requirements.id,
                         requirements.title,
-                        requirements.type,
+                        requirements.requirement_type AS type,
                         requirements.normalized_text,
                         requirements.quote
                     FROM requirements

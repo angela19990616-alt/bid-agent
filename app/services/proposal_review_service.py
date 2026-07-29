@@ -661,7 +661,8 @@ class ProposalReviewService:
                 sections = [dict(row) for row in cursor.fetchall()]
                 cursor.execute(
                     """
-                    SELECT r.id, r.type, r.title, r.normalized_text, r.quote
+                    SELECT r.id, r.requirement_type AS type, r.title,
+                           r.normalized_text, r.quote
                     FROM requirements r
                     WHERE r.project_id = %s
                       AND r.need_generation = TRUE

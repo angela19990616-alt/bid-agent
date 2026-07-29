@@ -1,9 +1,25 @@
 from datetime import UTC, datetime
+import inspect
 from uuid import uuid4
 
 from app.models.exports import ExportResponse
 from app.rules.engine import RuleEngine
 from app.services.section_service import SectionService
+from app.services.proposal_review_service import ProposalReviewService
+
+
+def test_section_generation_uses_current_requirement_type_column():
+    content = inspect.getsource(SectionService._load_generation_input)
+
+    assert "requirements.requirement_type AS type" in content
+    assert "requirements.type," not in content
+
+
+def test_proposal_review_uses_current_requirement_type_column():
+    content = inspect.getsource(ProposalReviewService._load_review_input)
+
+    assert "r.requirement_type AS type" in content
+    assert "r.type," not in content
 
 
 class _FakePipeline:
