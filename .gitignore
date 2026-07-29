@@ -31,6 +31,8 @@ acceptance_reports/
 .coverage
 htmlcov/
 build/
+!frontend/build/
+!frontend/build/sites-vite-plugin.ts
 dist/
 
 # Editors and operating systems
