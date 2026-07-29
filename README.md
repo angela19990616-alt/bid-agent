@@ -174,14 +174,14 @@ python scripts/acceptance_mvp.py \
 
 ```bash
 cd /opt/bid-agent
-git pull --ff-only
-docker compose up --build -d
-docker compose ps
-docker compose logs --tail=200 backend
+BID_AGENT_BRANCH=codex/feat-frontend-integration \
+  bash scripts/deploy_ecs.sh
 ```
 
-回滚代码时切回上一个已验证提交并重新构建。数据库迁移采用前向迁移；涉及数据结构
-回滚时必须先备份 PostgreSQL，并提供单独的补偿迁移，不能直接删除生产数据。
+脚本会拒绝非 `/opt/bid-agent` 目录和脏工作区；先快进目标分支并备份 PostgreSQL，
+再构建、启动和轮询健康接口。失败时输出部署前提交和备份文件，但不会自动执行破坏性
+回滚。数据库迁移采用前向迁移；涉及数据结构回滚时必须使用备份和单独的补偿迁移，
+不能直接删除生产数据。
 
 ## 完成定义
 
