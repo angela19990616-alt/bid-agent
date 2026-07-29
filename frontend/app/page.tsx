@@ -53,6 +53,10 @@ type Workspace = {
   technical_requirements: Requirement[];
   compliance_reminder_count: number;
   outline: SectionItem[];
+  estimated_remaining_seconds_low: number | null;
+  estimated_remaining_seconds_high: number | null;
+  estimate_sample_count: number;
+  estimate_basis: string;
 };
 type ExportItem = { id: string; status: string; filename?: string | null };
 type ProposalReview = {
@@ -110,6 +114,21 @@ function sourceLabel(source: Source) {
   return `第 ${start === end ? start : `${start}-${end}`} 段`;
 }
 
+function estimateLabel(item: Workspace) {
+  const low = item.estimated_remaining_seconds_low;
+  const high = item.estimated_remaining_seconds_high;
+  if (low == null || high == null) {
+    return "暂无可靠预计时长，系统正在记录本次真实耗时";
+  }
+  if (high <= 0) return "即将完成";
+  const lowMinutes = Math.max(1, Math.ceil(low / 60));
+  const highMinutes = Math.max(lowMinutes, Math.ceil(high / 60));
+  const range = lowMinutes === highMinutes
+    ? `约 ${highMinutes} 分钟`
+    : `约 ${lowMinutes}–${highMinutes} 分钟`;
+  return `预计还需 ${range}（基于 ${item.estimate_sample_count} 次本机历史工作量）`;
+}
+
 export default function Home() {
   const [step, setStep] = useState<Step>("upload");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -147,16 +166,14 @@ export default function Home() {
   }
 
   async function waitForWorkspace(workspaceId: string, initial: Workspace) {
-    const startedAt = Date.now();
     let completed = initial;
     let consecutiveNetworkErrors = 0;
     while (completed.status !== "outline_ready") {
       if (completed.status === "draft") {
         throw new Error("文件处理未成功，可点击“继续处理”从已保存位置重试。");
       }
-      const elapsedMinutes = Math.max(1, Math.ceil((Date.now() - startedAt) / 60_000));
       const stageLabel = workspaceStatusLabels[completed.status] ?? "正在处理招标文件";
-      setBusy(`${stageLabel} · 已等待 ${elapsedMinutes} 分钟，完成后会自动打开`);
+      setBusy(`${stageLabel} · ${estimateLabel(completed)}，完成后自动打开`);
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
       try {
         completed = await request<Workspace>(`/workspaces/${workspaceId}`);
@@ -186,7 +203,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const workspaceId = window.localStorage.getItem(ACTIVE_WORKSPACE_KEY);
+    const workspaceId = window.sessionStorage.getItem(ACTIVE_WORKSPACE_KEY);
     if (!workspaceId) return;
     let active = true;
     void (async () => {
@@ -208,6 +225,7 @@ export default function Home() {
         if (active) openCompletedWorkspace(completed);
       } catch (caught) {
         if (active) {
+          window.sessionStorage.removeItem(ACTIVE_WORKSPACE_KEY);
           setError(caught instanceof Error ? caught.message : "恢复方案失败，请稍后重试。");
         }
       } finally {
@@ -228,7 +246,7 @@ export default function Home() {
       form.append("file", file);
       const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
       setWorkspace(created);
-      window.localStorage.setItem(ACTIVE_WORKSPACE_KEY, created.id);
+      window.sessionStorage.setItem(ACTIVE_WORKSPACE_KEY, created.id);
       const completed = await waitForWorkspace(created.id, created);
       openCompletedWorkspace(
         completed,
@@ -245,24 +263,9 @@ export default function Home() {
         { method: "POST" },
       );
       setWorkspace(resumed);
-      window.localStorage.setItem(ACTIVE_WORKSPACE_KEY, resumed.id);
+      window.sessionStorage.setItem(ACTIVE_WORKSPACE_KEY, resumed.id);
       const completed = await waitForWorkspace(workspace.id, resumed);
       openCompletedWorkspace(completed, "已从中断位置继续并完成目录规划。");
-    });
-  }
-
-  async function restoreRecentWorkspace() {
-    await run("正在恢复最近一次方案", async () => {
-      const recent = await request<Workspace>("/workspaces/recent/latest");
-      setWorkspace(recent);
-      window.localStorage.setItem(ACTIVE_WORKSPACE_KEY, recent.id);
-      if (recent.status === "draft") {
-        throw new Error("最近一次方案处理未成功，可点击“继续处理”重试。");
-      }
-      const completed = recent.status === "outline_ready"
-        ? recent
-        : await waitForWorkspace(recent.id, recent);
-      openCompletedWorkspace(completed, "最近一次方案已经恢复。");
     });
   }
 
@@ -420,7 +423,7 @@ export default function Home() {
           </nav>
           <div className="privacy-note">
             <strong>私有知识库边界</strong>
-            <p>通过有效性、质量、重复和权限检查的文件，仅进入本机构私有知识库用于后续 RAG 检索，不用于公共模型训练。</p>
+            <p>方案仅限当前浏览器会话和当前网络来源访问。关闭标签页后前端不再保留入口，其他 IP 无法读取或下载。</p>
           </div>
         </aside>
 
@@ -453,9 +456,6 @@ export default function Home() {
                 <strong>选择 PDF 或 DOCX 招标文件</strong>
                 <span>文件仅在机构私有环境中处理</span>
               </label>
-              <button className="secondary" disabled={Boolean(busy)} onClick={restoreRecentWorkspace}>
-                恢复最近一次方案
-              </button>
               <div className="pipeline">
                 {["有效性检查", "文档解析", "技术要求提取", "质量复核", "目录规划"].map((item, index) => (
                   <div key={item}><b>{index + 1}</b><span>{item}</span></div>

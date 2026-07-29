@@ -62,10 +62,14 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /workspaces\/\$\{workspaceId\}/);
   assert.match(page, /completed\.status !== "outline_ready"/);
   assert.match(page, /bid-agent-active-workspace/);
-  assert.match(page, /完成后会自动打开/);
+  assert.match(page, /完成后自动打开/);
   assert.match(page, /正在恢复上次方案进度/);
-  assert.match(page, /恢复最近一次方案/);
-  assert.match(page, /workspaces\/recent\/latest/);
+  assert.match(page, /sessionStorage/);
+  assert.match(page, /预计还需/);
+  assert.match(page, /历史工作量/);
+  assert.doesNotMatch(page, /localStorage/);
+  assert.doesNotMatch(page, /恢复最近一次方案/);
+  assert.doesNotMatch(page, /workspaces\/recent\/latest/);
   assert.doesNotMatch(page, /attempt < 180/);
   assert.doesNotMatch(page, /处理时间较长，请稍后重新打开/);
   assert.match(page, /workspaces\/\$\{workspace\.id\}\/retry/);

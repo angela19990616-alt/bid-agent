@@ -110,7 +110,8 @@ POST /api/v1/workspaces/{workspace_id}/exports
 GET  /api/v1/workspaces/{workspace_id}/exports/{export_id}/download
 ```
 
-内部仍保留旧 `/projects` 接口用于兼容，但新前端不暴露项目概念。
+旧 `/projects` 等兼容接口仅在非生产环境且显式启用
+`ENABLE_LEGACY_API=true` 时加载；生产默认关闭，防止绕过工作区会话边界。
 
 上传接口先完成文件校验和解析，立即返回内部 workspace 及 `extracting` 状态；
 Requirement 提取、知识匹配和推荐目录规划在受控后台任务中继续执行。前端轮询
@@ -119,6 +120,22 @@ Requirement 提取、知识匹配和推荐目录规划在受控后台任务中�
 任务；生产环境需要进一步接入持久化任务队列，以支持进程重启后的自动恢复。
 处理失败时 workspace 回到 `draft`，前端可调用 `POST /retry`，复用已保存的有效
 文档、Requirement 指纹去重和工作流快照，从中断后的提取/规划阶段继续执行。
+
+### 等待时间与临时会话边界
+
+处理中显示的预计时长不是固定文案。后端从本机已完成工作流中读取真实处理耗时和
+文档 `source_count`，按当前文档工作量计算预计剩余区间，并返回历史样本数量。
+历史样本不足时明确返回 `insufficient_history`，前端显示“暂无可靠预计时长”，
+不会编造分钟数。
+
+新上传方案会绑定随机浏览器会话 Cookie 和来源 IP 的会话密钥哈希。原始会话令牌
+和明文 IP 均不写入数据库。工作区读取、重试、Requirement、目录、章节、Review、
+DOCX 导出和所有下载接口都必须同时通过会话与 IP 校验；失败统一返回未找到，避免
+泄露方案是否存在。
+
+前端只把当前 workspace 放在 `sessionStorage` 中：同一标签页刷新可继续，关闭
+标签页或浏览器会话后入口自动清空，不再提供跨会话“最近方案恢复”。不同 IP 即使
+获得旧链接或内部编号，也不能读取 Review 或下载文件。
 
 ## 数据迁移
 
@@ -130,6 +147,8 @@ Requirement 提取、知识匹配和推荐目录规划在受控后台任务中�
   生成快照和整本方案导出。
 - `012_proposal_review.sql`：段落级来源、历史案例使用记录、双轮 Proposal
   Review、自动修复版本和导出审查关联。
+- `013_session_workspace_access.sql`：临时浏览器会话哈希、来源 IP 绑定和访问
+  边界。
 
 迁移文件应用后禁止修改，否则校验和保护会拒绝启动；后续变更应新增迁移。
 
