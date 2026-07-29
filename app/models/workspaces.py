@@ -31,3 +31,7 @@ class WorkspaceResponse(BaseModel):
     )
     compliance_reminder_count: int = 0
     outline: list[SectionResponse] = Field(default_factory=list)
+    estimated_remaining_seconds_low: int | None = None
+    estimated_remaining_seconds_high: int | None = None
+    estimate_sample_count: int = 0
+    estimate_basis: str = "insufficient_history"

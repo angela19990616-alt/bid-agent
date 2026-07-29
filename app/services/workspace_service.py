@@ -7,6 +7,7 @@ from app.database.db import connect
 from app.knowledge.engine import EnterpriseKnowledgeEngine
 from app.rules.engine import RuleEngine
 from app.services.project_document_service import ProjectDocumentService
+from app.services.processing_eta_service import ProcessingEtaService
 from app.services.project_service import ProjectService
 from app.services.proposal_plan_service import ProposalPlanService
 from app.services.requirement_service import RequirementService
@@ -193,6 +194,13 @@ class WorkspaceService:
             workspace_id,
             need_generation=False,
         )
+        source_count = documents[0].source_count if documents else 0
+        estimate = ProcessingEtaService.estimate(
+            workspace_id,
+            status=workspace.status,
+            created_at=workspace.created_at,
+            source_count=source_count,
+        )
         return {
             "id": workspace.id,
             "name": workspace.name,
@@ -203,13 +211,15 @@ class WorkspaceService:
             "technical_requirements": technical,
             "compliance_reminder_count": len(compliance),
             "outline": SectionService().list(workspace_id),
+            "estimated_remaining_seconds_low": (
+                estimate.remaining_seconds_low
+            ),
+            "estimated_remaining_seconds_high": (
+                estimate.remaining_seconds_high
+            ),
+            "estimate_sample_count": estimate.sample_count,
+            "estimate_basis": estimate.basis,
         }
-
-    def get_latest(self) -> dict:
-        workspaces = ProjectService().list()
-        if not workspaces:
-            raise ProjectNotFoundError("latest")
-        return self.get(workspaces[0].id)
 
     @staticmethod
     def _set_status(workspace_id: UUID, status: str) -> None:
