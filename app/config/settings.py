@@ -42,6 +42,17 @@ class Settings:
     database_connect_timeout: int = int(
         os.getenv("DATABASE_CONNECT_TIMEOUT", "5")
     )
+    enable_legacy_api: bool = (
+        os.getenv(
+            "ENABLE_LEGACY_API",
+            (
+                "false"
+                if os.getenv("APP_ENV", "development") == "production"
+                else "true"
+            ),
+        ).lower()
+        == "true"
+    )
 
     @property
     def model_api_key(self) -> str:

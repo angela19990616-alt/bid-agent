@@ -40,13 +40,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(documents_router, prefix="/api/v1")
-app.include_router(rag_router, prefix="/api/v1")
-app.include_router(projects_router, prefix="/api/v1")
-app.include_router(project_documents_router, prefix="/api/v1")
-app.include_router(requirements_router, prefix="/api/v1")
-app.include_router(sections_router, prefix="/api/v1")
-app.include_router(exports_router, prefix="/api/v1")
+if settings.enable_legacy_api:
+    app.include_router(documents_router, prefix="/api/v1")
+    app.include_router(rag_router, prefix="/api/v1")
+    app.include_router(projects_router, prefix="/api/v1")
+    app.include_router(project_documents_router, prefix="/api/v1")
+    app.include_router(requirements_router, prefix="/api/v1")
+    app.include_router(sections_router, prefix="/api/v1")
+    app.include_router(exports_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(configuration_router, prefix="/api/v1")
 

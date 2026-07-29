@@ -3,9 +3,16 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.api.workspaces import get_workspace_service
+from app.api.workspaces import (
+    get_workspace_access_service,
+    get_workspace_service,
+)
 from app.main import app
 from app.services.workspace_service import InvalidTenderDocumentError
+from app.services.workspace_access_service import (
+    SessionAccess,
+    WorkspaceAccessDeniedError,
+)
 
 
 NOW = datetime.now(UTC)
@@ -47,8 +54,24 @@ class FakeWorkspaceService:
             "招标文件.pdf", "application/pdf", b"pdf"
         )
 
-    def get_latest(self):
-        return self.get(self.id)
+class FakeAccessService:
+    def __init__(self):
+        self.bound = None
+
+    def session(self, request):
+        return SessionAccess("s" * 43, "127.0.0.1", True)
+
+    def bind(self, workspace_id, access):
+        self.bound = (workspace_id, access)
+
+    def authorize(self, workspace_id, request):
+        return None
+
+
+def setup_function():
+    app.dependency_overrides[get_workspace_access_service] = (
+        lambda: FakeAccessService()
+    )
 
 
 def teardown_function():
@@ -72,6 +95,7 @@ def test_upload_creates_internal_workspace_without_project_step():
         response.json()["document"]["knowledge_scope"]
         == "organization_private"
     )
+    assert response.cookies.get("bid_agent_session")
 
 
 class InvalidWorkspaceService(FakeWorkspaceService):
@@ -79,7 +103,7 @@ class InvalidWorkspaceService(FakeWorkspaceService):
         raise InvalidTenderDocumentError(self.id, "不是有效招标文件。")
 
 
-def test_invalid_document_is_rejected_with_workspace_reference():
+def test_invalid_document_is_rejected_without_internal_workspace_id():
     service = InvalidWorkspaceService()
     app.dependency_overrides[get_workspace_service] = lambda: service
     client = TestClient(app)
@@ -91,9 +115,7 @@ def test_invalid_document_is_rejected_with_workspace_reference():
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "INVALID_TENDER_DOCUMENT"
-    assert response.json()["error"]["details"]["workspace_id"] == str(
-        service.id
-    )
+    assert "workspace_id" not in response.json()["error"]["details"]
 
 
 class PreparedWorkspaceService(FakeWorkspaceService):
@@ -129,15 +151,29 @@ def test_upload_schedules_long_running_extraction_after_response():
     assert service.completed is True
 
 
-def test_latest_workspace_can_be_recovered_without_exposing_internal_id():
-    service = FakeWorkspaceService()
-    app.dependency_overrides[get_workspace_service] = lambda: service
+def test_other_session_cannot_read_review_or_download_files():
+    class DeniedAccess(FakeAccessService):
+        def authorize(self, workspace_id, request):
+            raise WorkspaceAccessDeniedError
+
+    app.dependency_overrides[get_workspace_access_service] = (
+        lambda: DeniedAccess()
+    )
     client = TestClient(app)
+    workspace_id = uuid4()
 
-    response = client.get("/api/v1/workspaces/recent/latest")
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "outline_ready"
+    assert client.get(
+        f"/api/v1/workspaces/{workspace_id}"
+    ).status_code == 404
+    assert client.get(
+        f"/api/v1/workspaces/{workspace_id}/review"
+    ).status_code == 404
+    assert client.get(
+        f"/api/v1/workspaces/{workspace_id}/review/download"
+    ).status_code == 404
+    assert client.get(
+        f"/api/v1/workspaces/{workspace_id}/exports/{uuid4()}/download"
+    ).status_code == 404
 
 
 class RetryWorkspaceService(PreparedWorkspaceService):

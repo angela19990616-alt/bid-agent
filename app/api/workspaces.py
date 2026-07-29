@@ -8,6 +8,8 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Request,
+    Response,
     UploadFile,
     status,
 )
@@ -49,6 +51,11 @@ from app.services.workspace_service import (
     WorkspaceRetryError,
     WorkspaceService,
 )
+from app.services.workspace_access_service import (
+    SESSION_COOKIE,
+    WorkspaceAccessDeniedError,
+    WorkspaceAccessService,
+)
 
 
 router = APIRouter(prefix="/workspaces", tags=["proposal-workspaces"])
@@ -58,37 +65,79 @@ def get_workspace_service() -> WorkspaceService:
     return WorkspaceService()
 
 
+def get_workspace_access_service() -> WorkspaceAccessService:
+    return WorkspaceAccessService()
+
+
+def authorize_workspace(
+    workspace_id: UUID,
+    request: Request,
+    service: WorkspaceAccessService = Depends(
+        get_workspace_access_service
+    ),
+) -> None:
+    try:
+        service.authorize(workspace_id, request)
+    except WorkspaceAccessDeniedError as exc:
+        # Do not reveal whether a workspace exists to another session or IP.
+        raise AppError(
+            404,
+            "WORKSPACE_NOT_FOUND",
+            "当前会话无权访问该方案。",
+        ) from exc
+
+
 @router.post(
     "",
     response_model=WorkspaceResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_workspace(
+    request: Request,
+    response: Response,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     service: WorkspaceService = Depends(get_workspace_service),
+    access_service: WorkspaceAccessService = Depends(
+        get_workspace_access_service
+    ),
 ):
     filename = file.filename or "upload"
     if not filename.lower().endswith((".pdf", ".docx")):
         raise AppError(415, "DOCUMENT_UNSUPPORTED", "仅支持 PDF 或 DOCX 文件。")
     try:
         content = await file.read()
+        access = access_service.session(request)
         if not hasattr(service, "prepare_from_upload"):
-            return service.create_from_upload(
+            workspace = service.create_from_upload(
                 filename,
                 file.content_type,
                 content,
             )
-        workspace, document_id, run_id = service.prepare_from_upload(
-            filename,
-            file.content_type,
-            content,
-        )
-        background_tasks.add_task(
-            service.complete_prepared_upload,
-            workspace["id"],
-            document_id,
-            run_id,
+        else:
+            workspace, document_id, run_id = service.prepare_from_upload(
+                filename,
+                file.content_type,
+                content,
+            )
+            background_tasks.add_task(
+                service.complete_prepared_upload,
+                workspace["id"],
+                document_id,
+                run_id,
+            )
+        access_service.bind(workspace["id"], access)
+        response.set_cookie(
+            SESSION_COOKIE,
+            access.token,
+            httponly=True,
+            secure=(
+                request.headers.get("x-forwarded-proto")
+                == "https"
+                or request.url.scheme == "https"
+            ),
+            samesite="strict",
+            path="/",
         )
         return workspace
     except InvalidTenderDocumentError as exc:
@@ -96,7 +145,7 @@ async def create_workspace(
             422,
             "INVALID_TENDER_DOCUMENT",
             exc.reason,
-            {"workspace_id": str(exc.workspace_id)},
+            {"retryable": False},
         ) from exc
     except DuplicateDocumentError as exc:
         raise AppError(409, "DOCUMENT_DUPLICATE", "该文件已经上传过。") from exc
@@ -116,22 +165,13 @@ async def create_workspace(
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
 def get_workspace(
     workspace_id: UUID,
+    _access: None = Depends(authorize_workspace),
     service: WorkspaceService = Depends(get_workspace_service),
 ):
     try:
         return service.get(workspace_id)
     except ProjectNotFoundError as exc:
         raise AppError(404, "WORKSPACE_NOT_FOUND", "未找到该方案。") from exc
-
-
-@router.get("/recent/latest", response_model=WorkspaceResponse)
-def get_latest_workspace(
-    service: WorkspaceService = Depends(get_workspace_service),
-):
-    try:
-        return service.get_latest()
-    except ProjectNotFoundError as exc:
-        raise AppError(404, "WORKSPACE_NOT_FOUND", "暂时没有可恢复的方案。") from exc
 
 
 @router.post(
@@ -142,6 +182,7 @@ def get_latest_workspace(
 def retry_workspace(
     workspace_id: UUID,
     background_tasks: BackgroundTasks,
+    _access: None = Depends(authorize_workspace),
     service: WorkspaceService = Depends(get_workspace_service),
 ):
     try:
@@ -174,6 +215,7 @@ def retry_workspace(
 def list_workspace_requirements(
     workspace_id: UUID,
     view: Literal["proposal", "compliance"] = "proposal",
+    _access: None = Depends(authorize_workspace),
 ):
     return RequirementService().list(
         workspace_id,
@@ -185,7 +227,11 @@ def list_workspace_requirements(
     "/{workspace_id}/outline",
     response_model=list[SectionResponse],
 )
-def replace_outline(workspace_id: UUID, payload: OutlineUpdate):
+def replace_outline(
+    workspace_id: UUID,
+    payload: OutlineUpdate,
+    _access: None = Depends(authorize_workspace),
+):
     try:
         return ProposalPlanService().replace_outline(
             workspace_id,
@@ -199,7 +245,11 @@ def replace_outline(workspace_id: UUID, payload: OutlineUpdate):
     "/{workspace_id}/sections/{section_id}/generate",
     response_model=SectionResponse,
 )
-def generate_section(workspace_id: UUID, section_id: UUID):
+def generate_section(
+    workspace_id: UUID,
+    section_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
     try:
         return SectionService().generate(workspace_id, section_id)
     except SectionNotFoundError as exc:
@@ -223,6 +273,7 @@ def save_section(
     workspace_id: UUID,
     section_id: UUID,
     payload: SectionContentUpdate,
+    _access: None = Depends(authorize_workspace),
 ):
     try:
         return SectionService().save_content(
@@ -245,7 +296,11 @@ def save_section(
     "/{workspace_id}/sections/{section_id}/approve",
     response_model=SectionResponse,
 )
-def approve_section(workspace_id: UUID, section_id: UUID):
+def approve_section(
+    workspace_id: UUID,
+    section_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
     try:
         return SectionService().approve(workspace_id, section_id)
     except (SectionNotFoundError, SectionValidationError) as exc:
@@ -257,7 +312,10 @@ def approve_section(workspace_id: UUID, section_id: UUID):
     response_model=ExportResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def export_full_proposal(workspace_id: UUID):
+def export_full_proposal(
+    workspace_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
     try:
         return ExportService().create_full(workspace_id)
     except ExportValidationError as exc:
@@ -265,7 +323,10 @@ def export_full_proposal(workspace_id: UUID):
 
 
 @router.get("/{workspace_id}/review")
-def get_proposal_review(workspace_id: UUID):
+def get_proposal_review(
+    workspace_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
     try:
         return ProposalReviewService().latest(workspace_id)
     except ValueError as exc:
@@ -273,7 +334,10 @@ def get_proposal_review(workspace_id: UUID):
 
 
 @router.post("/{workspace_id}/review")
-def run_proposal_review(workspace_id: UUID):
+def run_proposal_review(
+    workspace_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
     try:
         return ProposalReviewService().prepare_for_export(
             workspace_id, enforce=False
@@ -286,6 +350,7 @@ def run_proposal_review(workspace_id: UUID):
 def download_proposal_review(
     workspace_id: UUID,
     format: Literal["json", "md"] = "md",
+    _access: None = Depends(authorize_workspace),
 ):
     try:
         json_path, markdown_path = ProposalReviewService().report_files(
@@ -310,7 +375,11 @@ def download_proposal_review(
 
 
 @router.get("/{workspace_id}/exports/{export_id}/download")
-def download_full_proposal(workspace_id: UUID, export_id: UUID):
+def download_full_proposal(
+    workspace_id: UUID,
+    export_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
     try:
         path, filename = ExportService().download_info(
             workspace_id, export_id
