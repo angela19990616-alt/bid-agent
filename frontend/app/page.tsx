@@ -1,16 +1,8 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useMemo, useState } from "react";
 
-type Step = "project" | "requirements" | "writer" | "export";
-type Project = { id: string; name: string; status: string };
-type DocumentItem = {
-  id: string;
-  filename: string;
-  status: string;
-  source_count: number;
-  error_message?: string | null;
-};
+type Step = "upload" | "requirements" | "outline" | "writer" | "export";
 type Source = {
   id: string;
   filename: string;
@@ -27,9 +19,9 @@ type Requirement = {
   title: string;
   normalized_text: string;
   quote: string;
-  importance: "low" | "medium" | "high";
-  confidence: number;
-  status: "pending" | "confirmed" | "rejected";
+  proposal_relevance: "high" | "medium" | "low";
+  target_chapter: string | null;
+  need_generation: boolean;
   sources: Source[];
 };
 type SectionVersion = {
@@ -42,36 +34,43 @@ type SectionItem = {
   id: string;
   title: string;
   status: string;
+  sort_order: number;
+  is_recommended: boolean;
   requirement_ids: string[];
   current_version: SectionVersion | null;
   findings: Array<{ id: string; severity: string; message: string }>;
 };
-type ExportItem = {
+type Workspace = {
   id: string;
+  name: string;
   status: string;
-  filename?: string | null;
+  document: {
+    filename: string;
+    source_count: number;
+    validation_score?: number | null;
+    knowledge_status: string;
+  } | null;
+  technical_requirements: Requirement[];
+  compliance_reminder_count: number;
+  outline: SectionItem[];
 };
+type ExportItem = { id: string; status: string; filename?: string | null };
 
-const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1").replace(
-    /\/$/,
-    "",
-  );
-
-const steps: Array<{ id: Step; number: string; title: string; subtitle: string }> = [
-  { id: "project", number: "01", title: "项目材料", subtitle: "创建、上传、解析" },
-  { id: "requirements", number: "02", title: "招标要求", subtitle: "提取、溯源、确认" },
-  { id: "writer", number: "03", title: "技术方案", subtitle: "单章节生成与编辑" },
-  { id: "export", number: "04", title: "导出结果", subtitle: "确认并下载 Word" },
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
+const steps: Array<{ id: Step; title: string; subtitle: string }> = [
+  { id: "upload", title: "上传文件", subtitle: "自动识别与解析" },
+  { id: "requirements", title: "技术要点", subtitle: "要求与评分点" },
+  { id: "outline", title: "推荐目录", subtitle: "确认章节结构" },
+  { id: "writer", title: "章节写作", subtitle: "生成、编辑、校核" },
+  { id: "export", title: "导出 Word", subtitle: "交付技术方案" },
 ];
-
 const typeLabels: Record<Requirement["type"], string> = {
   technical: "技术要求",
-  scoring: "评分点",
-  delivery: "交付要求",
-  qualification: "资格约束",
-  compliance: "响应文件规范",
-  commercial: "报价与商务",
+  scoring: "技术评分点",
+  delivery: "交付与实施",
+  qualification: "资格提醒",
+  compliance: "合规提醒",
+  commercial: "商务提醒",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -85,25 +84,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function sourceLabel(source: Source) {
-  if (source.locator.kind === "page") {
-    return `原文位置：第 ${source.locator.page} 页`;
-  }
+  if (source.locator.kind === "page") return `第 ${source.locator.page} 页`;
   const start = source.locator.paragraph_start;
   const end = source.locator.paragraph_end;
-  return `原文位置：第 ${start === end ? start : `${start}-${end}`} 段`;
+  return `第 ${start === end ? start : `${start}-${end}`} 段`;
 }
 
 export default function Home() {
-  const [step, setStep] = useState<Step>("project");
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState("");
-  const [projectName, setProjectName] = useState("");
-  const [newProjectName, setNewProjectName] = useState("");
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [step, setStep] = useState<Step>("upload");
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [sections, setSections] = useState<SectionItem[]>([]);
-  const [sectionTitle, setSectionTitle] = useState("项目实施方案");
-  const [selectedRequirementIds, setSelectedRequirementIds] = useState<string[]>([]);
   const [activeSectionId, setActiveSectionId] = useState("");
   const [editorContent, setEditorContent] = useState("");
   const [exportItem, setExportItem] = useState<ExportItem | null>(null);
@@ -112,17 +103,14 @@ export default function Home() {
   const [error, setError] = useState("");
 
   const activeSection = sections.find((item) => item.id === activeSectionId);
-  const confirmed = requirements.filter((item) => item.status === "confirmed");
-
-  const progress = useMemo(() => {
-    if (exportItem?.status === "succeeded") return 100;
-    if (activeSection?.status === "approved") return 88;
-    if (activeSection?.current_version) return 72;
-    if (confirmed.length) return 52;
-    if (documents.some((item) => item.status === "parsed")) return 30;
-    if (projectId) return 12;
-    return 0;
-  }, [activeSection, confirmed.length, documents, exportItem, projectId]);
+  const grouped = useMemo(() => {
+    return requirements.reduce<Record<string, Requirement[]>>((result, item) => {
+      const chapter = item.target_chapter ?? "其他技术要求";
+      result[chapter] = [...(result[chapter] ?? []), item];
+      return result;
+    }, {});
+  }, [requirements]);
+  const progress = workspace ? Math.max(20, (steps.findIndex((item) => item.id === step) + 1) * 20) : 0;
 
   const run = useCallback(async (label: string, action: () => Promise<void>) => {
     setBusy(label);
@@ -137,166 +125,102 @@ export default function Home() {
     }
   }, []);
 
-  const refreshProject = useCallback(async (id: string) => {
-    const [documentList, requirementList, sectionList] = await Promise.all([
-      request<DocumentItem[]>(`/projects/${id}/documents`),
-      request<Requirement[]>(`/projects/${id}/requirements`),
-      request<SectionItem[]>(`/projects/${id}/sections`),
-    ]);
-    setDocuments(documentList);
-    setRequirements(requirementList);
-    setSections(sectionList);
-    const latest = sectionList[0];
-    if (latest) {
-      setActiveSectionId(latest.id);
-      setEditorContent(latest.current_version?.content ?? "");
-    }
-  }, []);
-
-  useEffect(() => {
-    run("正在加载项目", async () => {
-      const items = await request<Project[]>("/projects");
-      setProjects(items);
-      if (items[0]) {
-        setProjectId(items[0].id);
-        setProjectName(items[0].name);
-        await refreshProject(items[0].id);
-      }
-    });
-  }, [refreshProject, run]);
-
-  async function createProject() {
-    const name = newProjectName.trim();
-    if (!name) {
-      setError("请先填写项目名称。");
-      return;
-    }
-    await run("正在创建项目", async () => {
-      const created = await request<Project>("/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      setProjects((items) => [created, ...items]);
-      setProjectId(created.id);
-      setProjectName(created.name);
-      setDocuments([]);
-      setRequirements([]);
-      setSections([]);
-      setNewProjectName("");
-      setNotice("项目已创建，可以上传招标文件。");
-    });
-  }
-
-  async function chooseProject(id: string) {
-    const project = projects.find((item) => item.id === id);
-    if (!project) return;
-    setProjectId(id);
-    setProjectName(project.name);
-    setExportItem(null);
-    await run("正在打开项目", () => refreshProject(id));
-  }
-
   async function upload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file || !projectId) return;
-    await run("正在解析文件", async () => {
+    if (!file) return;
+    await run("正在识别、解析并规划技术方案", async () => {
       const form = new FormData();
       form.append("file", file);
-      const document = await request<DocumentItem>(
-        `/projects/${projectId}/documents`,
-        { method: "POST", body: form },
-      );
-      setDocuments((items) => [document, ...items]);
-      setNotice(`《${document.filename}》解析完成，共 ${document.source_count} 个来源片段。`);
-    });
-  }
-
-  async function extractRequirements() {
-    const parsedIds = documents
-      .filter((item) => item.status === "parsed")
-      .map((item) => item.id);
-    if (!parsedIds.length) {
-      setError("请先上传并成功解析招标文件。");
-      return;
-    }
-    await run("正在提取要求", async () => {
-      const result = await request<{ created_count: number }>(
-        `/projects/${projectId}/requirements/extract`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ document_ids: parsedIds }),
-        },
-      );
-      const items = await request<Requirement[]>(
-        `/projects/${projectId}/requirements`,
-      );
-      setRequirements(items);
-      setSelectedRequirementIds(
-        items.filter((item) => item.status === "confirmed").map((item) => item.id),
-      );
+      const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
+      setWorkspace(created);
+      let completed = created;
+      for (let attempt = 0; attempt < 180 && completed.status !== "outline_ready"; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        completed = await request<Workspace>(`/workspaces/${created.id}`);
+        setWorkspace(completed);
+        if (completed.status === "draft") {
+          throw new Error("文件解析或技术要求提取失败，请检查文件后重试。");
+        }
+      }
+      if (completed.status !== "outline_ready") {
+        throw new Error("处理时间较长，请稍后重新打开该方案查看结果。");
+      }
+      setRequirements(completed.technical_requirements);
+      setSections(completed.outline);
+      setActiveSectionId(completed.outline[0]?.id ?? "");
+      setEditorContent(completed.outline[0]?.current_version?.content ?? "");
       setStep("requirements");
-      setNotice(`已新增 ${result.created_count} 条候选要求，请人工核对原文。`);
+      setNotice(`已识别《${completed.document?.filename}》，提取 ${completed.technical_requirements.length} 条技术写作要点。`);
     });
   }
 
-  async function setRequirementStatus(item: Requirement, status: Requirement["status"]) {
-    await run("正在保存要求", async () => {
-      const updated = await request<Requirement>(
-        `/projects/${projectId}/requirements/${item.id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status }),
-        },
-      );
-      setRequirements((items) =>
-        items.map((current) => (current.id === updated.id ? updated : current)),
-      );
-      setSelectedRequirementIds((ids) =>
-        status === "confirmed"
-          ? Array.from(new Set([...ids, item.id]))
-          : ids.filter((id) => id !== item.id),
-      );
+  async function showCompliance() {
+    if (!workspace) return;
+    await run("正在读取合规提醒", async () => {
+      const items = await request<Requirement[]>(`/workspaces/${workspace.id}/requirements?view=compliance`);
+      setNotice(items.length ? items.map((item) => item.title).slice(0, 6).join("；") : "没有发现额外合规提醒。");
     });
   }
 
-  async function createAndGenerateSection() {
-    const ids = selectedRequirementIds.filter((id) =>
-      confirmed.some((item) => item.id === id),
-    );
-    if (!ids.length) {
-      setError("请至少选择一条已确认要求。");
-      return;
-    }
-    await run("正在生成章节", async () => {
-      const created = await request<SectionItem>(
-        `/projects/${projectId}/sections`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: sectionTitle, requirement_ids: ids }),
-        },
-      );
+  function updateChapter(index: number, title: string) {
+    setSections((items) => items.map((item, current) => current === index ? { ...item, title } : item));
+  }
+
+  function moveChapter(index: number, direction: -1 | 1) {
+    setSections((items) => {
+      const target = index + direction;
+      if (target < 0 || target >= items.length) return items;
+      const copy = [...items];
+      [copy[index], copy[target]] = [copy[target], copy[index]];
+      return copy.map((item, position) => ({ ...item, sort_order: position + 1 }));
+    });
+  }
+
+  async function saveOutline() {
+    if (!workspace) return;
+    await run("正在保存目录", async () => {
+      const saved = await request<SectionItem[]>(`/workspaces/${workspace.id}/outline`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chapters: sections.map((item) => ({
+            title: item.title,
+            requirement_ids: item.requirement_ids,
+          })),
+        }),
+      });
+      setSections(saved);
+      setActiveSectionId(saved[0]?.id ?? "");
+      setStep("writer");
+      setNotice("目录已确认，可以按章节生成。");
+    });
+  }
+
+  function selectSection(section: SectionItem) {
+    setActiveSectionId(section.id);
+    setEditorContent(section.current_version?.content ?? "");
+  }
+
+  async function generateSection(section: SectionItem) {
+    if (!workspace) return;
+    await run(`正在生成《${section.title}》`, async () => {
       const generated = await request<SectionItem>(
-        `/projects/${projectId}/sections/${created.id}/generate`,
+        `/workspaces/${workspace.id}/sections/${section.id}/generate`,
         { method: "POST" },
       );
-      setSections((items) => [generated, ...items]);
+      setSections((items) => items.map((item) => item.id === generated.id ? generated : item));
       setActiveSectionId(generated.id);
       setEditorContent(generated.current_version?.content ?? "");
-      setStep("writer");
-      setNotice("章节已生成并自动校核，请人工编辑确认。");
+      setNotice("章节已生成，请人工检查并补充企业真实信息。");
     });
   }
 
   async function saveSection() {
-    if (!activeSection?.current_version) return;
-    await run("正在保存章节", async () => {
+    if (!workspace || !activeSection?.current_version) return;
+    await run("正在保存人工修改", async () => {
       const saved = await request<SectionItem>(
-        `/projects/${projectId}/sections/${activeSection.id}/content`,
+        `/workspaces/${workspace.id}/sections/${activeSection.id}/content`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -306,42 +230,32 @@ export default function Home() {
           }),
         },
       );
-      setSections((items) =>
-        items.map((item) => (item.id === saved.id ? saved : item)),
-      );
-      setNotice(`已保存第 ${saved.current_version?.version_no} 版。`);
+      setSections((items) => items.map((item) => item.id === saved.id ? saved : item));
+      setEditorContent(saved.current_version?.content ?? "");
+      setNotice("人工修改已保存，并已重新执行合规校核。");
     });
   }
 
   async function approveSection() {
-    if (!activeSection) return;
+    if (!workspace || !activeSection) return;
     await run("正在确认章节", async () => {
       const approved = await request<SectionItem>(
-        `/projects/${projectId}/sections/${activeSection.id}/approve`,
+        `/workspaces/${workspace.id}/sections/${activeSection.id}/approve`,
         { method: "POST" },
       );
-      setSections((items) =>
-        items.map((item) => (item.id === approved.id ? approved : item)),
-      );
-      setStep("export");
-      setNotice("章节已人工确认，可以导出 Word。");
+      setSections((items) => items.map((item) => item.id === approved.id ? approved : item));
+      setNotice("章节已确认，可导出 Word。");
     });
   }
 
   async function createExport() {
-    if (!activeSection?.current_version) return;
+    if (!workspace) return;
     await run("正在生成 Word", async () => {
-      const result = await request<ExportItem>(`/projects/${projectId}/exports`, {
+      const created = await request<ExportItem>(`/workspaces/${workspace.id}/exports`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          section_id: activeSection.id,
-          section_version_id: activeSection.current_version?.id,
-          format: "docx",
-        }),
       });
-      setExportItem(result);
-      setNotice("Word 已生成，可以下载。");
+      setExportItem(created);
+      setNotice("Word 文件已经生成。");
     });
   }
 
@@ -349,204 +263,172 @@ export default function Home() {
     <main className="workbench">
       <header className="masthead">
         <div className="brand-lockup">
-          <span className="brand-seal">岳</span>
-          <div>
-            <small>DAYUE · BID AGENT</small>
-            <h1>标书智能工作台</h1>
-          </div>
+          <div className="brand-seal">岳</div>
+          <div><small>DAYUE BID AGENT</small><h1>技术方案工作台</h1></div>
         </div>
         <div className="project-switcher">
-          <span>当前项目</span>
-          <select value={projectId} onChange={(event) => chooseProject(event.target.value)}>
-            <option value="">请选择项目</option>
-            {projects.map((item) => (
-              <option key={item.id} value={item.id}>{item.name}</option>
-            ))}
-          </select>
-          <b className="live-badge">真实数据</b>
+          <span>{workspace ? workspace.name : "上传招标文件即可开始"}</span>
+          <b className="live-badge">机构私有</b>
         </div>
       </header>
 
       <div className="workspace">
         <aside className="rail">
           <div className="progress-box">
-            <span>项目进度</span><strong>{progress}%</strong>
+            <span>方案进度</span><strong>{progress}%</strong>
             <i><em style={{ width: `${progress}%` }} /></i>
           </div>
-          <nav aria-label="项目流程">
-            {steps.map((item) => (
+          <nav>
+            {steps.map((item, index) => (
               <button
                 key={item.id}
                 className={step === item.id ? "active" : ""}
+                disabled={!workspace && item.id !== "upload"}
                 onClick={() => setStep(item.id)}
               >
-                <span>{item.number}</span>
+                <span>{String(index + 1).padStart(2, "0")}</span>
                 <div><strong>{item.title}</strong><small>{item.subtitle}</small></div>
               </button>
             ))}
           </nav>
           <div className="privacy-note">
-            <strong>安全提示</strong>
-            <p>文件和密钥不会显示在对话中；所有生成内容须人工确认。</p>
+            <strong>私有知识库边界</strong>
+            <p>通过有效性、质量、重复和权限检查的文件，仅进入本机构私有知识库用于后续 RAG 检索，不用于公共模型训练。</p>
           </div>
         </aside>
 
         <section className="stage">
           <div className="stage-header">
             <div>
-              <span className="eyebrow">BID PRODUCTION FLOW</span>
+              <span className="eyebrow">CONTROLLED PROPOSAL WORKFLOW</span>
               <h2>{steps.find((item) => item.id === step)?.title}</h2>
-              <p>{projectName || "先创建一个投标项目，系统会保存全过程中间结果。"}</p>
+              <p>系统按固定步骤处理，不会自由对话或无限循环。</p>
             </div>
-            {busy ? <span className="busy-pill"><i />{busy}</span> : null}
+            {busy && <div className="busy-pill"><i />{busy}</div>}
           </div>
+          {error && <div className="message error">{error}</div>}
+          {notice && <div className="message success">{notice}</div>}
 
-          {error ? <div className="message error">{error}</div> : null}
-          {notice ? <div className="message success">{notice}</div> : null}
-
-          {step === "project" && (
-            <div className="panel-grid two">
-              <article className="panel">
-                <span className="panel-label">新建项目</span>
-                <h3>从一次真实投标开始</h3>
-                <label className="field">
-                  <span>项目名称</span>
-                  <input
-                    value={newProjectName}
-                    onChange={(event) => setNewProjectName(event.target.value)}
-                    placeholder="例如：某市智慧文旅咨询服务项目"
-                  />
-                </label>
-                <button className="primary" onClick={createProject} disabled={Boolean(busy)}>
-                  创建项目
-                </button>
-              </article>
-
-              <article className="panel">
-                <span className="panel-label">招标文件</span>
-                <h3>上传 PDF 或 DOCX</h3>
-                <label className={`upload-zone ${!projectId ? "disabled" : ""}`}>
-                  <input
-                    type="file"
-                    accept=".pdf,.docx"
-                    onChange={upload}
-                    disabled={!projectId || Boolean(busy)}
-                  />
-                  <b>选择招标文件</b>
-                  <span>PDF 保留页码，DOCX 保留段落位置</span>
-                </label>
-                <div className="document-list">
-                  {documents.length ? documents.map((item) => (
-                    <div key={item.id}>
-                      <span className={`status-dot ${item.status}`} />
-                      <div><strong>{item.filename}</strong><small>{item.status === "parsed" ? `${item.source_count} 个来源片段` : item.error_message}</small></div>
-                    </div>
-                  )) : <p className="empty">尚未上传文件</p>}
-                </div>
-                <button className="secondary" onClick={extractRequirements} disabled={!projectId || Boolean(busy)}>
-                  提取招标要求
-                </button>
-              </article>
+          {step === "upload" && (
+            <div className="upload-hero">
+              <span className="panel-label">START FROM THE TENDER</span>
+              <h3>上传招标文件，直接生成技术方案框架</h3>
+              <p>无需先建项目。系统会自动判断文件是否有效，解析技术要求与评分点，并推荐写作目录。</p>
+              <label className={`upload-zone hero ${busy ? "disabled" : ""}`}>
+                <input type="file" accept=".pdf,.docx" disabled={Boolean(busy)} onChange={upload} />
+                <strong>选择 PDF 或 DOCX 招标文件</strong>
+                <span>文件仅在机构私有环境中处理</span>
+              </label>
+              <div className="pipeline">
+                {["有效性检查", "文档解析", "技术要求提取", "质量复核", "目录规划"].map((item, index) => (
+                  <div key={item}><b>{index + 1}</b><span>{item}</span></div>
+                ))}
+              </div>
             </div>
           )}
 
           {step === "requirements" && (
             <div className="requirement-layout">
               <div className="section-toolbar">
-                <div><strong>{requirements.length}</strong><span>条候选要求</span></div>
-                <div><strong>{confirmed.length}</strong><span>条已确认</span></div>
-                <button className="primary" onClick={() => setStep("writer")} disabled={!confirmed.length}>进入章节生成</button>
+                <div><strong>{requirements.length}</strong><span>条技术写作要点</span></div>
+                <div><strong>{requirements.filter((item) => item.type === "scoring").length}</strong><span>个技术评分点</span></div>
+                <button className="secondary" onClick={showCompliance}>查看 {workspace?.compliance_reminder_count ?? 0} 条合规提醒</button>
+                <button className="primary" onClick={() => setStep("outline")}>查看推荐目录</button>
               </div>
-              <div className="requirement-list">
-                {requirements.length ? requirements.map((item) => (
-                  <article key={item.id} className={`requirement-card ${item.status}`}>
-                    <div className="requirement-top">
-                      <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
-                      <span className="confidence">AI 判断 {Math.round(item.confidence * 100)}% · 待人工确认</span>
-                    </div>
-                    <h3>{item.title}</h3>
-                    <div className="response-brief">
-                      <span>需要响应什么</span>
-                      <p>{item.normalized_text}</p>
-                    </div>
-                    <div className="evidence-box">
-                      <span>招标原文依据</span>
-                      <blockquote>{item.quote}</blockquote>
-                    </div>
-                    <div className="source-row">
-                      {item.sources.map((source) => (
-                        <span key={source.id} title={source.filename}>{sourceLabel(source)}</span>
-                      ))}
-                    </div>
-                    <div className="card-actions">
-                      <button className="ghost danger" onClick={() => setRequirementStatus(item, "rejected")}>排除</button>
-                      <button
-                        className={item.status === "confirmed" ? "confirmed-button" : "secondary"}
-                        onClick={() => setRequirementStatus(item, item.status === "confirmed" ? "pending" : "confirmed")}
-                      >
-                        {item.status === "confirmed" ? "✓ 已确认" : "确认要求"}
-                      </button>
-                    </div>
+              {Object.entries(grouped).map(([chapter, items]) => (
+                <section className="requirement-group" key={chapter}>
+                  <h3>{chapter}<small>{items.length} 条</small></h3>
+                  <div className="requirement-list">
+                    {items.map((item) => (
+                      <article className={`requirement-card ${item.type === "scoring" ? "scoring-card" : ""}`} key={item.id}>
+                        <div className="requirement-top">
+                          <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
+                          <span className="confidence">{item.proposal_relevance === "high" ? "重点响应" : "建议响应"}</span>
+                        </div>
+                        <h3>{item.title}</h3>
+                        <p>{item.normalized_text}</p>
+                        <details><summary>查看原文依据</summary><blockquote>{item.quote}</blockquote>
+                          <div className="source-row">{item.sources.map((source) => <span key={source.id}>{source.filename} · {sourceLabel(source)}</span>)}</div>
+                        </details>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+
+          {step === "outline" && (
+            <div className="outline-layout">
+              <div className="section-toolbar">
+                <div><strong>{sections.length}</strong><span>个推荐章节</span></div>
+                <p>可改名和调整顺序，不需要逐条确认要求。</p>
+                <button className="primary" onClick={saveOutline}>确认目录并开始写作</button>
+              </div>
+              <div className="outline-list">
+                {sections.map((section, index) => (
+                  <article key={section.id}>
+                    <b>{String(index + 1).padStart(2, "0")}</b>
+                    <input value={section.title} onChange={(event) => updateChapter(index, event.target.value)} />
+                    <span>映射 {section.requirement_ids.length} 条要求</span>
+                    <button onClick={() => moveChapter(index, -1)} disabled={index === 0}>↑</button>
+                    <button onClick={() => moveChapter(index, 1)} disabled={index === sections.length - 1}>↓</button>
                   </article>
-                )) : <div className="empty-state">还没有候选要求，请返回上传文件并执行提取。</div>}
+                ))}
               </div>
             </div>
           )}
 
           {step === "writer" && (
             <div className="writer-layout">
-              <aside className="writer-sidebar panel">
-                <span className="panel-label">写作输入</span>
-                <label className="field"><span>章节标题</span><input value={sectionTitle} onChange={(event) => setSectionTitle(event.target.value)} /></label>
-                <div className="choice-list">
-                  {confirmed.map((item) => (
-                    <label key={item.id}>
-                      <input
-                        type="checkbox"
-                        checked={selectedRequirementIds.includes(item.id)}
-                        onChange={(event) => setSelectedRequirementIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))}
-                      />
-                      <span>{item.title}</span>
-                    </label>
+              <aside className="panel writer-sidebar">
+                <span className="panel-label">CHAPTERS</span>
+                <h3>技术方案目录</h3>
+                <div className="saved-sections">
+                  {sections.map((section, index) => (
+                    <button key={section.id} className={section.id === activeSectionId ? "active" : ""} onClick={() => selectSection(section)}>
+                      <strong>{index + 1}. {section.title}</strong><span>{section.status === "approved" ? "已确认" : section.current_version ? "待确认" : "待生成"}</span>
+                    </button>
                   ))}
                 </div>
-                <button className="primary" onClick={createAndGenerateSection} disabled={!confirmed.length || Boolean(busy)}>生成一个章节</button>
-                {sections.length ? <div className="saved-sections"><small>已保存章节</small>{sections.map((item) => <button key={item.id} className={item.id === activeSectionId ? "active" : ""} onClick={() => { setActiveSectionId(item.id); setEditorContent(item.current_version?.content ?? ""); }}>{item.title}<span>{item.status}</span></button>)}</div> : null}
               </aside>
-
-              <article className="editor-panel">
-                <div className="editor-bar">
-                  <div><strong>{activeSection?.title ?? "章节编辑器"}</strong><span>{activeSection?.current_version ? `第 ${activeSection.current_version.version_no} 版` : "等待生成"}</span></div>
-                  <div><button className="secondary" onClick={saveSection} disabled={!activeSection?.current_version || Boolean(busy)}>保存新版本</button><button className="primary" onClick={approveSection} disabled={!activeSection?.current_version || Boolean(busy)}>人工确认</button></div>
-                </div>
-                {activeSection?.findings.length ? <div className="findings">{activeSection.findings.map((item) => <p key={item.id} className={item.severity}><b>{item.severity === "blocking" ? "阻断" : "提醒"}</b>{item.message}</p>)}</div> : null}
-                <textarea
-                  value={editorContent}
-                  onChange={(event) => setEditorContent(event.target.value)}
-                  placeholder="生成后可在这里人工修改章节内容……"
-                  disabled={!activeSection?.current_version}
-                />
-              </article>
+              <div className="editor-panel">
+                {activeSection ? <>
+                  <div className="editor-bar">
+                    <div><strong>{activeSection.title}</strong><span>响应 {activeSection.requirement_ids.length} 条要求</span></div>
+                    <div>
+                      {!activeSection.current_version && <button className="primary" onClick={() => generateSection(activeSection)}>生成本章</button>}
+                      {activeSection.current_version && <button className="secondary" onClick={saveSection}>保存修改</button>}
+                      {activeSection.current_version && <button className="primary" onClick={approveSection}>人工确认</button>}
+                    </div>
+                  </div>
+                  {activeSection.findings.length > 0 && <div className="findings">{activeSection.findings.map((item) => <p className={item.severity} key={item.id}>{item.message}</p>)}</div>}
+                  <textarea
+                    value={editorContent}
+                    onChange={(event) => setEditorContent(event.target.value)}
+                    placeholder="点击“生成本章”，系统将严格依据本章映射的技术要求撰写。"
+                    disabled={!activeSection.current_version}
+                  />
+                </> : <div className="empty-state">请先确认推荐目录。</div>}
+              </div>
             </div>
           )}
 
           {step === "export" && (
             <div className="export-layout">
-              <article className="delivery-card">
-                <span className="delivery-icon">W</span>
-                <div><span className="panel-label">WORD DELIVERY</span><h3>{activeSection?.title ?? "技术方案章节"}</h3><p>包含章节正文、要求响应清单以及原文页码/段落来源。</p></div>
-                <span className={`approval ${activeSection?.status === "approved" ? "ready" : ""}`}>{activeSection?.status === "approved" ? "已人工确认" : "等待人工确认"}</span>
-              </article>
-              <article className="panel export-actions">
+              <div className="delivery-card">
+                <div className="delivery-icon">W</div>
+                <div><span className="panel-label">DELIVERABLE</span><h3>{workspace?.name ?? "技术方案"}</h3><p>系统将按目录顺序合并所有已人工确认章节，并附技术要求来源总表。</p></div>
+                <span className={`approval ${sections.length > 0 && sections.every((item) => item.status === "approved") ? "ready" : ""}`}>{sections.length > 0 && sections.every((item) => item.status === "approved") ? "全部章节已确认" : "需逐章生成并确认"}</span>
+              </div>
+              <div className="panel export-actions">
                 <h3>生成交付文件</h3>
-                <p>导出前请确认章节中不包含未经核实的案例、资质、参数或承诺。</p>
-                <button className="primary large" onClick={createExport} disabled={activeSection?.status !== "approved" || Boolean(busy)}>生成 Word 文件</button>
-                {exportItem?.status === "succeeded" ? (
-                  <a className="download-button" href={`${API_BASE}/projects/${projectId}/exports/${exportItem.id}/download`}>
-                    下载 {exportItem.filename ?? "技术方案.docx"}
-                  </a>
-                ) : null}
-              </article>
+                <p>Word 中包含正文、响应要求和原文来源，便于复核。</p>
+                <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>生成整本 Word</button>
+                {exportItem?.status === "succeeded" && workspace && (
+                  <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
+                )}
+              </div>
             </div>
           )}
         </section>

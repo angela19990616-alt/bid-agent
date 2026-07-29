@@ -124,3 +124,30 @@ def test_internal_evaluator_instruction_is_rejected():
     )
 
     assert RequirementAgent(fake).extract([source(original)]) == []
+
+
+def test_scoring_point_has_rule_driven_fallback_when_model_omits_it():
+    fake = FakeModelClient({"requirements": []})
+    original = "技术方案总体设计完整、架构合理、理解深入的，得10分。"
+
+    result = RequirementAgent(fake).extract(
+        [source("第三章 评分办法"), source(original)]
+    )
+
+    assert len(result) == 1
+    assert result[0].requirement_type == "scoring"
+    assert result[0].normalized_text.startswith("供应商应")
+    assert result[0].quote == original
+
+
+def test_nontechnical_evaluation_rows_do_not_become_scoring_points():
+    fake = FakeModelClient({"requirements": []})
+    rows = [
+        source("4 | 低于成本价；不正当竞争预防措施 | 供应商须说明"),
+        source("5 | 谈判保证金 | 本项目不收取谈判保证金"),
+        source("13 | 品牌型号说明 | 以上内容不作为技术评审因素"),
+    ]
+
+    assert RequirementAgent(fake).extract(
+        [source("第三章 评审办法"), *rows]
+    ) == []

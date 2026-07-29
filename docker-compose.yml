@@ -60,6 +60,7 @@ services:
       - "8000"
     volumes:
       - document_storage:/app/storage
+      - export_storage:/app/exports
     healthcheck:
       test:
         [
@@ -89,3 +90,4 @@ volumes:
   postgres_data:
   redis_data:
   document_storage:
+  export_storage:

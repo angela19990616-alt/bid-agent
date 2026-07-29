@@ -1,138 +1,128 @@
-# Bid Agent MVP 技术架构
+# Bid Agent 可演进架构
 
-## 1. 架构原则
+## 1. 架构目标
 
-MVP 使用“一个前端、一个 API、一个数据库、一个文件存储目录”的简单结构。六个业务层是代码边界，不拆成六个微服务。
-
-- 先保证闭环和可追溯，再增加智能编排。
-- PostgreSQL 是业务状态的唯一事实来源。
-- 文件保存在受控存储中，数据库只保存元数据和路径。
-- 耗时操作通过任务记录支持重试和断点继续。
-- Redis 在 MVP 中只用于任务队列或短期锁，不保存最终业务结果。
-
-## 2. 一目了然的系统结构
+Bid Agent 采用 Rule Driven、Knowledge Driven、Workflow Driven 三层底座。
+模型不是业务规则的持有者，只在明确输入、输出和终止条件的节点中执行抽取或写作。
 
 ```mermaid
 flowchart LR
-    U["咨询人员"] --> FE["Web 前端"]
-    FE --> API["FastAPI"]
-
-    API --> F["Foundation<br/>项目、文件、任务"]
-    API --> P["Parser<br/>PDF / DOCX 解析"]
-    API --> R["Requirement Engine<br/>要求提取与确认"]
-    API --> K["Knowledge<br/>来源片段与检索"]
-    API --> W["Writer<br/>单章节生成与校核"]
-    API --> E["Export<br/>DOCX 导出"]
-
-    F --> DB[("PostgreSQL + pgvector")]
-    P --> DB
-    R --> DB
-    K --> DB
-    W --> DB
-    E --> DB
-
-    P --> FS[("受控文件存储")]
-    E --> FS
-    API -. "可选：任务队列/锁" .-> REDIS[("Redis")]
-    W --> LLM["大模型 API"]
+    UI["技术方案工作台"] --> API["FastAPI 产品 API"]
+    API --> WF["Controlled Workflow"]
+    WF --> RE["Rule Engine"]
+    WF --> KE["Knowledge Engine"]
+    WF --> AI["Bounded AI Modules"]
+    RE --> RDB[("规则版本与运行快照")]
+    KE --> KDB[("机构私有知识与匹配结果")]
+    AI --> LLM["大模型 API"]
+    WF --> BDB[("业务状态与来源证据")]
+    WF --> FS[("上传与 DOCX 存储")]
 ```
 
-## 3. 业务执行流程
+## 2. 受控调用流程
 
 ```mermaid
 flowchart TD
-    A["创建项目"] --> B["上传 PDF / DOCX"]
-    B --> C["解析并保存来源片段"]
-    C --> D["提取候选要求"]
-    D --> E{"人工确认"}
-    E -->|修改或删除| D
-    E -->|确认| F["选择要求并生成一个章节"]
-    F --> G["规则校核与来源关联"]
-    G --> H{"人工编辑确认"}
-    H -->|继续修改| H
-    H -->|通过| I["导出 DOCX"]
+    A["Document Upload"] --> B["Document Validator"]
+    B --> C["Load Extraction Rules"]
+    C --> D["Parser"]
+    D --> E["Requirement Extractor"]
+    E --> F["Requirement Reviewer"]
+    F --> G["Load Enterprise Knowledge"]
+    G --> H["Knowledge Matching"]
+    H --> I["Load Proposal Writing Rules"]
+    I --> J["Proposal Planner"]
+    J --> K["Chapter Writer"]
+    K --> L["Compliance Checker"]
+    L --> M["人工编辑与确认"]
+    M -->|下一章| K
+    M -->|全部确认| N["Full DOCX Export"]
 ```
 
-## 4. 六层职责
+`workflow_runs.stage_trace` 保存有限阶段轨迹。流程代码只能调用表中定义的阶段，
+没有 Agent 自由对话、自治工具选择或无限循环。
 
-### Foundation
+## 3. Rule Engine
 
-负责项目、上传文件、处理任务、统一错误、配置和审计字段。其他层不能绕过 Foundation 创建孤立数据。
+默认配置位于 `config/rules/`，数据库中的激活规则可覆盖默认配置。Rule Engine
+负责：
 
-### Parser
+- 规则结构校验；
+- 草稿、激活和退役；
+- 单类型唯一激活版本；
+- Git 默认版本与数据库定制版本的统一加载；
+- 校验和与不可变运行快照；
+- 为未来 `ai_generated` 规则保留来源字段，但 AI 生成版本必须先进入草稿。
 
-负责文件校验、PDF 分页文本提取、DOCX 段落提取和标准化片段。输出稳定的 `SourceChunk`，不负责判断业务要求。
+规则类型：
 
-### Requirement Engine
+| 类型 | 控制内容 |
+| --- | --- |
+| extraction | 文件有效性、候选证据、忽略项、Requirement 定义、分类、命名、方案映射 |
+| writing | 目录顺序、章节风格、事实边界、知识引用、篇幅、重复率和术语策略 |
+| compliance | 长度、禁用表述、占位符、Requirement/Knowledge 可追溯门禁 |
 
-从来源片段提取候选要求，合并重复项，给出分类、置信度和来源引用。人工确认后形成可用于写作的要求。
+模型收到的是“当前规则版本内容 + 本阶段数据”，而不是代码中的永久超长 Prompt。
 
-### Knowledge
+## 4. Knowledge Engine
 
-管理来源片段和向量索引，按项目隔离检索。MVP 先支持来源回看和基础检索，RAG 增强后置。
+Enterprise Knowledge 只保存机构有权使用的私有知识：
 
-### Writer
+- company_profile
+- qualification
+- product_capability
+- technical_capability
+- case_study
+- standard_template
+- expert_experience
+- historical_bid
+- common_chapter
 
-根据章节标题、已确认要求和可用来源生成单章节；记录输入快照、草稿版本、要求映射和校核结果。
+Knowledge Matching 在 Chapter Writer 之前完成。匹配输入是章节标题和映射
+Requirements；输出是按相关度排序的明确知识集合。`knowledge_matches` 保存知识、
+章节、Requirement、分数和理由；`section_versions.knowledge_snapshot` 固化生成时
+使用的知识。
 
-### Export
+没有匹配知识并不会让 Writer 自由搜索。凡涉及企业事实，必须输出待补充占位符。
 
-把已保存的章节版本和要求响应清单渲染成 DOCX，保存导出记录和文件校验信息。
+历史招标文件只有通过有效性、解析质量、SHA-256 重复性和机构权限检查后才成为
+`historical_bid`，范围固定为 `organization_private`，仅用于后续私有 RAG。
 
-## 5. 核心数据模型
+## 5. 业务数据
 
-| 实体 | 关键字段 | 说明 |
-| --- | --- | --- |
-| `Project` | id, name, status, created_at, updated_at | 投标工作空间 |
-| `Document` | id, project_id, filename, media_type, sha256, status, storage_key, error | 原始招标文件 |
-| `SourceChunk` | id, document_id, page_no, paragraph_start, paragraph_end, text | 可追溯来源片段 |
-| `Requirement` | id, project_id, type, title, normalized_text, quote, status, confidence | 候选或已确认要求 |
-| `RequirementSource` | requirement_id, source_chunk_id, locator | 要求与原文的多对多关联 |
-| `Section` | id, project_id, title, status, current_version_id | 技术方案章节 |
-| `SectionRequirement` | section_id, requirement_id | 章节响应的要求 |
-| `SectionVersion` | id, section_id, version_no, content, origin, input_snapshot | 机器生成和人工编辑版本 |
-| `ReviewFinding` | id, section_version_id, type, severity, message | 生成校核结果 |
-| `ProcessingJob` | id, project_id, type, status, progress, error, retry_of | 可重试耗时任务 |
-| `ExportRecord` | id, project_id, section_version_id, status, storage_key, error | DOCX 导出记录 |
+| 实体 | 核心职责 |
+| --- | --- |
+| projects | 内部 workspace；新前端不向用户暴露“项目”概念 |
+| documents / source_chunks | 文件、有效性、私有知识资格和页码/段落证据 |
+| requirements | 规范化要求及 proposal_relevance、target_chapter、need_generation |
+| requirement_sources | Requirement 到原文证据的多对多映射 |
+| sections / section_requirements | 推荐目录及 Requirement 到章节的映射 |
+| section_versions | 生成/人工版本、规则快照、知识快照和输入快照 |
+| review_findings | 版本化合规校核结果 |
+| rule_definitions | 可编辑、可激活、可审计的规则版本 |
+| enterprise_knowledge | 机构私有企业知识 |
+| knowledge_matches | 写作前知识匹配证据 |
+| workflow_runs | 有限工作流轨迹和失败位置 |
+| export_records | 单章节兼容导出与整本方案导出 |
 
-所有业务表使用 UUID、创建时间和更新时间。对项目相关查询必须带 `project_id`，避免跨项目读取。
+## 6. 模块边界
 
-## 6. 一致性与失败恢复
+- Document Validator：只判断输入是否值得进入后续流程。
+- Parser：只把 PDF/DOCX 转为可定位 SourceSegment。
+- Requirement Extractor：依据加载的 extraction rule 调用模型。
+- Requirement Reviewer：确定方案相关性与目标章节，不调用模型。
+- Knowledge Matching：一次性加载私有知识并匹配，不写正文。
+- Proposal Planner：按 writing rule 和映射生成有序目录。
+- Chapter Writer：只用 Requirement 证据、Matched Knowledge 和 writing rule。
+- Compliance Checker：按 compliance rule 执行有限检查。
+- Export：按确认版本顺序生成完整 DOCX 和来源总表。
 
-- 文件写入成功后再提交数据库元数据；数据库失败时清理未引用临时文件。
-- 解析、提取、生成和导出都创建 `ProcessingJob`。
-- 任务输入保存不可变快照，重试创建新任务并指向原任务。
-- 章节采用追加版本，不覆盖旧版本。
-- 同一文件通过项目 ID 与 SHA-256 去重。
-- API 使用幂等键避免重复提交生成和导出。
+## 7. 安全与演进
 
-## 7. 部署拓扑
-
-本地 Mac 用于编辑、静态检查和不依赖完整服务的单元测试。
-
-ECS `/opt/bid-agent` 使用 Docker Compose 运行：
-
-- `frontend`
-- `api`
-- `worker`（需要异步任务时启用，与 API 共用代码镜像）
-- `postgres`（启用 pgvector）
-- `redis`
-
-生产入口只暴露 Web 所需端口；PostgreSQL、Redis 和内部 API 不直接暴露到公网。上传与导出目录使用持久卷并定期备份。
-
-## 8. 安全边界
-
-- `.env` 不进入 Git；仓库只保留无真实值的 `.env.example`。
-- 外部模型密钥和数据库密码由 ECS 环境注入，并定期轮换。
-- API 日志只记录任务 ID、状态、耗时和错误类别，不记录密钥或整段文件正文。
-- 下载接口校验项目归属，使用不可猜测 ID。
-- 文件名仅作显示；实际存储键由系统生成，防止路径穿越。
-
-## 9. 已知限制与演进
-
-- DOCX 没有跨环境稳定页码，MVP 以段落定位；需要页码时引导上传 PDF。
-- 扫描 PDF 后续增加 OCR。
-- 初期可在 API 进程执行小任务；真实样例验证耗时后再启用 worker。
-- pgvector 先保留能力，不让 RAG 成为 MVP 主流程的前置条件。
-- LangGraph 仅在流程分支和恢复复杂度确实需要时引入。
-
+- 密钥仅从环境读取，规则、知识快照和日志均不得保存密钥。
+- 机构私有知识不进入公共训练集，产品文案不得称为“模型训练”。
+- 当前 MVP 是单机构部署。多租户前必须增加真实身份认证、organization_id
+  行级权限、对象存储签名 URL 和审计日志。
+- AI 自动优化规则只能生成新草稿，必须经过专家差异审查和离线样本回归后激活。
+- 向量检索可替换当前确定性初筛，但 Knowledge Matching 的显式前置阶段和快照
+  不能被移除。

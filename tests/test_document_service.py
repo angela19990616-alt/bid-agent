@@ -53,6 +53,32 @@ def test_parse_docx_preserves_paragraph_locations():
     assert segments[1].paragraph_start == 3
 
 
+def test_parse_docx_adds_combined_table_row_context():
+    buffer = BytesIO()
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <w:body>
+        <w:tbl>
+          <w:tr>
+            <w:tc><w:p><w:r><w:t>评审因素</w:t></w:r></w:p></w:tc>
+            <w:tc><w:p><w:r><w:t>实施方案完整</w:t></w:r></w:p></w:tc>
+            <w:tc><w:p><w:r><w:t>10</w:t></w:r></w:p></w:tc>
+          </w:tr>
+        </w:tbl>
+      </w:body>
+    </w:document>
+    """
+    with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", xml)
+
+    segments = parse_document("评分表.docx", buffer.getvalue())
+
+    row = segments[-1]
+    assert row.text == "评审因素 | 实施方案完整 | 10"
+    assert row.paragraph_start == 1
+    assert row.paragraph_end == 3
+
+
 def test_rejects_unsupported_file():
     with pytest.raises(UnsupportedDocumentError):
         extract_text("data.xlsx", b"content")

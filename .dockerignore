@@ -1,4 +1,5 @@
 .git/
+.git-corrupt-backup/
 .gitignore
 .env
 .env.*
@@ -8,6 +9,11 @@
 **/__pycache__/
 **/*.py[cod]
 **/.DS_Store
+**/*.swp
+*.egg-info/
+tests/
+docs/
+test_agent.py
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

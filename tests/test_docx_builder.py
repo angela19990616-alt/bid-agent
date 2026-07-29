@@ -1,6 +1,10 @@
 from docx import Document
 
-from app.services.docx_builder import build_proposal_docx
+from app.services.docx_builder import (
+    _clean_export_markdown,
+    _strip_leading_heading,
+    build_proposal_docx,
+)
 
 
 def test_build_proposal_docx_with_response_matrix(tmp_path):
@@ -37,5 +41,27 @@ def test_build_proposal_docx_with_response_matrix(tmp_path):
     assert "总体思路" in text
     assert len(document.tables) == 1
     assert document.tables[0].cell(1, 2).text.startswith(
-        "招标文件.pdf，第 12 页"
+        "本项目招标文件，第 12 页"
     )
+
+
+def test_export_markdown_removes_internal_prompt_labels():
+    content = (
+        "依据 Requirement: 123e4567-e89b-12d3-a456-426614174000 "
+        "并参考 Matched Knowledge "
+        "123e4567-e89b-12d3-a456-426614174001。"
+    )
+
+    cleaned = _clean_export_markdown(content)
+
+    assert "Requirement" not in cleaned
+    assert "Matched Knowledge" not in cleaned
+    assert "f47ac10b-58cc-4372-a567-0e02b2c3d479" not in cleaned
+    assert "123e4567" not in cleaned
+
+
+def test_duplicate_leading_chapter_heading_is_removed():
+    assert _strip_leading_heading(
+        "# 服务范围与工作内容\n\n正文",
+        "服务范围与工作内容",
+    ).strip() == "正文"

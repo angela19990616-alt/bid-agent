@@ -8,7 +8,11 @@ from psycopg.rows import dict_row
 
 from app.config.settings import settings
 from app.database.db import connect
-from app.services.docx_builder import build_proposal_docx
+from app.services.docx_builder import (
+    build_full_proposal_docx,
+    build_proposal_docx,
+)
+from app.workflows.controlled_pipeline import ControlledPipeline
 
 
 class ExportNotFoundError(Exception):
@@ -20,6 +24,64 @@ class ExportValidationError(Exception):
 
 
 class ExportService:
+    def create_full(self, project_id: UUID) -> dict:
+        data = self._load_full_export_input(project_id)
+        export_id = uuid4()
+        filename = f"技术方案_{export_id.hex[:8]}.docx"
+        storage_key = f"{project_id}/{filename}"
+        destination = self.resolve_path(storage_key)
+        temporary = destination.with_suffix(".tmp")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO export_records (
+                        id, project_id, format, status, storage_key,
+                        filename, export_scope
+                    )
+                    VALUES (
+                        %s, %s, 'docx', 'running', %s, %s,
+                        'full_proposal'
+                    )
+                    """,
+                    (export_id, project_id, storage_key, filename),
+                )
+        try:
+            build_full_proposal_docx(
+                temporary,
+                project_name=data["project_name"],
+                sections=data["sections"],
+                requirements=data["requirements"],
+            )
+            temporary.replace(destination)
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            self._mark_failed(export_id, type(exc).__name__)
+            raise ExportValidationError("整本 DOCX 导出失败。") from exc
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE export_records
+                    SET status = 'succeeded', updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (export_id,),
+                )
+                cursor.execute(
+                    """
+                    UPDATE projects
+                    SET status = 'exported', updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (project_id,),
+                )
+        pipeline = ControlledPipeline()
+        run_id = pipeline.latest(project_id)
+        pipeline.succeed(run_id, "export")
+        return self.get(project_id, export_id)
+
     def create(
         self,
         project_id: UUID,
@@ -107,7 +169,8 @@ class ExportService:
                     """
                     SELECT
                         id, project_id, section_id, section_version_id,
-                        format, status, filename, error_code, error_message,
+                        export_scope, format, status, filename,
+                        error_code, error_message,
                         created_at, updated_at
                     FROM export_records
                     WHERE project_id = %s AND id = %s
@@ -258,3 +321,103 @@ class ExportService:
                     """,
                     (error_code, export_id),
                 )
+
+    @staticmethod
+    def _load_full_export_input(project_id: UUID) -> dict:
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT projects.name
+                    FROM projects WHERE id = %s
+                    """,
+                    (project_id,),
+                )
+                project = cursor.fetchone()
+                if project is None:
+                    raise ExportValidationError("方案不存在。")
+                cursor.execute(
+                    """
+                    SELECT sections.id, sections.title,
+                           sections.status, section_versions.content
+                    FROM sections
+                    LEFT JOIN section_versions
+                      ON section_versions.id = sections.current_version_id
+                    WHERE sections.project_id = %s
+                      AND EXISTS (
+                          SELECT 1
+                          FROM section_requirements
+                          JOIN requirements
+                            ON requirements.id =
+                               section_requirements.requirement_id
+                          WHERE section_requirements.section_id = sections.id
+                            AND requirements.status <> 'rejected'
+                            AND requirements.need_generation = TRUE
+                      )
+                    ORDER BY sections.sort_order, sections.created_at
+                    """,
+                    (project_id,),
+                )
+                sections = cursor.fetchall()
+                if not sections:
+                    raise ExportValidationError("技术方案尚无章节。")
+                if any(
+                    row["status"] != "approved" or not row["content"]
+                    for row in sections
+                ):
+                    raise ExportValidationError(
+                        "整本导出前必须逐章生成人工确认。"
+                    )
+                cursor.execute(
+                    """
+                    SELECT DISTINCT ON (requirements.id, source_chunks.id)
+                        requirements.id,
+                        requirements.normalized_text,
+                        requirements.quote,
+                        documents.filename,
+                        source_chunks.locator_kind,
+                        source_chunks.page_no,
+                        source_chunks.paragraph_start,
+                        source_chunks.paragraph_end
+                    FROM requirements
+                    JOIN requirement_sources
+                      ON requirement_sources.requirement_id = requirements.id
+                    JOIN source_chunks
+                      ON source_chunks.id =
+                         requirement_sources.source_chunk_id
+                    JOIN documents
+                      ON documents.id = source_chunks.document_id
+                    WHERE requirements.project_id = %s
+                      AND requirements.need_generation = TRUE
+                      AND requirements.status <> 'rejected'
+                    ORDER BY requirements.id, source_chunks.id
+                    """,
+                    (project_id,),
+                )
+                rows = cursor.fetchall()
+        grouped: dict[UUID, dict] = {}
+        for row in rows:
+            item = grouped.setdefault(
+                row["id"],
+                {
+                    "normalized_text": row["normalized_text"],
+                    "quote": row["quote"],
+                    "sources": [],
+                },
+            )
+            item["sources"].append(
+                {
+                    "filename": row["filename"],
+                    "locator": {
+                        "kind": row["locator_kind"],
+                        "page": row["page_no"],
+                        "paragraph_start": row["paragraph_start"],
+                        "paragraph_end": row["paragraph_end"],
+                    },
+                }
+            )
+        return {
+            "project_name": project["name"],
+            "sections": [dict(row) for row in sections],
+            "requirements": list(grouped.values()),
+        }

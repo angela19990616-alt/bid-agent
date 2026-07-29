@@ -6,58 +6,10 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.core.model_client import ModelClient
+from app.rules.engine import RuleDocument, RuleEngine
 
 
-REQUIREMENT_TYPES = {
-    "technical",
-    "scoring",
-    "delivery",
-    "qualification",
-    "compliance",
-    "commercial",
-}
 IMPORTANCE_LEVELS = {"low", "medium", "high"}
-ACTION_MARKERS = (
-    "必须",
-    "须",
-    "应当",
-    "不得",
-    "不允许",
-    "不接受",
-    "无效",
-    "否决",
-    "响应文件",
-    "供应商",
-    "投标人",
-    "报价",
-    "提交",
-    "提供",
-    "具备",
-    "具有",
-    "评分",
-    "得分",
-    "交付",
-    "验收",
-    "服务要求",
-    "技术要求",
-    "商务要求",
-    "服务内容",
-    "成果要求",
-)
-RELEVANT_CONTEXT_MARKERS = (
-    "响应文件",
-    "资格",
-    "证明材料",
-    "评分",
-    "技术",
-    "服务",
-    "商务",
-    "报价",
-    "交付",
-    "验收",
-    "成果",
-    "供应商",
-)
 LIST_ITEM = re.compile(
     r"^(?:[（(]?[一二三四五六七八九十\d]+[）).、．.]|"
     r"\d+(?:\.\d+)+|[①②③④⑤⑥⑦⑧⑨⑩])"
@@ -72,21 +24,6 @@ SECTION_HEADING = re.compile(
     r"^[一二三四五六七八九十百]+[、.．]\s*.{1,60}$"
 )
 TRAILING_PAGE_NUMBER = re.compile(r".{3,80}\D\d{1,3}$")
-GENERIC_LABELS = {
-    "目录",
-    "目 录",
-    "目    录",
-    "序号",
-    "采购内容",
-    "单位",
-    "数量",
-    "备注",
-    "说明和要求",
-    "响应文件格式",
-    "供应商资格证明材料",
-}
-
-
 @dataclass(frozen=True)
 class RequirementEvidence:
     source_id: UUID
@@ -126,19 +63,25 @@ class RequirementAgent:
             self.model_client = ModelClient()
         return self.model_client
 
-    def extract(self, sources: list[dict]) -> list[AgentRequirement]:
-        evidence = self._select_evidence(sources)
+    def extract(
+        self,
+        sources: list[dict],
+        rules: RuleDocument | None = None,
+    ) -> list[AgentRequirement]:
+        active = rules or RuleEngine().load_default("extraction")
+        evidence = self._select_evidence(sources, active.content)
         if not evidence:
             return []
         extracted: list[AgentRequirement] = []
         for start in range(0, len(evidence), self.batch_size):
             batch = evidence[start : start + self.batch_size]
-            extracted.extend(self._extract_batch(batch))
+            extracted.extend(self._extract_batch(batch, active))
         return extracted
 
     def _extract_batch(
         self,
         batch: list[RequirementEvidence],
+        rules: RuleDocument,
     ) -> list[AgentRequirement]:
         source_map = {item.source_ref: item for item in batch}
         content = [
@@ -154,7 +97,7 @@ class RequirementAgent:
                 [
                     {
                         "role": "system",
-                        "content": self._system_prompt(),
+                        "content": self._system_prompt(rules),
                     },
                     {
                         "role": "user",
@@ -178,64 +121,94 @@ class RequirementAgent:
         for raw in payload.get("requirements", []):
             if not isinstance(raw, dict):
                 continue
-            item = self._validate_item(raw, source_map)
+            item = self._validate_item(raw, source_map, rules.content)
             if item is not None:
                 results.append(item)
+        return self._apply_deterministic_fallbacks(
+            batch,
+            results,
+            rules.content,
+        )
+
+    @classmethod
+    def _apply_deterministic_fallbacks(
+        cls,
+        batch: list[RequirementEvidence],
+        extracted: list[AgentRequirement],
+        config: dict,
+    ) -> list[AgentRequirement]:
+        results = list(extracted)
+        fallback_rules = config.get("deterministic_fallbacks", [])
+        covered = {
+            (item.source_id, item.requirement_type) for item in results
+        }
+        for fallback in fallback_rules:
+            requirement_type = str(fallback["requirement_type"])
+            patterns = [
+                re.compile(pattern)
+                for pattern in fallback.get("any_patterns", [])
+            ]
+            exclude_patterns = [
+                re.compile(pattern)
+                for pattern in fallback.get("exclude_patterns", [])
+            ]
+            context_markers = fallback.get("context_markers", [])
+            for evidence in batch:
+                if (evidence.source_id, requirement_type) in covered:
+                    continue
+                if patterns and not any(
+                    pattern.search(evidence.text) for pattern in patterns
+                ):
+                    continue
+                if any(
+                    pattern.search(evidence.text)
+                    for pattern in exclude_patterns
+                ):
+                    continue
+                context = f"{evidence.context} {evidence.text}"
+                if context_markers and not any(
+                    marker in context for marker in context_markers
+                ):
+                    continue
+                concise = evidence.text.strip("。；;：:")
+                title = (
+                    f"{fallback['title_prefix']}：{concise}"
+                )[:80]
+                normalized = (
+                    f"{fallback['normalized_prefix']}{concise}"
+                )[:1000]
+                results.append(
+                    AgentRequirement(
+                        source_id=evidence.source_id,
+                        title=title,
+                        normalized_text=normalized,
+                        quote=evidence.text[:1000],
+                        requirement_type=requirement_type,
+                        importance=str(
+                            fallback.get("importance", "high")
+                        ),
+                        confidence=float(
+                            fallback.get("confidence", 0.8)
+                        ),
+                    )
+                )
+                covered.add((evidence.source_id, requirement_type))
         return results
 
     @staticmethod
-    def _system_prompt() -> str:
-        return """
-你是 Requirement Agent，任务是从中国政府采购/招标文件中找出“供应商在投标或
-响应文件中必须做什么、写什么、提供什么、承诺什么，以及如何被评分或否决”。
-
-只保留能够指导编制或校核投标文件的具体要求：
-1. 资格、证明材料、响应文件组成与格式、签字盖章、份数、密封、有效期；
-2. 技术/服务/商务响应、成果交付、验收、工期、报价；
-3. 评分点、加分条件、无效响应和否决条件。
-4. 在“技术要求、服务内容、成果要求、商务要求”等标题下，即使原文省略
-   “供应商”主语，清单中的工作、成果和方案内容也属于供应商义务，应保留。
-
-最终结果必须直接服务于投标/响应文件编制或提交前校核。一般性廉洁纪律、采购
-机构工作程序、成交后的合同备案和内部管理动作，如果不要求供应商在响应文件中
-提供材料、作出承诺或形成技术/商务响应，则排除。
-
-必须排除：
-1. 目录行、章节标题、页码、表头、字段名、联系方式；
-2. 项目背景、采购人或代理机构的内部流程、评审人员的动作；
-3. 仅说明“详见某章”“供应商须知”“资格证明材料”等空泛标签；
-4. 不能回答“供应商要做什么”的句子。
-
-requirement 字段必须聚焦供应商动作，并以“供应商应”“供应商须”
-“供应商不得”“响应文件应”或“报价应”之一开头。不要把采购人、代理机构、
-谈判小组或评审委员会的动作写进 requirement。无效或否决条件应改写为供应商
-应避免的具体行为。title 必须与 requirement 含义一致，尤其不得颠倒高于/低于、
-多于/少于、之前/之后等方向。
-“成果要求”中的报告、方案和文档是成交后的交付成果，应写为“供应商应提交/
-交付……”，不得误写成“响应文件应包含……”。
-
-输出严格 JSON：
-{"requirements":[
-  {
-    "source_ref":"输入中的 source_ref",
-    "title":"8-30字、动作型、让人一眼看懂的主题",
-    "requirement":"以“供应商应/不得/响应文件应”表达的完整可执行要求",
-    "type":"technical|scoring|delivery|qualification|compliance|commercial",
-    "importance":"low|medium|high",
-    "confidence":0.0到1.0,
-    "evidence":"必须逐字来自该 source_ref 的最小充分原文片段"
-  }
-]}
-
-同一原文含多条独立义务时可拆成多条；重复表述只保留信息更完整的一条。
-不得补充原文没有的资质、参数、案例、日期或承诺。
-""".strip()
+    def _system_prompt(rules: RuleDocument) -> str:
+        return (
+            f"{rules.content['model_instruction']}\n"
+            "以下是本次运行已加载的版本化提取规则，必须逐项遵守：\n"
+            + json.dumps(rules.content, ensure_ascii=False)
+        )
 
     @classmethod
     def _validate_item(
         cls,
         raw: dict,
         source_map: dict[str, RequirementEvidence],
+        config: dict,
     ) -> AgentRequirement | None:
         source = source_map.get(str(raw.get("source_ref", "")))
         if source is None:
@@ -252,19 +225,26 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
 
         if not 4 <= len(title) <= 80 or not 8 <= len(normalized) <= 1000:
             return None
-        if cls.is_structural_noise(title) or cls.is_structural_noise(
-            normalized
+        if cls.is_structural_noise(title, config) or cls.is_structural_noise(
+            normalized, config
         ):
             return None
-        if requirement_type not in REQUIREMENT_TYPES:
+        if requirement_type not in config["types"]:
+            return None
+        if requirement_type == "scoring" and any(
+            re.search(pattern, source.text)
+            for fallback in config.get("deterministic_fallbacks", [])
+            if fallback.get("requirement_type") == "scoring"
+            for pattern in fallback.get("exclude_patterns", [])
+        ):
             return None
         if importance not in IMPORTANCE_LEVELS:
             return None
         if cls._canonical(title) == cls._canonical(normalized):
             return None
-        if cls._is_internal_instruction(source.text):
+        if cls._is_internal_instruction(source.text, config):
             return None
-        if not cls._is_actionable(normalized, requirement_type):
+        if not cls._is_actionable(normalized, requirement_type, config):
             return None
         if not evidence or evidence not in source.text:
             evidence = source.text
@@ -282,6 +262,7 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
     def _select_evidence(
         cls,
         sources: list[dict],
+        config: dict,
     ) -> list[RequirementEvidence]:
         selected: list[RequirementEvidence] = []
         recent: list[str] = []
@@ -290,8 +271,8 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
             text = cls._clean(str(source["content"]))
             if not text:
                 continue
-            is_heading = cls._looks_like_heading(text)
-            if cls.is_structural_noise(text):
+            is_heading = cls._looks_like_heading(text, config)
+            if cls.is_structural_noise(text, config):
                 if is_heading and not TOC_LINE.match(text):
                     section_heading = text
                     recent.append(text)
@@ -301,11 +282,29 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
             context = " / ".join(
                 [section_heading, *recent[-3:]]
             )[-600:]
-            direct = any(marker in text for marker in ACTION_MARKERS)
-            contextual_list = bool(LIST_ITEM.match(text)) and any(
-                marker in context for marker in RELEVANT_CONTEXT_MARKERS
+            direct = any(
+                marker in text for marker in config["candidate_markers"]
             )
-            if direct or contextual_list:
+            fallback_direct = any(
+                any(
+                    re.search(pattern, text)
+                    for pattern in fallback.get("any_patterns", [])
+                )
+                and (
+                    not fallback.get("context_markers")
+                    or any(
+                        marker in f"{context} {text}"
+                        for marker in fallback["context_markers"]
+                    )
+                )
+                for fallback in config.get(
+                    "deterministic_fallbacks", []
+                )
+            )
+            contextual_list = bool(LIST_ITEM.match(text)) and any(
+                marker in context for marker in config["context_markers"]
+            )
+            if direct or fallback_direct or contextual_list:
                 selected.append(
                     RequirementEvidence(
                         source_id=source["id"],
@@ -317,15 +316,24 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
             recent.append(text[:180])
             if len(recent) > 6:
                 recent.pop(0)
-            if len(selected) >= 500:
+            if len(selected) >= int(
+                config.get("max_evidence_candidates", 500)
+            ):
                 break
         return selected
 
     @classmethod
-    def is_structural_noise(cls, text: str) -> bool:
+    def is_structural_noise(
+        cls,
+        text: str,
+        config: dict | None = None,
+    ) -> bool:
+        active = config or RuleEngine().load_default("extraction").content
         value = cls._clean(text)
         compact = value.replace(" ", "")
-        if not value or compact in {item.replace(" ", "") for item in GENERIC_LABELS}:
+        if not value or compact in {
+            item.replace(" ", "") for item in active["ignore_labels"]
+        }:
             return True
         if len(value) < 4 or value.isdigit():
             return True
@@ -346,7 +354,8 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
         return False
 
     @staticmethod
-    def _looks_like_heading(text: str) -> bool:
+    def _looks_like_heading(text: str, config: dict) -> bool:
+        suffixes = tuple(config["heading_suffixes"])
         return bool(
             CHAPTER_HEADING.match(text)
             or SECTION_HEADING.match(text)
@@ -357,13 +366,13 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
                     text,
                 )
                 and text.rstrip("：:").endswith(
-                    ("要求", "内容", "材料", "组成", "成果")
+                    suffixes
                 )
             )
             or (
                 len(text) <= 60
                 and text.rstrip("：:").endswith(
-                    ("要求", "条件", "内容", "材料", "组成", "成果")
+                    suffixes
                 )
             )
         )
@@ -386,20 +395,12 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
         return payload
 
     @staticmethod
-    def _is_actionable(text: str, requirement_type: str) -> bool:
-        if text.startswith(
-            (
-                "供应商应",
-                "供应商须",
-                "供应商不得",
-                "投标人应",
-                "投标人须",
-                "投标人不得",
-                "响应文件应",
-                "响应文件须",
-                "报价应",
-            )
-        ):
+    def _is_actionable(
+        text: str,
+        requirement_type: str,
+        config: dict,
+    ) -> bool:
+        if text.startswith(tuple(config["allowed_prefixes"])):
             return True
         return requirement_type == "scoring" and (
             text.startswith(("供应商", "投标人"))
@@ -407,9 +408,12 @@ requirement 字段必须聚焦供应商动作，并以“供应商应”“供�
         )
 
     @staticmethod
-    def _is_internal_instruction(text: str) -> bool:
+    def _is_internal_instruction(text: str, config: dict) -> bool:
+        actors = "|".join(
+            re.escape(item) for item in config["internal_actors"]
+        )
         internal_action = re.search(
-            r"(?:谈判小组|评审委员会|采购人|采购代理机构)"
+            rf"(?:{actors})"
             r".{0,16}?(?:应当|(?<!响)应(?!响)|须|不得|可以|负责)",
             text,
         )

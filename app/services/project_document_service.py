@@ -8,9 +8,14 @@ from uuid import UUID, uuid4
 
 from psycopg.rows import dict_row
 
+from app.agents.document_validator import (
+    DocumentValidation,
+    DocumentValidator,
+)
 from app.config.settings import settings
 from app.database.db import connect
 from app.services.document_service import SourceSegment, parse_document
+from app.rules.engine import RuleDocument, RuleEngine
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,11 @@ class ProjectDocument:
     source_count: int
     created_at: datetime
     updated_at: datetime
+    validation_status: str = "pending"
+    validation_score: float | None = None
+    validation_reason: str | None = None
+    knowledge_status: str = "pending"
+    knowledge_scope: str = "organization_private"
     job_id: UUID | None = None
 
 
@@ -71,6 +81,7 @@ class ProjectDocumentService:
         filename: str,
         content_type: str | None,
         content: bytes,
+        validation_rules: RuleDocument | None = None,
     ) -> ProjectDocument:
         digest = hashlib.sha256(content).hexdigest()
         public_id = uuid4()
@@ -106,6 +117,12 @@ class ProjectDocumentService:
                     code,
                     str(exc),
                 ) from exc
+            active_rules = validation_rules or RuleEngine().load(
+                "extraction"
+            )
+            validation = DocumentValidator().validate(
+                filename, segments, active_rules
+            )
             return self._persist_parsed(
                 project_id=project_id,
                 public_id=public_id,
@@ -116,6 +133,7 @@ class ProjectDocumentService:
                 digest=digest,
                 storage_key=storage_key,
                 segments=segments,
+                validation=validation,
             )
         except DocumentParseFailedError:
             raise
@@ -277,6 +295,7 @@ class ProjectDocumentService:
         digest: str,
         storage_key: str,
         segments: list[SourceSegment],
+        validation: DocumentValidation,
     ) -> ProjectDocument:
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
@@ -297,6 +316,20 @@ class ProjectDocumentService:
                     raise DuplicateDocumentError(filename)
                 cursor.execute(
                     """
+                    SELECT 1 FROM documents
+                    WHERE sha256 = %s
+                      AND validation_status = 'valid'
+                    LIMIT 1
+                    """,
+                    (digest,),
+                )
+                knowledge_status = (
+                    "duplicate"
+                    if cursor.fetchone() is not None
+                    else ("eligible" if validation.is_valid else "excluded")
+                )
+                cursor.execute(
+                    """
                     INSERT INTO processing_jobs (
                         id, project_id, job_type, status, progress,
                         input_snapshot, finished_at
@@ -313,8 +346,13 @@ class ProjectDocumentService:
                     INSERT INTO documents (
                         public_id, project_id, filename, content_type,
                         source_type, sha256, size_bytes, storage_key, status
+                        , validation_status, validation_score,
+                        validation_reason, knowledge_status, knowledge_scope
                     )
-                    VALUES (%s, %s, %s, %s, 'upload', %s, %s, %s, 'parsed')
+                    VALUES (
+                        %s, %s, %s, %s, 'upload', %s, %s, %s, 'parsed',
+                        %s, %s, %s, %s, 'organization_private'
+                    )
                     RETURNING id, created_at, updated_at
                     """,
                     (
@@ -325,11 +363,41 @@ class ProjectDocumentService:
                         digest,
                         len(content),
                         storage_key,
+                        "valid" if validation.is_valid else "invalid",
+                        validation.score,
+                        validation.reason,
+                        knowledge_status,
                     ),
                 )
                 row = cursor.fetchone()
                 document_pk = row["id"]
                 self._insert_segments(cursor, document_pk, segments)
+                if knowledge_status == "eligible":
+                    cursor.execute(
+                        """
+                        INSERT INTO enterprise_knowledge (
+                            category, title, content, metadata,
+                            source_document_id, checksum
+                        )
+                        VALUES (
+                            'historical_bid', %s, %s,
+                            %s::jsonb, %s, %s
+                        )
+                        """,
+                        (
+                            filename,
+                            "\n".join(
+                                segment.text for segment in segments
+                            ),
+                            (
+                                '{"origin":"validated_tender",'
+                                '"usage":"private_rag_only",'
+                                '"public_training":false}'
+                            ),
+                            document_pk,
+                            digest,
+                        ),
+                    )
                 cursor.execute(
                     """
                     UPDATE projects
@@ -348,6 +416,13 @@ class ProjectDocumentService:
             error_code=None,
             error_message=None,
             source_count=len(segments),
+            validation_status=(
+                "valid" if validation.is_valid else "invalid"
+            ),
+            validation_score=validation.score,
+            validation_reason=validation.reason,
+            knowledge_status=knowledge_status,
+            knowledge_scope="organization_private",
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             job_id=job_id,
@@ -466,6 +541,11 @@ class ProjectDocumentService:
                 documents.status,
                 documents.error_code,
                 documents.error_message,
+                documents.validation_status,
+                documents.validation_score,
+                documents.validation_reason,
+                documents.knowledge_status,
+                documents.knowledge_scope,
                 COUNT(source_chunks.id) AS source_count,
                 documents.created_at,
                 documents.updated_at

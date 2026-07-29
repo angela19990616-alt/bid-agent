@@ -1,5 +1,4 @@
 .git
-.openai
 node_modules
 dist
 .next

@@ -6,16 +6,17 @@ from pydantic import BaseModel
 
 
 class ExportCreate(BaseModel):
-    section_id: UUID
-    section_version_id: UUID
+    section_id: UUID | None
+    section_version_id: UUID | None
     format: Literal["docx"] = "docx"
 
 
 class ExportResponse(BaseModel):
     id: UUID
     project_id: UUID
-    section_id: UUID
-    section_version_id: UUID
+    section_id: UUID | None = None
+    section_version_id: UUID | None = None
+    export_scope: Literal["section", "full_proposal"] = "section"
     format: Literal["docx"]
     status: str
     filename: str | None = None

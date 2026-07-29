@@ -7,12 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.documents import router as documents_router
+from app.api.configuration import router as configuration_router
 from app.api.exports import router as exports_router
 from app.api.projects import router as projects_router
 from app.api.project_documents import router as project_documents_router
 from app.api.rag import router as rag_router
 from app.api.requirements import router as requirements_router
 from app.api.sections import router as sections_router
+from app.api.workspaces import router as workspaces_router
 from app.config.settings import settings
 from app.core.errors import AppError
 from app.database.db import check_postgres, check_redis
@@ -45,6 +47,8 @@ app.include_router(project_documents_router, prefix="/api/v1")
 app.include_router(requirements_router, prefix="/api/v1")
 app.include_router(sections_router, prefix="/api/v1")
 app.include_router(exports_router, prefix="/api/v1")
+app.include_router(workspaces_router, prefix="/api/v1")
+app.include_router(configuration_router, prefix="/api/v1")
 
 
 @app.middleware("http")

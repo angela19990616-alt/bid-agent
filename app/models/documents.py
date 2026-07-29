@@ -38,6 +38,11 @@ class ProjectDocumentResponse(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     source_count: int
+    validation_status: str = "pending"
+    validation_score: float | None = None
+    validation_reason: str | None = None
+    knowledge_status: str = "pending"
+    knowledge_scope: str = "organization_private"
     created_at: datetime
     updated_at: datetime
     job_id: UUID | None = None

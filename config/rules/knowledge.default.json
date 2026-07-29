@@ -1,0 +1,44 @@
+{
+  "key": "default-knowledge",
+  "rule_type": "knowledge",
+  "version": 1,
+  "name": "企业知识匹配规则",
+  "description": "控制私有知识准入、匹配排序、来源角色权重和事实边界。",
+  "eligibility": {
+    "permission_scope": "organization_private",
+    "allowed_status": ["active"],
+    "public_training": false
+  },
+  "matching": {
+    "minimum_score": 0.08,
+    "max_matches": 8,
+    "query_term_cap": 80,
+    "item_term_cap": 120,
+    "query_coverage_weight": 0.8,
+    "item_coverage_weight": 0.2,
+    "source_role_weights": {
+      "response_content": 1.0,
+      "qualification_file": 0.65,
+      "standard_template": 0.75,
+      "validated_tender": 0.7,
+      "unspecified": 0.8
+    },
+    "source_role_chapter_keywords": {
+      "response_content": ["*"],
+      "qualification_file": ["企业资质", "资格证明", "资格响应"],
+      "standard_template": ["*"],
+      "validated_tender": ["*"],
+      "unspecified": ["*"]
+    }
+  },
+  "fact_boundaries": {
+    "verified_enterprise_fact_required": [
+      "qualification",
+      "product_capability",
+      "technical_capability",
+      "case_study"
+    ],
+    "historical_bid_usage": "structure_and_response_method_only",
+    "exclude_current_project_sources": true
+  }
+}

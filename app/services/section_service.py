@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -9,6 +8,13 @@ from psycopg.rows import dict_row
 
 from app.core.model_client import ModelClient
 from app.database.db import connect
+from app.knowledge.engine import (
+    EnterpriseKnowledgeEngine,
+    KnowledgeMatch,
+    KnowledgeMatchRepository,
+)
+from app.rules.engine import RuleDocument, RuleEngine
+from app.workflows.controlled_pipeline import ControlledPipeline
 
 
 class SectionNotFoundError(Exception):
@@ -37,8 +43,17 @@ class ReviewFinding:
 
 
 class SectionService:
-    def __init__(self, model_client: ModelClient | None = None):
+    def __init__(
+        self,
+        model_client: ModelClient | None = None,
+        rule_engine: RuleEngine | None = None,
+        knowledge_engine: EnterpriseKnowledgeEngine | None = None,
+    ):
         self.model_client = model_client
+        self.rule_engine = rule_engine or RuleEngine()
+        self.knowledge_engine = (
+            knowledge_engine or EnterpriseKnowledgeEngine()
+        )
 
     def create(
         self,
@@ -55,14 +70,15 @@ class SectionService:
                     FROM requirements
                     WHERE project_id = %s
                       AND id = ANY(%s)
-                      AND status = 'confirmed'
+                      AND status <> 'rejected'
+                      AND need_generation = TRUE
                     """,
                     (project_id, unique_ids),
                 )
-                confirmed = {row["id"] for row in cursor.fetchall()}
-                if confirmed != set(unique_ids):
+                eligible = {row["id"] for row in cursor.fetchall()}
+                if eligible != set(unique_ids):
                     raise SectionValidationError(
-                        "章节只能关联当前项目中已确认的要求。"
+                        "章节只能关联当前项目中与技术方案相关的要求。"
                     )
                 cursor.execute(
                     """
@@ -100,7 +116,17 @@ class SectionService:
                     SELECT id
                     FROM sections
                     WHERE project_id = %s
-                    ORDER BY updated_at DESC
+                      AND EXISTS (
+                          SELECT 1
+                          FROM section_requirements
+                          JOIN requirements
+                            ON requirements.id =
+                               section_requirements.requirement_id
+                          WHERE section_requirements.section_id = sections.id
+                            AND requirements.status <> 'rejected'
+                            AND requirements.need_generation = TRUE
+                      )
+                    ORDER BY sort_order ASC, created_at ASC
                     """,
                     (project_id,),
                 )
@@ -111,6 +137,33 @@ class SectionService:
         section, requirements = self._load_generation_input(
             project_id,
             section_id,
+        )
+        pipeline = ControlledPipeline()
+        try:
+            workflow_run_id = pipeline.latest(project_id)
+        except ValueError:
+            workflow_run_id = pipeline.start(project_id)
+        pipeline.record(workflow_run_id, "load_enterprise_knowledge")
+        matches = self.knowledge_engine.match(
+            section_title=section["title"],
+            requirements=requirements,
+            exclude_document_ids=set(section["document_ids"]),
+            exclude_project_id=project_id,
+        )
+        KnowledgeMatchRepository.save(
+            workflow_run_id, section_id, requirements, matches
+        )
+        pipeline.record(
+            workflow_run_id,
+            "knowledge_matching",
+            knowledge_snapshot=[item.snapshot() for item in matches],
+            details={"match_count": len(matches)},
+        )
+        writing_rules = self.rule_engine.load("writing")
+        pipeline.record(
+            workflow_run_id,
+            "load_writing_rules",
+            rule_snapshot=writing_rules.snapshot(),
         )
         job_id = uuid4()
         snapshot = {
@@ -124,12 +177,22 @@ class SectionService:
                 }
                 for item in requirements
             ],
+            "writing_rule": writing_rules.snapshot(),
+            "knowledge_matches": [item.snapshot() for item in matches],
         }
-        self._create_job(project_id, job_id, snapshot)
+        self._create_job(
+            project_id, job_id, snapshot, workflow_run_id
+        )
+        pipeline.record(workflow_run_id, "chapter_writer")
         try:
             client = self.model_client or ModelClient()
             content = client.chat(
-                self._messages(section["title"], requirements),
+                self._messages(
+                    section["title"],
+                    requirements,
+                    matches,
+                    writing_rules,
+                ),
                 temperature=0.2,
                 max_tokens=5000,
             ).strip()
@@ -142,7 +205,13 @@ class SectionService:
                 "章节生成失败，请检查模型配置或稍后重试。",
             ) from exc
 
-        findings = self.review(content)
+        compliance_rules = self.rule_engine.load("compliance")
+        pipeline.record(
+            workflow_run_id,
+            "compliance_checker",
+            rule_snapshot=compliance_rules.snapshot(),
+        )
+        findings = self.review(content, compliance_rules)
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
@@ -158,9 +227,12 @@ class SectionService:
                     """
                     INSERT INTO section_versions (
                         section_id, version_no, content, origin,
-                        input_snapshot
+                        input_snapshot, rule_snapshot, knowledge_snapshot
                     )
-                    VALUES (%s, %s, %s, 'generated', %s::jsonb)
+                    VALUES (
+                        %s, %s, %s, 'generated', %s::jsonb,
+                        %s::jsonb, %s::jsonb
+                    )
                     RETURNING id
                     """,
                     (
@@ -168,6 +240,17 @@ class SectionService:
                         version_no,
                         content,
                         json.dumps(snapshot, ensure_ascii=False),
+                        json.dumps(
+                            {
+                                "writing": writing_rules.snapshot(),
+                                "compliance": compliance_rules.snapshot(),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            [item.snapshot() for item in matches],
+                            ensure_ascii=False,
+                        ),
                     ),
                 )
                 version_id = cursor.fetchone()["id"]
@@ -202,14 +285,29 @@ class SectionService:
         base_version_id: UUID,
         content: str,
     ) -> dict:
+        compliance_rules = self.rule_engine.load("compliance")
+        pipeline = ControlledPipeline()
+        workflow_run_id = pipeline.latest(project_id)
+        pipeline.record(
+            workflow_run_id,
+            "compliance_checker",
+            rule_snapshot=compliance_rules.snapshot(),
+            details={"origin": "edited"},
+        )
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
                     """
-                    SELECT current_version_id
+                    SELECT
+                        sections.current_version_id,
+                        section_versions.rule_snapshot,
+                        section_versions.knowledge_snapshot
                     FROM sections
-                    WHERE project_id = %s AND id = %s
-                    FOR UPDATE
+                    LEFT JOIN section_versions
+                      ON section_versions.id = sections.current_version_id
+                    WHERE sections.project_id = %s
+                      AND sections.id = %s
+                    FOR UPDATE OF sections
                     """,
                     (project_id, section_id),
                 )
@@ -230,18 +328,41 @@ class SectionService:
                 cursor.execute(
                     """
                     INSERT INTO section_versions (
-                        section_id, version_no, content, origin
+                        section_id, version_no, content, origin,
+                        rule_snapshot, knowledge_snapshot
                     )
-                    VALUES (%s, %s, %s, 'edited')
+                    VALUES (
+                        %s, %s, %s, 'edited', %s::jsonb, %s::jsonb
+                    )
                     RETURNING id
                     """,
-                    (section_id, version_no, content.strip()),
+                    (
+                        section_id,
+                        version_no,
+                        content.strip(),
+                        json.dumps(
+                            {
+                                **dict(section["rule_snapshot"] or {}),
+                                "compliance": (
+                                    compliance_rules.snapshot()
+                                ),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            section["knowledge_snapshot"] or [],
+                            ensure_ascii=False,
+                        ),
+                    ),
                 )
                 version_id = cursor.fetchone()["id"]
                 self._insert_findings(
                     cursor,
                     version_id,
-                    self.review(content),
+                    self.review(
+                        content,
+                        compliance_rules,
+                    ),
                 )
                 cursor.execute(
                     """
@@ -291,7 +412,8 @@ class SectionService:
                     """
                     SELECT
                         sections.id, sections.project_id, sections.title,
-                        sections.status, sections.created_at,
+                        sections.status, sections.sort_order,
+                        sections.is_recommended, sections.created_at,
                         sections.updated_at, sections.current_version_id,
                         section_versions.version_no,
                         section_versions.content,
@@ -345,6 +467,8 @@ class SectionService:
             "project_id": row["project_id"],
             "title": row["title"],
             "status": row["status"],
+            "sort_order": row["sort_order"],
+            "is_recommended": row["is_recommended"],
             "requirement_ids": requirement_ids,
             "current_version": version,
             "findings": findings,
@@ -353,57 +477,70 @@ class SectionService:
         }
 
     @staticmethod
-    def review(content: str) -> list[ReviewFinding]:
+    def review(
+        content: str,
+        rules: RuleDocument | None = None,
+    ) -> list[ReviewFinding]:
+        active = rules or RuleEngine().load_default("compliance")
         findings: list[ReviewFinding] = []
-        if len(content.strip()) < 200:
-            findings.append(
-                ReviewFinding(
-                    "content_too_short",
-                    "warning",
-                    "章节内容较短，请人工检查是否充分响应要求。",
-                )
+        for check in active.content["checks"]:
+            kind = check["kind"]
+            value = check["value"]
+            matched = (
+                kind == "min_length" and len(content.strip()) < int(value)
+            ) or (
+                kind in {"contains", "forbidden_patterns"}
+                and any(pattern in content for pattern in value)
             )
-        if re.search(r"(我公司拥有|成功案例|国家级资质|百分之百保证)", content):
-            findings.append(
-                ReviewFinding(
-                    "unsupported_claim",
-                    "blocking",
-                    "检测到可能缺少依据的能力、案例或保证性表述。",
+            if matched:
+                findings.append(
+                    ReviewFinding(
+                        check["key"],
+                        check["severity"],
+                        check["message"],
+                    )
                 )
-            )
-        if "待补充" in content:
-            findings.append(
-                ReviewFinding(
-                    "placeholder",
-                    "warning",
-                    "章节包含待补充内容，请在确认前完善。",
-                )
-            )
         return findings
 
     @staticmethod
-    def _messages(title: str, requirements: list[dict]) -> list[dict[str, str]]:
+    def _messages(
+        title: str,
+        requirements: list[dict],
+        matches: list[KnowledgeMatch] | None = None,
+        rules: RuleDocument | None = None,
+    ) -> list[dict[str, str]]:
+        active = rules or RuleEngine().load_default("writing")
+        matched_items = matches or []
         evidence = "\n\n".join(
             f"[要求 {item['id']}]\n"
             f"规范描述：{item['normalized_text']}\n"
             f"原文证据：{item['quote']}"
             for item in requirements
         )
+        knowledge = "\n\n".join(
+            f"[企业知识 {item.knowledge_id}｜{item.category}]\n"
+            f"标题：{item.title}\n元数据："
+            f"{json.dumps(item.metadata, ensure_ascii=False)}\n"
+            f"内容：{item.content}"
+            for item in matched_items
+        ) or "无匹配企业知识；涉及企业事实时必须使用规则中的待补充占位符。"
         return [
             {
                 "role": "system",
                 "content": (
-                    "你是技术投标方案撰写助手。只能依据给定要求和原文证据写作；"
-                    "不得虚构案例、资质、参数、人员、产品能力或承诺。"
-                    "缺少企业事实时明确写“【待补充：需要的事实】”。"
-                    "输出中文 Markdown 正文，不输出分析过程。"
+                    active.content["model_instruction"]
+                    + "\n本次已加载的版本化写作规则：\n"
+                    + json.dumps(active.content, ensure_ascii=False)
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    f"请撰写章节《{title}》。逐项响应下列要求，结构清晰、"
-                    f"内容可执行，并避免超出证据。\n\n{evidence}"
+                    active.content["user_template"].format(
+                        section_title=title
+                    )
+                    + f"\n\nRequirements:\n{evidence}"
+                    + f"\n\nMatched Knowledge:\n{knowledge}"
                 ),
             },
         ]
@@ -434,34 +571,53 @@ class SectionService:
                         ON section_requirements.requirement_id =
                            requirements.id
                     WHERE section_requirements.section_id = %s
-                      AND requirements.status = 'confirmed'
+                      AND requirements.status <> 'rejected'
+                      AND requirements.need_generation = TRUE
                     ORDER BY requirements.id
                     """,
                     (section_id,),
                 )
                 requirements = cursor.fetchall()
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM documents
+                    WHERE project_id = %s
+                    """,
+                    (project_id,),
+                )
+                section["document_ids"] = [
+                    item["id"] for item in cursor.fetchall()
+                ]
         if not requirements:
-            raise SectionValidationError("章节没有已确认要求。")
+            raise SectionValidationError("章节没有可用于技术方案生成的要求。")
         return section, requirements
 
     @staticmethod
-    def _create_job(project_id: UUID, job_id: UUID, snapshot: dict) -> None:
+    def _create_job(
+        project_id: UUID,
+        job_id: UUID,
+        snapshot: dict,
+        workflow_run_id: UUID,
+    ) -> None:
         with connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO processing_jobs (
                         id, project_id, job_type, status, progress,
-                        input_snapshot
+                        input_snapshot, workflow_run_id
                     )
                     VALUES (
-                        %s, %s, 'section_generate', 'running', 10, %s::jsonb
+                        %s, %s, 'section_generate', 'running', 10,
+                        %s::jsonb, %s
                     )
                     """,
                     (
                         job_id,
                         project_id,
                         json.dumps(snapshot, ensure_ascii=False),
+                        workflow_run_id,
                     ),
                 )
 

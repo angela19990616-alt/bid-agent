@@ -1,0 +1,54 @@
+{
+  "key": "default-writing",
+  "rule_type": "writing",
+  "version": 1,
+  "name": "技术方案写作规则",
+  "description": "控制目录、章节写作、企业知识引用和事实边界。",
+  "chapter_order": [
+    "项目理解与总体思路",
+    "服务范围与工作内容",
+    "实施计划与进度安排",
+    "项目组织与人员配置",
+    "质量保障与验收方案",
+    "培训方案",
+    "运维与持续服务",
+    "技术评分点响应"
+  ],
+  "policies": {
+    "must_cite_requirement": true,
+    "must_match_knowledge_before_writing": true,
+    "must_cite_enterprise_knowledge_when_used": true,
+    "evidence_only_writing": true,
+    "allow_plausible_but_unprovided_details": false,
+    "allow_historical_cases": "only_when_verified_enterprise_fact_is_true",
+    "allow_unverified_qualification": false,
+    "allow_invented_capability": false,
+    "missing_fact_placeholder": "【待补充：需要的企业事实】",
+    "target_length_chars": {"min": 800, "max": 5000},
+    "max_repetition_ratio": 0.25,
+    "terminology_consistency": true
+  },
+  "knowledge_category_policy": {
+    "company_profile": "仅可陈述知识正文中明确记录的事实",
+    "qualification": "仅当 metadata.verified_enterprise_fact=true 时可作为企业资质",
+    "product_capability": "仅当 metadata.verified_enterprise_fact=true 时可作为产品能力",
+    "technical_capability": "仅当 metadata.verified_enterprise_fact=true 时可作为技术能力",
+    "case_study": "仅当 metadata.verified_enterprise_fact=true 时可作为本企业案例",
+    "standard_template": "仅可参考结构与表达，不得继承事实",
+    "expert_experience": "仅可引用已明确授权且可核验的经验",
+    "historical_bid": "仅可参考结构、术语和响应方法，不得当作本企业案例、资质或能力",
+    "common_chapter": "仅可参考章节结构，不得继承事实"
+  },
+  "chapter_styles": {
+    "项目理解与总体思路": "先解释目标与难点，再给出总体方法和闭环。",
+    "服务范围与工作内容": "按工作包说明输入、动作、成果和责任边界。",
+    "实施计划与进度安排": "按阶段说明任务、里程碑、交付物和风险控制。",
+    "项目组织与人员配置": "说明角色、职责和协作机制；不得虚构人员姓名或履历。",
+    "质量保障与验收方案": "说明质量门禁、检查方法、证据和验收响应。",
+    "培训方案": "说明对象、内容、形式、计划与效果评估。",
+    "运维与持续服务": "说明服务机制、响应流程、持续改进和可核验记录。",
+    "技术评分点响应": "逐项对应评分点，突出可核验响应，不虚构得分依据。"
+  },
+  "model_instruction": "你是 Chapter Writer。写作前已完成规则加载和知识匹配。只能使用输入中的 Requirement 证据与已匹配企业知识；不得自行搜索或虚构事实。严禁为了让方案显得完整而补写输入中未出现的系统现状、接口、标准、技术选型、人员、会议、确认方式、交付物名称或采购人将提供的材料。无法从证据确认的细节必须写成待补充占位符，不得用行业惯例猜测。历史标书只能参考结构，不能作为事实。输出中文 Markdown 正文。",
+  "user_template": "撰写章节《{section_title}》。遵守写作规则中的章节风格、事实边界和篇幅要求。逐项响应 Requirements；企业事实只能来自 Matched Knowledge。"
+}

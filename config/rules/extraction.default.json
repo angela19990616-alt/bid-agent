@@ -1,0 +1,110 @@
+{
+  "key": "default-extraction",
+  "rule_type": "extraction",
+  "version": 1,
+  "name": "招标文件要求提取规则",
+  "description": "决定候选原文、Requirement 边界、分类、命名和技术方案相关性。",
+  "document_validation": {
+    "allowed_extensions": [".pdf", ".docx"],
+    "minimum_text_chars": 200,
+    "minimum_segments": 2,
+    "minimum_marker_groups": 3,
+    "marker_groups": [
+      ["招标", "采购文件", "竞争性谈判", "竞争性磋商"],
+      ["投标人", "供应商", "响应人"],
+      ["投标文件", "响应文件", "报价文件"],
+      ["采购需求", "技术要求", "服务要求", "项目需求"],
+      ["评审", "评分", "评标"],
+      ["验收", "交付", "合同"]
+    ]
+  },
+  "candidate_markers": [
+    "必须", "须", "应当", "不得", "不允许", "不接受", "无效", "否决",
+    "响应文件", "投标文件", "供应商", "投标人", "评分", "得分", "加分",
+    "交付", "验收", "服务要求", "技术要求", "商务要求", "服务内容",
+    "成果要求", "实施计划", "人员配置", "培训", "运维", "进度"
+  ],
+  "max_evidence_candidates": 800,
+  "context_markers": [
+    "响应文件", "资格", "证明材料", "评分", "技术", "服务", "商务",
+    "报价", "交付", "验收", "成果", "供应商", "采购需求"
+  ],
+  "allowed_prefixes": [
+    "供应商应", "供应商须", "供应商不得", "投标人应", "投标人须",
+    "投标人不得", "响应文件应", "响应文件须", "报价应"
+  ],
+  "internal_actors": ["谈判小组", "评审委员会", "采购人", "采购代理机构"],
+  "heading_suffixes": ["要求", "条件", "内容", "材料", "组成", "成果"],
+  "ignore_labels": [
+    "目录", "目 录", "目    录", "序号", "采购内容", "单位", "数量",
+    "备注", "说明和要求", "响应文件格式", "供应商资格证明材料"
+  ],
+  "ignore_categories": [
+    "目录行、章节标题、页码、表头、字段名和联系方式",
+    "采购人、代理机构和评审人员的内部动作",
+    "不能回答供应商要做什么的空泛标签",
+    "仅描述项目背景但不形成供应商义务的内容"
+  ],
+  "requirement_definition": [
+    "供应商在响应文件中必须写、做、提供、承诺或避免的具体事项",
+    "成交后必须完成的技术服务、成果、交付、工期或验收义务",
+    "直接影响技术得分、加分、无效响应或否决的条件"
+  ],
+  "types": {
+    "technical": "技术、服务范围、方法、功能、性能或实施内容",
+    "scoring": "技术评分点、加分条件或评分证据",
+    "delivery": "进度、成果、培训、运维、交付和验收",
+    "qualification": "供应商资格、资质与证明材料",
+    "compliance": "格式、签章、密封、有效期、无效响应和纪律",
+    "commercial": "报价、付款、商务条款和合同商务条件"
+  },
+  "deterministic_fallbacks": [
+    {
+      "key": "technical_scoring_point",
+      "requirement_type": "scoring",
+      "any_patterns": [
+        "(?:得|计|满分)\\s*\\d+(?:\\.\\d+)?\\s*分",
+        "\\d+(?:\\.\\d+)?\\s*分",
+        "(?:^|\\|)\\s*\\d+(?:\\.\\d+)?\\s*(?:分)?\\s*(?:\\||$)"
+      ],
+      "context_markers": [
+        "评分", "评审", "评审因素", "评分办法", "评分标准"
+      ],
+      "exclude_patterns": [
+        "谈判保证金",
+        "低于成本价",
+        "不正当竞争",
+        "不作为技术评审因素",
+        "品牌.{0,20}型号"
+      ],
+      "title_prefix": "响应技术评分点",
+      "normalized_prefix": "供应商应在技术方案中逐项响应评分要求：",
+      "importance": "high",
+      "confidence": 0.82
+    }
+  ],
+  "proposal_mapping": [
+    {"keywords": ["评分", "得分", "加分"], "target_chapter": "技术评分点响应", "relevance": "high"},
+    {"keywords": ["人员", "团队", "项目经理", "专家"], "target_chapter": "项目组织与人员配置", "relevance": "high"},
+    {"keywords": ["培训"], "target_chapter": "培训方案", "relevance": "high"},
+    {"keywords": ["运维", "维护", "售后", "持续服务"], "target_chapter": "运维与持续服务", "relevance": "high"},
+    {"keywords": ["验收", "质量", "成果"], "target_chapter": "质量保障与验收方案", "relevance": "high"},
+    {"keywords": ["工期", "进度", "计划", "实施"], "target_chapter": "实施计划与进度安排", "relevance": "high"},
+    {"keywords": ["服务范围", "服务内容", "工作内容", "技术要求", "功能", "性能"], "target_chapter": "服务范围与工作内容", "relevance": "high"}
+  ],
+  "compliance_only_types": ["qualification", "compliance", "commercial"],
+  "title_rule": "8至30字、动作型、方向准确，让业务人员一眼看懂",
+  "normalized_rule": "以供应商应、供应商须、供应商不得、响应文件应或报价应开头，表达一项完整可执行要求",
+  "model_instruction": "你是 Requirement Extractor。只能依据输入证据和本规则提取要求，严格返回 JSON，不得补充原文没有的事实。",
+  "output_schema": {
+    "requirements": [{
+      "source_ref": "输入来源标识",
+      "title": "要求标题",
+      "requirement": "规范化要求",
+      "type": "technical|scoring|delivery|qualification|compliance|commercial",
+      "importance": "low|medium|high",
+      "confidence": 0.8,
+      "evidence": "逐字原文"
+    }]
+  }
+}

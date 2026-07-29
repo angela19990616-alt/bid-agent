@@ -17,6 +17,7 @@ RequirementType = Literal[
 ]
 RequirementStatus = Literal["pending", "confirmed", "rejected"]
 Importance = Literal["low", "medium", "high"]
+ProposalRelevance = Literal["high", "medium", "low"]
 
 
 class RequirementSourceResponse(BaseModel):
@@ -35,6 +36,9 @@ class RequirementResponse(BaseModel):
     quote: str
     importance: Importance
     confidence: float
+    proposal_relevance: ProposalRelevance = "low"
+    target_chapter: str | None = None
+    need_generation: bool = False
     status: RequirementStatus
     sources: list[RequirementSourceResponse] = Field(default_factory=list)
     created_at: datetime
@@ -59,4 +63,7 @@ class RequirementUpdate(BaseModel):
     )
     type: RequirementType | None = None
     importance: Importance | None = None
+    proposal_relevance: ProposalRelevance | None = None
+    target_chapter: str | None = Field(default=None, max_length=200)
+    need_generation: bool | None = None
     status: RequirementStatus | None = None

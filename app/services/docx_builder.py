@@ -15,6 +15,8 @@ BLUE = RGBColor(46, 116, 181)
 DARK_BLUE = RGBColor(31, 77, 120)
 MUTED = RGBColor(90, 100, 110)
 TABLE_FILL = "F4F6F9"
+LATIN_FONT = "Arial"
+CJK_FONT = "PingFang SC"
 
 
 def build_proposal_docx(
@@ -28,13 +30,52 @@ def build_proposal_docx(
     document = Document()
     _configure_document(document, project_name, section_title)
     _add_title_block(document, project_name, section_title)
-    _add_markdown(document, content)
+    document.add_page_break()
+    _add_markdown(
+        document,
+        _strip_leading_heading(
+            _clean_export_markdown(content),
+            section_title,
+        ),
+    )
     document.add_page_break()
     document.add_heading("要求响应与来源清单", level=1)
     note = document.add_paragraph(
         "以下清单用于人工复核章节响应范围，原文引用以系统保存的来源定位为准。"
     )
     note.style = document.styles["Normal"]
+    _add_requirement_table(document, requirements)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(output_path)
+
+
+def build_full_proposal_docx(
+    output_path: Path,
+    *,
+    project_name: str,
+    sections: list[dict],
+    requirements: list[dict],
+) -> None:
+    document = Document()
+    _configure_document(document, project_name, "技术方案")
+    _add_title_block(document, project_name, "技术方案")
+    document.add_page_break()
+    for index, section in enumerate(sections, start=1):
+        if index > 1:
+            document.add_page_break()
+        document.add_heading(
+            f"{index}. {section['title']}",
+            level=1,
+        )
+        _add_markdown(
+            document,
+            _strip_leading_heading(
+                _clean_export_markdown(section["content"]),
+                section["title"],
+            ),
+        )
+    document.add_page_break()
+    document.add_heading("技术要求响应与来源总表", level=1)
     _add_requirement_table(document, requirements)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     document.save(output_path)
@@ -57,9 +98,9 @@ def _configure_document(
 
     styles = document.styles
     normal = styles["Normal"]
-    normal.font.name = "Arial Unicode MS"
+    normal.font.name = LATIN_FONT
     normal.font.size = Pt(11)
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Arial Unicode MS")
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), CJK_FONT)
     normal.paragraph_format.space_before = Pt(0)
     normal.paragraph_format.space_after = Pt(8)
     normal.paragraph_format.line_spacing = 1.333
@@ -70,13 +111,13 @@ def _configure_document(
         ("Heading 3", 12, DARK_BLUE, 8, 4),
     ):
         style = styles[style_name]
-        style.font.name = "Arial Unicode MS"
+        style.font.name = LATIN_FONT
         style.font.size = Pt(size)
         style.font.color.rgb = color
         style.font.bold = True
         style._element.rPr.rFonts.set(
             qn("w:eastAsia"),
-            "Arial Unicode MS",
+            CJK_FONT,
         )
         style.paragraph_format.space_before = Pt(before)
         style.paragraph_format.space_after = Pt(after)
@@ -88,7 +129,7 @@ def _configure_document(
     document.core_properties.subject = project_name
 
     header = section.header.paragraphs[0]
-    header.text = project_name
+    header.text = _short_header(project_name)
     header.alignment = WD_ALIGN_PARAGRAPH.LEFT
     _style_runs(header, 9, MUTED)
 
@@ -122,7 +163,7 @@ def _add_title_block(
     paragraph = document.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.paragraph_format.space_after = Pt(24)
-    run = paragraph.add_run("技术方案章节")
+    run = paragraph.add_run("投标技术方案")
     _set_run_font(run, 14, MUTED)
 
     paragraph = document.add_paragraph()
@@ -137,7 +178,7 @@ def _add_title_block(
 def _add_markdown(document: Document, content: str) -> None:
     for raw_line in content.splitlines():
         line = raw_line.strip()
-        if not line:
+        if not line or re.fullmatch(r"-{3,}", line):
             continue
         heading = re.match(r"^(#{1,3})\s+(.+)$", line)
         if heading:
@@ -160,6 +201,64 @@ def _add_markdown(document: Document, content: str) -> None:
         paragraph = document.add_paragraph()
         paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         _add_inline_text(paragraph, line)
+
+
+def _clean_export_markdown(content: str) -> str:
+    value = re.sub(
+        r"\bMatched\s+Knowledge\s*[:：]?\s*`?"
+        r"[0-9a-fA-F-]{36}`?",
+        "历史知识参考",
+        content,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"\bRequirements?\s*[:：]?\s*`?"
+        r"[0-9a-fA-F-]{36}`?",
+        "招标要求",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"\bMatched\s+Knowledge\b",
+        "历史知识参考",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"\bRequirements?\b",
+        "招标要求",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"[【\[(（]?\s*要求\s+"
+        r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+        r"\s*[】\])）]?",
+        "对应招标要求",
+        value,
+    )
+    return re.sub(
+        r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}",
+        "内部来源已记录",
+        value,
+    )
+
+
+def _strip_leading_heading(content: str, title: str) -> str:
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        heading = re.match(r"^#{1,3}\s+(.+?)\s*$", line.strip())
+        if heading and heading.group(1).strip() == title.strip():
+            del lines[index]
+        break
+    return "\n".join(lines)
+
+
+def _short_header(project_name: str, limit: int = 36) -> str:
+    value = re.sub(r"\s+", " ", project_name).strip()
+    return value if len(value) <= limit else f"{value[:limit]}…"
 
 
 def _add_inline_text(paragraph, text: str) -> None:
@@ -198,12 +297,14 @@ def _add_requirement_table(document: Document, requirements: list[dict]) -> None
     for number, requirement in enumerate(requirements, start=1):
         cells = table.add_row().cells
         source_text = "；".join(
-            _source_label(source) for source in requirement["sources"]
+            dict.fromkeys(
+                _source_label(source) for source in requirement["sources"]
+            )
         )
         values = (
             str(number),
             requirement["normalized_text"],
-            f"{source_text}\n原文：{requirement['quote']}",
+            f"{source_text}\n原文：{_compact_quote(requirement['quote'])}",
         )
         for index, (cell, value) in enumerate(zip(cells, values)):
             cell.text = value
@@ -234,7 +335,12 @@ def _source_label(source: dict) -> str:
             if start == end
             else f"第 {start}-{end} 段"
         )
-    return f"{source['filename']}，{location}"
+    return f"本项目招标文件，{location}"
+
+
+def _compact_quote(quote: str, limit: int = 240) -> str:
+    value = re.sub(r"\s+", " ", quote).strip()
+    return value if len(value) <= limit else f"{value[:limit]}…"
 
 
 def _set_table_geometry(table, widths: list[int]) -> None:
@@ -325,18 +431,18 @@ def _set_run_font(
     color: RGBColor,
     bold: bool | None = None,
 ) -> None:
-    run.font.name = "Arial Unicode MS"
+    run.font.name = LATIN_FONT
     run._element.get_or_add_rPr().rFonts.set(
         qn("w:ascii"),
-        "Arial Unicode MS",
+        LATIN_FONT,
     )
     run._element.get_or_add_rPr().rFonts.set(
         qn("w:hAnsi"),
-        "Arial Unicode MS",
+        LATIN_FONT,
     )
     run._element.get_or_add_rPr().rFonts.set(
         qn("w:eastAsia"),
-        "Arial Unicode MS",
+        CJK_FONT,
     )
     run.font.size = Pt(size)
     run.font.color.rgb = color

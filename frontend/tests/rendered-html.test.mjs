@@ -29,11 +29,11 @@ test("renders the bid proposal workspace", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /标书智能工作台/);
-  assert.match(html, /项目材料/);
-  assert.match(html, /招标要求/);
-  assert.match(html, /技术方案/);
-  assert.match(html, /导出结果/);
+  assert.match(html, /技术方案工作台/);
+  assert.match(html, /上传文件/);
+  assert.match(html, /技术要点/);
+  assert.match(html, /推荐目录/);
+  assert.match(html, /导出 Word/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 });
 
@@ -45,17 +45,19 @@ test("keeps the simplified V1 workflow in the client source", async () => {
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /project.*requirements.*writer.*export/s);
+  assert.match(page, /upload.*requirements.*outline.*writer.*export/s);
   assert.match(page, /Requirement/);
   assert.match(page, /Section/);
   assert.match(page, /API_BASE/);
-  assert.match(page, /提取招标要求/);
-  assert.match(page, /需要响应什么/);
-  assert.match(page, /招标原文依据/);
-  assert.match(page, /原文位置/);
-  assert.match(page, /生成一个章节/);
-  assert.match(page, /生成 Word 文件/);
-  assert.doesNotMatch(page, /setTimeout|演示模式|sampleContent/);
+  assert.match(page, /无需先建项目/);
+  assert.match(page, /技术写作要点/);
+  assert.match(page, /查看原文依据/);
+  assert.match(page, /生成本章/);
+  assert.match(page, /生成整本 Word/);
+  assert.doesNotMatch(page, /createProject|创建项目/);
+  assert.doesNotMatch(page, /演示模式|sampleContent/);
+  assert.match(page, /workspaces\/\$\{created\.id\}/);
+  assert.match(page, /completed\.status !== "outline_ready"/);
   assert.match(css, /@media \(max-width: 980px\)/);
   assert.match(layout, /标书智能工作台/);
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/v1\/"\)/);

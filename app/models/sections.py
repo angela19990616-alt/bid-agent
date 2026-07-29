@@ -30,6 +30,8 @@ class SectionResponse(BaseModel):
     project_id: UUID
     title: str
     status: str
+    sort_order: int = 0
+    is_recommended: bool = False
     requirement_ids: list[UUID]
     current_version: SectionVersionResponse | None = None
     findings: list[ReviewFindingResponse] = Field(default_factory=list)

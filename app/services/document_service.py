@@ -171,19 +171,58 @@ def _parse_docx(content: bytes) -> list[SourceSegment]:
     except ElementTree.ParseError as exc:
         raise UnsupportedDocumentError("DOCX 正文结构无效") from exc
     segments: list[SourceSegment] = []
-    for index, paragraph in enumerate(root.iter(f"{namespace}p"), start=1):
-        value = "".join(
+    paragraph_index = 0
+
+    def paragraph_text(paragraph) -> str:
+        return "".join(
             node.text or "" for node in paragraph.iter(f"{namespace}t")
         ).strip()
+
+    def append_paragraph(paragraph) -> tuple[int, str]:
+        nonlocal paragraph_index
+        paragraph_index += 1
+        value = paragraph_text(paragraph)
         if value:
             segments.append(
                 SourceSegment(
                     text=value,
                     locator_kind="paragraph",
-                    paragraph_start=index,
-                    paragraph_end=index,
+                    paragraph_start=paragraph_index,
+                    paragraph_end=paragraph_index,
                 )
             )
+        return paragraph_index, value
+
+    body = root.find(f"{namespace}body")
+    if body is None:
+        raise EmptyDocumentError("DOCX 中没有正文")
+    for child in body:
+        if child.tag == f"{namespace}p":
+            append_paragraph(child)
+            continue
+        if child.tag != f"{namespace}tbl":
+            continue
+        for row in child.findall(f"{namespace}tr"):
+            row_start = paragraph_index + 1
+            cells: list[str] = []
+            for cell in row.findall(f"{namespace}tc"):
+                values: list[str] = []
+                for paragraph in cell.iter(f"{namespace}p"):
+                    _, value = append_paragraph(paragraph)
+                    if value:
+                        values.append(value)
+                cell_text = "；".join(values).strip()
+                if cell_text:
+                    cells.append(cell_text)
+            if len(cells) >= 2:
+                segments.append(
+                    SourceSegment(
+                        text=" | ".join(cells),
+                        locator_kind="paragraph",
+                        paragraph_start=row_start,
+                        paragraph_end=paragraph_index,
+                    )
+                )
     if not segments:
         raise EmptyDocumentError("DOCX 中没有可检索文字")
     return segments

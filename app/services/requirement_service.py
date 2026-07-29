@@ -15,7 +15,12 @@ from app.agents.requirement_agent import (
     RequirementAgent,
     RequirementAgentError,
 )
+from app.agents.requirement_reviewer import (
+    RequirementReviewer,
+    ReviewedRequirement,
+)
 from app.database.db import connect
+from app.rules.engine import RuleDocument, RuleEngine
 
 
 @dataclass(frozen=True)
@@ -27,6 +32,9 @@ class Candidate:
     requirement_type: str
     importance: str
     confidence: float
+    proposal_relevance: str
+    target_chapter: str | None
+    need_generation: bool
     fingerprint: str
 
 
@@ -43,13 +51,21 @@ class RequirementExtractionError(Exception):
 
 
 class RequirementService:
-    def __init__(self, requirement_agent: RequirementAgent | None = None):
+    def __init__(
+        self,
+        requirement_agent: RequirementAgent | None = None,
+        reviewer: RequirementReviewer | None = None,
+        rule_engine: RuleEngine | None = None,
+    ):
         self.requirement_agent = requirement_agent
+        self.reviewer = reviewer or RequirementReviewer()
+        self.rule_engine = rule_engine or RuleEngine()
 
     def extract(
         self,
         project_id: UUID,
         document_ids: list[UUID],
+        rules: RuleDocument | None = None,
     ) -> tuple[int, int]:
         sources = self._load_sources(project_id, document_ids)
         if not sources:
@@ -57,14 +73,17 @@ class RequirementService:
                 "没有找到可用于提取的已解析文件。"
             )
         try:
+            active_rules = rules or self.rule_engine.load("extraction")
             agent_items = (
                 self.requirement_agent or RequirementAgent()
-            ).extract(sources)
+            ).extract(sources, active_rules)
         except RequirementAgentError as exc:
             raise RequirementExtractionError(
                 "Requirement Agent 未能完成提取，请检查模型配置后重试。"
             ) from exc
-        candidates = self._deduplicate(agent_items)[:200]
+        candidates = self._deduplicate(
+            self.reviewer.review(agent_items, active_rules)
+        )[:200]
 
         created = 0
         skipped = 0
@@ -81,9 +100,13 @@ class RequirementService:
                         INSERT INTO requirements (
                             project_id, requirement_type, title,
                             normalized_text, quote, importance, confidence,
-                            fingerprint
+                            proposal_relevance, target_chapter,
+                            need_generation, fingerprint
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (
+                            %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s
+                        )
                         ON CONFLICT (project_id, fingerprint) DO NOTHING
                         RETURNING id
                         """,
@@ -95,6 +118,9 @@ class RequirementService:
                             candidate.quote,
                             candidate.importance,
                             candidate.confidence,
+                            candidate.proposal_relevance,
+                            candidate.target_chapter,
+                            candidate.need_generation,
                             candidate.fingerprint,
                         ),
                     )
@@ -131,6 +157,8 @@ class RequirementService:
         status: str | None = None,
         requirement_type: str | None = None,
         document_id: UUID | None = None,
+        proposal_relevance: str | None = None,
+        need_generation: bool | None = None,
     ) -> list[dict]:
         filters = ["requirements.project_id = %s"]
         params: list[object] = [project_id]
@@ -143,6 +171,12 @@ class RequirementService:
         if document_id:
             filters.append("documents.public_id = %s")
             params.append(document_id)
+        if proposal_relevance:
+            filters.append("requirements.proposal_relevance = %s")
+            params.append(proposal_relevance)
+        if need_generation is not None:
+            filters.append("requirements.need_generation = %s")
+            params.append(need_generation)
         sql = self._select_sql() + " WHERE " + " AND ".join(filters)
         sql += " ORDER BY requirements.updated_at DESC"
         with connect() as conn:
@@ -162,6 +196,9 @@ class RequirementService:
             "type": "requirement_type",
             "importance": "importance",
             "status": "status",
+            "proposal_relevance": "proposal_relevance",
+            "target_chapter": "target_chapter",
+            "need_generation": "need_generation",
         }
         values = {
             allowed[key]: value.strip() if isinstance(value, str) else value
@@ -260,9 +297,17 @@ class RequirementService:
                 return cursor.fetchall()
 
     @staticmethod
-    def _deduplicate(items: list[AgentRequirement]) -> list[Candidate]:
+    def _deduplicate(
+        items: list[ReviewedRequirement | AgentRequirement],
+    ) -> list[Candidate]:
         merged: list[dict] = []
-        for item in items:
+        for raw_item in items:
+            reviewed = (
+                raw_item
+                if isinstance(raw_item, ReviewedRequirement)
+                else RequirementReviewer().review_one(raw_item)
+            )
+            item = reviewed.item
             canonical = RequirementService._canonical(
                 item.normalized_text
             )
@@ -290,6 +335,9 @@ class RequirementService:
                         "requirement_type": item.requirement_type,
                         "importance": item.importance,
                         "confidence": item.confidence,
+                        "proposal_relevance": reviewed.proposal_relevance,
+                        "target_chapter": reviewed.target_chapter,
+                        "need_generation": reviewed.need_generation,
                     }
                 )
                 continue
@@ -305,6 +353,9 @@ class RequirementService:
                         "requirement_type": item.requirement_type,
                         "importance": item.importance,
                         "confidence": item.confidence,
+                        "proposal_relevance": reviewed.proposal_relevance,
+                        "target_chapter": reviewed.target_chapter,
+                        "need_generation": reviewed.need_generation,
                     }
                 )
         return [
@@ -316,6 +367,9 @@ class RequirementService:
                 requirement_type=item["requirement_type"],
                 importance=item["importance"],
                 confidence=item["confidence"],
+                proposal_relevance=item["proposal_relevance"],
+                target_chapter=item["target_chapter"],
+                need_generation=item["need_generation"],
                 fingerprint=hashlib.sha256(
                     item["canonical"].encode()
                 ).hexdigest(),
@@ -389,6 +443,9 @@ class RequirementService:
                 requirements.importance,
                 requirements.confidence,
                 requirements.status,
+                requirements.proposal_relevance,
+                requirements.target_chapter,
+                requirements.need_generation,
                 requirements.created_at,
                 requirements.updated_at,
                 source_chunks.id AS source_id,
@@ -428,6 +485,9 @@ class RequirementService:
                         else row["confidence"]
                     ),
                     "status": row["status"],
+                    "proposal_relevance": row["proposal_relevance"],
+                    "target_chapter": row["target_chapter"],
+                    "need_generation": row["need_generation"],
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "sources": [],

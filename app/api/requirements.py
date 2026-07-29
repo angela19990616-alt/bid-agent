@@ -77,6 +77,8 @@ def list_requirements(
         "commercial",
     ] | None = Query(default=None, alias="type"),
     document_id: UUID | None = None,
+    proposal_relevance: Literal["high", "medium", "low"] | None = None,
+    need_generation: bool | None = None,
     service: RequirementService = Depends(get_requirement_service),
 ):
     return service.list(
@@ -84,6 +86,8 @@ def list_requirements(
         status=requirement_status,
         requirement_type=requirement_type,
         document_id=document_id,
+        proposal_relevance=proposal_relevance,
+        need_generation=need_generation,
     )
 
 
