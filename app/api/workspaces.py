@@ -45,6 +45,7 @@ from app.services.section_service import (
 )
 from app.services.workspace_service import (
     InvalidTenderDocumentError,
+    WorkspaceRetryError,
     WorkspaceService,
 )
 
@@ -120,6 +121,39 @@ def get_workspace(
         return service.get(workspace_id)
     except ProjectNotFoundError as exc:
         raise AppError(404, "WORKSPACE_NOT_FOUND", "未找到该方案。") from exc
+
+
+@router.post(
+    "/{workspace_id}/retry",
+    response_model=WorkspaceResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_workspace(
+    workspace_id: UUID,
+    background_tasks: BackgroundTasks,
+    service: WorkspaceService = Depends(get_workspace_service),
+):
+    try:
+        workspace, document_id, run_id = service.prepare_retry(workspace_id)
+        background_tasks.add_task(
+            service.complete_prepared_upload,
+            workspace_id,
+            document_id,
+            run_id,
+        )
+        return workspace
+    except ProjectNotFoundError as exc:
+        raise AppError(
+            404,
+            "WORKSPACE_NOT_FOUND",
+            "未找到该方案。",
+        ) from exc
+    except WorkspaceRetryError as exc:
+        raise AppError(
+            409,
+            "WORKSPACE_NOT_RETRYABLE",
+            str(exc),
+        ) from exc
 
 
 @router.get(

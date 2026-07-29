@@ -96,6 +96,7 @@ organization_id 行级隔离和权限审计，不能仅依赖前端隐藏。
 ```text
 POST /api/v1/workspaces
 GET  /api/v1/workspaces/{workspace_id}
+POST /api/v1/workspaces/{workspace_id}/retry
 GET  /api/v1/workspaces/{workspace_id}/requirements?view=proposal
 GET  /api/v1/workspaces/{workspace_id}/requirements?view=compliance
 PUT  /api/v1/workspaces/{workspace_id}/outline
@@ -113,6 +114,8 @@ Requirement 提取、知识匹配和推荐目录规划在受控后台任务中�
 `GET /workspaces/{workspace_id}`，状态变为 `outline_ready` 后进入技术要点页面。
 这样真实大文件不会因模型处理耗时而占用一个长连接。当前 MVP 使用进程内后台
 任务；生产环境需要进一步接入持久化任务队列，以支持进程重启后的自动恢复。
+处理失败时 workspace 回到 `draft`，前端可调用 `POST /retry`，复用已保存的有效
+文档、Requirement 指纹去重和工作流快照，从中断后的提取/规划阶段继续执行。
 
 ## 数据迁移
 

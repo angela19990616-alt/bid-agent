@@ -21,6 +21,10 @@ class InvalidTenderDocumentError(Exception):
         self.reason = reason
 
 
+class WorkspaceRetryError(Exception):
+    pass
+
+
 class WorkspaceService:
     def __init__(
         self,
@@ -149,6 +153,34 @@ class WorkspaceService:
         except Exception as exc:
             self._set_status(workspace_id, "draft")
             pipeline.fail(run_id, type(exc).__name__, str(exc))
+
+    def prepare_retry(self, workspace_id: UUID) -> tuple[dict, UUID, UUID]:
+        workspace = ProjectService().get(workspace_id)
+        if workspace.status not in {"draft", "extracting", "planning"}:
+            raise WorkspaceRetryError(
+                "当前方案不处于可重试的处理状态。"
+            )
+        documents = self.document_service.list(workspace_id)
+        document = next(
+            (
+                item
+                for item in documents
+                if item.validation_status == "valid"
+            ),
+            None,
+        )
+        if document is None:
+            raise WorkspaceRetryError("没有可用于继续处理的有效招标文件。")
+        pipeline = ControlledPipeline()
+        run_id = pipeline.start(workspace_id)
+        pipeline.record(
+            run_id,
+            "document_validator",
+            details={"resume": True},
+        )
+        pipeline.record(run_id, "parser", details={"resume": True})
+        self._set_status(workspace_id, "extracting")
+        return self.get(workspace_id), document.id, run_id
 
     def get(self, workspace_id: UUID) -> dict:
         workspace = ProjectService().get(workspace_id)

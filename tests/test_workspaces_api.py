@@ -124,3 +124,28 @@ def test_upload_schedules_long_running_extraction_after_response():
     assert response.status_code == 201
     assert response.json()["status"] == "extracting"
     assert service.completed is True
+
+
+class RetryWorkspaceService(PreparedWorkspaceService):
+    def prepare_retry(self, workspace_id):
+        workspace = self.create_from_upload(
+            "招标文件.docx",
+            "application/docx",
+            b"docx",
+        )
+        workspace["id"] = workspace_id
+        workspace["status"] = "extracting"
+        return workspace, uuid4(), uuid4()
+
+
+def test_failed_workspace_can_resume_saved_document_processing():
+    service = RetryWorkspaceService()
+    app.dependency_overrides[get_workspace_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.post(f"/api/v1/workspaces/{service.id}/retry")
+
+    assert response.status_code == 202
+    assert response.json()["id"] == str(service.id)
+    assert response.json()["status"] == "extracting"
+    assert service.completed is True

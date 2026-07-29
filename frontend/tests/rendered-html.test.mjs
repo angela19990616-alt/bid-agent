@@ -58,6 +58,8 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.doesNotMatch(page, /演示模式|sampleContent/);
   assert.match(page, /workspaces\/\$\{created\.id\}/);
   assert.match(page, /completed\.status !== "outline_ready"/);
+  assert.match(page, /workspaces\/\$\{workspace\.id\}\/retry/);
+  assert.match(page, /继续处理/);
   assert.match(css, /@media \(max-width: 980px\)/);
   assert.match(layout, /标书智能工作台/);
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/v1\/"\)/);

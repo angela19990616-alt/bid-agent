@@ -155,6 +155,35 @@ export default function Home() {
     });
   }
 
+  async function retryWorkspace() {
+    if (!workspace) return;
+    await run("正在从中断位置继续处理", async () => {
+      const resumed = await request<Workspace>(
+        `/workspaces/${workspace.id}/retry`,
+        { method: "POST" },
+      );
+      setWorkspace(resumed);
+      let completed = resumed;
+      for (let attempt = 0; attempt < 180 && completed.status !== "outline_ready"; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        completed = await request<Workspace>(`/workspaces/${workspace.id}`);
+        setWorkspace(completed);
+        if (completed.status === "draft") {
+          throw new Error("继续处理仍未成功，请检查模型或文件配置。");
+        }
+      }
+      if (completed.status !== "outline_ready") {
+        throw new Error("处理尚未完成，可稍后再次点击继续处理。");
+      }
+      setRequirements(completed.technical_requirements);
+      setSections(completed.outline);
+      setActiveSectionId(completed.outline[0]?.id ?? "");
+      setEditorContent(completed.outline[0]?.current_version?.content ?? "");
+      setStep("requirements");
+      setNotice("已从中断位置继续并完成目录规划。");
+    });
+  }
+
   async function showCompliance() {
     if (!workspace) return;
     await run("正在读取合规提醒", async () => {
@@ -306,7 +335,14 @@ export default function Home() {
             </div>
             {busy && <div className="busy-pill"><i />{busy}</div>}
           </div>
-          {error && <div className="message error">{error}</div>}
+          {error && (
+            <div className="message error">
+              <span>{error}</span>
+              {workspace?.status === "draft" && (
+                <button onClick={retryWorkspace}>继续处理</button>
+              )}
+            </div>
+          )}
           {notice && <div className="message success">{notice}</div>}
 
           {step === "upload" && (
