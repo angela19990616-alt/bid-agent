@@ -73,6 +73,42 @@ class ModelBudgetService:
         }
 
     @staticmethod
+    def configure_limits(
+        workflow_run_id: UUID,
+        *,
+        call_limit: int,
+        token_limit: int,
+    ) -> dict[str, int]:
+        bounded_calls = min(
+            settings.max_model_calls_per_workflow,
+            max(1, call_limit),
+        )
+        bounded_tokens = min(
+            settings.max_model_tokens_per_workflow,
+            max(1000, token_limit),
+        )
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE workflow_runs
+                    SET model_call_limit = %s,
+                        model_token_limit = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        bounded_calls,
+                        bounded_tokens,
+                        workflow_run_id,
+                    ),
+                )
+        return {
+            "model_call_limit": bounded_calls,
+            "model_token_limit": bounded_tokens,
+        }
+
+    @staticmethod
     def reserve(
         workflow_run_id: UUID,
         *,

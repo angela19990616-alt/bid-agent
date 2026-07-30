@@ -147,11 +147,15 @@ class SectionService:
             section_id,
         )
         pipeline = ControlledPipeline()
-        try:
-            workflow_run_id = pipeline.latest(project_id)
-        except ValueError:
-            workflow_run_id = pipeline.start(project_id)
-        pipeline.record(workflow_run_id, "load_enterprise_knowledge")
+        workflow_run_id = pipeline.start(
+            project_id,
+            initial_stage="load_enterprise_knowledge",
+        )
+        ModelBudgetService.configure_limits(
+            workflow_run_id,
+            call_limit=2,
+            token_limit=80000,
+        )
         matches = self.knowledge_engine.match(
             section_title=section["title"],
             requirements=requirements,
@@ -217,6 +221,11 @@ class SectionService:
                 raise RuntimeError("模型返回空内容")
         except Exception as exc:
             self._fail_job(job_id, section_id, type(exc).__name__)
+            pipeline.fail(
+                workflow_run_id,
+                type(exc).__name__,
+                str(exc),
+            )
             message = (
                 str(exc)
                 if isinstance(exc, ModelBudgetExceeded)
@@ -303,6 +312,7 @@ class SectionService:
                     (job_id,),
                 )
         ProvenanceService.persist(version_id, provenance, case_usage)
+        pipeline.succeed(workflow_run_id, "compliance_checker")
         result = self.get(project_id, section_id)
         result["job_id"] = job_id
         return result

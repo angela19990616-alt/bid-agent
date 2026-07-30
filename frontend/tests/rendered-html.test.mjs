@@ -37,11 +37,12 @@ test("renders the private preview access gate", async () => {
 });
 
 test("keeps the simplified V1 workflow in the client source", async () => {
-  const [page, css, layout, worker] = await Promise.all([
+  const [page, css, layout, worker, nginx] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../nginx.conf", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /upload.*requirements.*outline.*writer.*export/s);
@@ -87,6 +88,7 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(worker, /BID_AGENT_API_ORIGIN/);
   assert.match(page, /access\/status/);
   assert.match(page, /access\/invite/);
+  assert.match(nginx, /proxy_read_timeout 300s/);
   assert.match(page, /本工作台仅向受邀用户开放/);
   assert.match(css, /invite-card/);
 });

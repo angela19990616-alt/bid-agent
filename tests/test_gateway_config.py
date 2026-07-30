@@ -24,7 +24,7 @@ def test_gateway_has_bounded_upload_proxy_timeouts():
     assert "client_max_body_size 25m" in CONFIG
     assert "proxy_connect_timeout 10s" in CONFIG
     assert "proxy_send_timeout 30s" in CONFIG
-    assert "proxy_read_timeout 60s" in CONFIG
+    assert "proxy_read_timeout 300s" in CONFIG
 
 
 def test_sites_gateway_adds_private_edge_secret():

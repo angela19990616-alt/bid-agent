@@ -147,3 +147,45 @@ def test_20k_character_tender_gets_large_but_bounded_budget():
     assert tokens == 240000
     assert calls <= settings.max_model_calls_per_workflow
     assert tokens <= settings.max_model_tokens_per_workflow
+
+
+def test_chapter_budget_is_smaller_than_workflow_hard_cap(monkeypatch):
+    captured = {}
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _query, params):
+            captured["params"] = params
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(
+        "app.services.model_budget_service.connect",
+        lambda: Connection(),
+    )
+    run_id = uuid4()
+
+    limits = ModelBudgetService.configure_limits(
+        run_id,
+        call_limit=2,
+        token_limit=80000,
+    )
+
+    assert limits == {
+        "model_call_limit": 2,
+        "model_token_limit": 80000,
+    }
+    assert captured["params"] == (2, 80000, run_id)

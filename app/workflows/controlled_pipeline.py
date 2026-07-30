@@ -34,7 +34,13 @@ STAGES = (
 class ControlledPipeline:
     """Persists a finite stage trace; it has no autonomous transitions."""
 
-    def start(self, project_id: UUID) -> UUID:
+    def start(
+        self,
+        project_id: UUID,
+        initial_stage: str = "document_upload",
+    ) -> UUID:
+        if initial_stage not in STAGES:
+            raise ValueError(f"未知工作流阶段：{initial_stage}")
         run_id = uuid4()
         with connect() as conn:
             with conn.cursor() as cursor:
@@ -43,11 +49,11 @@ class ControlledPipeline:
                     INSERT INTO workflow_runs (
                         id, project_id, current_stage, stage_trace
                     )
-                    VALUES (%s, %s, 'document_upload', '[]'::jsonb)
+                    VALUES (%s, %s, %s, '[]'::jsonb)
                     """,
-                    (run_id, project_id),
+                    (run_id, project_id, initial_stage),
                 )
-        self.record(run_id, "document_upload")
+        self.record(run_id, initial_stage)
         return run_id
 
     def record(
