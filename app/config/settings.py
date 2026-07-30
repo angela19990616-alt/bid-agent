@@ -38,10 +38,10 @@ class Settings:
     )
     review_model: str = os.getenv("REVIEW_MODEL", "glm-5")
     max_model_calls_per_workflow: int = int(
-        os.getenv("MAX_MODEL_CALLS_PER_WORKFLOW", "12")
+        os.getenv("MAX_MODEL_CALLS_PER_WORKFLOW", "40")
     )
     max_model_tokens_per_workflow: int = int(
-        os.getenv("MAX_MODEL_TOKENS_PER_WORKFLOW", "80000")
+        os.getenv("MAX_MODEL_TOKENS_PER_WORKFLOW", "300000")
     )
     embedding_model: str = os.getenv(
         "EMBEDDING_MODEL",

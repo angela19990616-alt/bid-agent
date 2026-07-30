@@ -138,3 +138,12 @@ def test_token_estimate_includes_maximum_output_budget():
         max_tokens=5000,
     )
     assert estimate > 5000
+
+
+def test_20k_character_tender_gets_large_but_bounded_budget():
+    calls, tokens = ModelBudgetService.limits_for_text(20000)
+
+    assert calls >= 36
+    assert tokens == 240000
+    assert calls <= settings.max_model_calls_per_workflow
+    assert tokens <= settings.max_model_tokens_per_workflow

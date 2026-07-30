@@ -13,6 +13,7 @@ from app.services.project_service import ProjectService
 from app.services.proposal_plan_service import ProposalPlanService
 from app.services.requirement_service import RequirementService
 from app.services.section_service import SectionService
+from app.services.workspace_job_service import WorkspaceJobService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -115,7 +116,16 @@ class WorkspaceService:
         pipeline = ControlledPipeline()
         try:
             extraction_rules = self.rule_engine.load("extraction")
+            budget = ModelBudgetService.configure_for_document(
+                run_id,
+                document_id,
+            )
             pipeline.record(run_id, "requirement_extractor")
+            pipeline.record(
+                run_id,
+                "model_budget",
+                details=budget,
+            )
             classification_rules = self.rule_engine.load("classification")
             pipeline.record(
                 run_id,
@@ -221,6 +231,7 @@ class WorkspaceService:
             source_count=source_count,
         )
         budget = ModelBudgetService.summary_for_project(workspace_id)
+        job = WorkspaceJobService.latest_status(workspace_id)
         return {
             "id": workspace.id,
             "name": workspace.name,
@@ -239,6 +250,19 @@ class WorkspaceService:
             ),
             "estimate_sample_count": estimate.sample_count,
             "estimate_basis": estimate.basis,
+            "processing_error_code": (
+                job["error_code"]
+                if job and job["status"] == "failed"
+                else None
+            ),
+            "processing_error_message": (
+                job["error_message"]
+                if job and job["status"] == "failed"
+                else None
+            ),
+            "processing_retryable": bool(
+                job and job["status"] == "failed" and documents
+            ),
             **budget,
         }
 

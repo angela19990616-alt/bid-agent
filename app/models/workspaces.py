@@ -35,7 +35,10 @@ class WorkspaceResponse(BaseModel):
     estimated_remaining_seconds_high: int | None = None
     estimate_sample_count: int = 0
     estimate_basis: str = "insufficient_history"
+    processing_error_code: str | None = None
+    processing_error_message: str | None = None
+    processing_retryable: bool = False
     model_calls_used: int = 0
-    model_calls_limit: int = 12
+    model_calls_limit: int = 40
     model_tokens_used: int = 0
-    model_tokens_limit: int = 80000
+    model_tokens_limit: int = 300000

@@ -61,6 +61,9 @@ type Workspace = {
   estimated_remaining_seconds_high: number | null;
   estimate_sample_count: number;
   estimate_basis: string;
+  processing_error_code: string | null;
+  processing_error_message: string | null;
+  processing_retryable: boolean;
   model_calls_used: number;
   model_calls_limit: number;
   model_tokens_used: number;
@@ -253,7 +256,10 @@ export default function Home() {
     let consecutiveNetworkErrors = 0;
     while (!READY_WORKSPACE_STATUSES.has(completed.status)) {
       if (completed.status === "draft") {
-        throw new Error("文件处理未成功，可点击“继续处理”从已保存位置重试。");
+        throw new Error(
+          completed.processing_error_message
+          ?? "文件已上传并解析，但后台处理未完成，可点击“继续处理”重试。",
+        );
       }
       const stageLabel = workspaceStatusLabels[completed.status] ?? "正在处理招标文件";
       setBusy(`${stageLabel} · ${estimateLabel(completed)}，完成后自动打开`);
@@ -534,7 +540,7 @@ export default function Home() {
           {error && (
             <div className="message error">
               <span>{error}</span>
-              {workspace?.status === "draft" && (
+              {workspace?.status === "draft" && workspace.processing_retryable && (
                 <button onClick={retryWorkspace}>继续处理</button>
               )}
             </div>

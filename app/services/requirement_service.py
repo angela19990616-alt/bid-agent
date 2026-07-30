@@ -103,6 +103,7 @@ class RequirementService:
                 sources,
                 active_rules,
                 workflow_run_id=workflow_run_id,
+                project_id=project_id,
             )
         except ModelBudgetExceeded as exc:
             raise RequirementExtractionError(str(exc)) from exc

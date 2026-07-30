@@ -21,6 +21,58 @@ class ModelBudgetService:
     """Atomically reserves a bounded workflow model budget."""
 
     @staticmethod
+    def limits_for_text(text_chars: int) -> tuple[int, int]:
+        normalized = max(0, text_chars)
+        return (
+            min(
+                settings.max_model_calls_per_workflow,
+                max(12, (normalized + 699) // 700 + 8),
+            ),
+            min(
+                settings.max_model_tokens_per_workflow,
+                max(80000, normalized * 12),
+            ),
+        )
+
+    @staticmethod
+    def configure_for_document(
+        workflow_run_id: UUID,
+        document_id: UUID,
+    ) -> dict[str, int]:
+        """Scale within hard caps for tenders up to and beyond 20k chars."""
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COALESCE(SUM(length(source_chunks.content)), 0)
+                    FROM source_chunks
+                    JOIN documents
+                      ON documents.id = source_chunks.document_id
+                    WHERE documents.public_id = %s
+                    """,
+                    (document_id,),
+                )
+                text_chars = int(cursor.fetchone()[0])
+                call_limit, token_limit = (
+                    ModelBudgetService.limits_for_text(text_chars)
+                )
+                cursor.execute(
+                    """
+                    UPDATE workflow_runs
+                    SET model_call_limit = %s,
+                        model_token_limit = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (call_limit, token_limit, workflow_run_id),
+                )
+        return {
+            "model_call_limit": call_limit,
+            "model_token_limit": token_limit,
+            "document_text_chars": text_chars,
+        }
+
+    @staticmethod
     def reserve(
         workflow_run_id: UUID,
         *,
@@ -37,6 +89,25 @@ class ModelBudgetService:
                 )
                 cursor.execute(
                     """
+                    SELECT COALESCE(model_call_limit, %s),
+                           COALESCE(model_token_limit, %s)
+                    FROM workflow_runs
+                    WHERE id = %s
+                    """,
+                    (
+                        settings.max_model_calls_per_workflow,
+                        settings.max_model_tokens_per_workflow,
+                        workflow_run_id,
+                    ),
+                )
+                limits = cursor.fetchone()
+                if limits is None:
+                    raise ModelBudgetExceeded(
+                        "未找到当前处理任务的模型预算配置。"
+                    )
+                call_limit, token_limit = limits
+                cursor.execute(
+                    """
                     SELECT COUNT(*),
                            COALESCE(SUM(
                                COALESCE(actual_tokens, reserved_tokens)
@@ -47,16 +118,15 @@ class ModelBudgetService:
                     (workflow_run_id,),
                 )
                 calls, tokens = cursor.fetchone()
-                if calls >= settings.max_model_calls_per_workflow:
+                if calls >= call_limit:
                     raise ModelBudgetExceeded(
-                        "本方案已达到模型调用次数上限，已有结果已保留。"
+                        "本轮处理已达到模型调用次数上限，"
+                        "已完成的抽取批次已保存，可继续处理。"
                     )
-                if (
-                    tokens + reserved
-                    > settings.max_model_tokens_per_workflow
-                ):
+                if tokens + reserved > token_limit:
                     raise ModelBudgetExceeded(
-                        "本方案已达到 Token 预算上限，已有结果已保留。"
+                        "本轮处理已达到 Token 安全上限，"
+                        "已完成的抽取批次已保存，可继续处理。"
                     )
                 cursor.execute(
                     """
@@ -115,22 +185,40 @@ class ModelBudgetService:
                     SELECT COUNT(e.id),
                            COALESCE(SUM(
                                COALESCE(e.actual_tokens, e.reserved_tokens)
-                           ), 0)
+                           ), 0),
+                           COALESCE(run.model_call_limit, %s),
+                           COALESCE(run.model_token_limit, %s)
                     FROM (
-                        SELECT id FROM workflow_runs
+                        SELECT id, model_call_limit, model_token_limit
+                        FROM workflow_runs
                         WHERE project_id = %s
                         ORDER BY created_at DESC
                         LIMIT 1
                     ) run
                     LEFT JOIN model_usage_events e
                       ON e.workflow_run_id = run.id
+                    GROUP BY run.model_call_limit, run.model_token_limit
                     """,
-                    (project_id,),
+                    (
+                        settings.max_model_calls_per_workflow,
+                        settings.max_model_tokens_per_workflow,
+                        project_id,
+                    ),
                 )
-                calls, tokens = cursor.fetchone()
+                row = cursor.fetchone()
+        calls, tokens, call_limit, token_limit = (
+            row
+            if row is not None
+            else (
+                0,
+                0,
+                settings.max_model_calls_per_workflow,
+                settings.max_model_tokens_per_workflow,
+            )
+        )
         return {
             "model_calls_used": int(calls),
-            "model_calls_limit": settings.max_model_calls_per_workflow,
+            "model_calls_limit": int(call_limit),
             "model_tokens_used": int(tokens),
-            "model_tokens_limit": settings.max_model_tokens_per_workflow,
+            "model_tokens_limit": int(token_limit),
         }

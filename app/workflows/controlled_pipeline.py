@@ -14,6 +14,7 @@ STAGES = (
     "document_validator",
     "load_extraction_rules",
     "parser",
+    "model_budget",
     "requirement_extractor",
     "proposal_classification",
     "load_enterprise_knowledge",

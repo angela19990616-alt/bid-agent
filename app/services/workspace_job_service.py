@@ -117,6 +117,23 @@ class WorkspaceJobService:
                     (type(exc).__name__, str(exc)[:1000], job_id),
                 )
 
+    @staticmethod
+    def latest_status(workspace_id: UUID) -> dict | None:
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT status, error_code, error_message
+                    FROM processing_jobs
+                    WHERE project_id = %s AND job_type = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (workspace_id, WORKSPACE_PIPELINE_JOB),
+                )
+                row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
     def recover_stale(self, *, after: timedelta = timedelta(minutes=30)) -> int:
         with connect() as conn:
             with conn.cursor() as cursor:

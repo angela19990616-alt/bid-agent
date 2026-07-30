@@ -27,6 +27,23 @@ class SequencedModelClient:
         return json.dumps(response, ensure_ascii=False)
 
 
+class MemoryCheckpoint:
+    def __init__(self):
+        self.items = {}
+
+    def load(self, project_id, fingerprint):
+        return self.items.get((project_id, fingerprint))
+
+    def save(
+        self,
+        project_id,
+        fingerprint,
+        rule_checksum,
+        result,
+    ):
+        self.items[(project_id, fingerprint)] = result
+
+
 def source(text):
     return {
         "id": uuid4(),
@@ -209,3 +226,37 @@ def test_malformed_recovery_batch_keeps_scoring_fallback():
     assert len(result) == 1
     assert result[0].requirement_type == "scoring"
     assert result[0].quote == original
+
+
+def test_retry_reuses_completed_extraction_batch_without_model_call():
+    response = {
+        "requirements": [
+            {
+                "source_ref": "S1",
+                "title": "提交项目实施计划",
+                "requirement": "供应商应提交项目实施计划。",
+                "type": "technical",
+                "importance": "high",
+                "confidence": 0.9,
+                "evidence": "供应商须提交项目实施计划。",
+            }
+        ]
+    }
+    checkpoint = MemoryCheckpoint()
+    first_client = SequencedModelClient([response])
+    project_id = uuid4()
+    sources = [source("供应商须提交项目实施计划。")]
+
+    first = RequirementAgent(
+        first_client,
+        checkpoint_service=checkpoint,
+    ).extract(sources, project_id=project_id)
+    second_client = SequencedModelClient([])
+    second = RequirementAgent(
+        second_client,
+        checkpoint_service=checkpoint,
+    ).extract(sources, project_id=project_id)
+
+    assert first == second
+    assert len(first_client.calls) == 1
+    assert second_client.calls == []

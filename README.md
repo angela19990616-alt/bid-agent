@@ -309,11 +309,13 @@ Review、安全机械修复和复检，不逐条调用模型，也不进行无�
 
 模型调用按 `workflow_run_id` 记入 `model_usage_events`。调用前使用数据库事务锁
 原子预留预算，调用成功后以供应商返回的实际 Token 用量结算；失败调用也保留
-预留量，避免异常重试绕过限制。默认每个工作流最多 12 次模型调用、80,000
-Token，可通过 `MAX_MODEL_CALLS_PER_WORKFLOW` 和
-`MAX_MODEL_TOKENS_PER_WORKFLOW` 调低。
+预留量，避免异常重试绕过限制。系统按已解析正文字符数为每份文件分配预算：
+小文件从 12 次调用、80,000 Token 起步，约 2 万汉字的常规 60 页招标文件可
+获得约 37 次调用、240,000 Token；硬上限为 40 次、300,000 Token，可通过
+`MAX_MODEL_CALLS_PER_WORKFLOW` 和 `MAX_MODEL_TOKENS_PER_WORKFLOW` 调低。
 
-达到预算后系统停止新的模型请求，保留已完成解析、分类和章节版本，不自动扩大
-预算。分类只对低置信条目调用一次批量模型；Review、机械 Debug 和复检均为
+达到预算后系统停止新的模型请求。Requirement Extractor 每完成一批便写入
+`requirement_extraction_batches` 检查点，重试会复用已完成批次，只处理剩余
+部分。分类只对低置信条目调用一次批量模型；Review、机械 Debug 和复检均为
 确定性单轮处理，不产生额外模型调用或自治循环。前端技术要点页显示当前工作流
-调用次数与上限。
+调用次数与动态上限。

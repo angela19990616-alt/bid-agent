@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -9,6 +10,9 @@ from uuid import UUID
 from app.core.model_client import ModelClient
 from app.rules.engine import RuleDocument, RuleEngine
 from app.services.model_budget_service import ModelBudgetExceeded
+from app.services.requirement_checkpoint_service import (
+    RequirementCheckpointService,
+)
 
 
 IMPORTANCE_LEVELS = {"low", "medium", "high"}
@@ -61,10 +65,14 @@ class RequirementAgent:
         *,
         batch_size: int = 30,
         recovery_batch_size: int = 8,
+        checkpoint_service: RequirementCheckpointService | None = None,
     ):
         self.model_client = model_client
         self.batch_size = batch_size
         self.recovery_batch_size = recovery_batch_size
+        self.checkpoint_service = (
+            checkpoint_service or RequirementCheckpointService()
+        )
 
     @property
     def client(self) -> ModelClient:
@@ -77,6 +85,7 @@ class RequirementAgent:
         sources: list[dict],
         rules: RuleDocument | None = None,
         workflow_run_id: UUID | None = None,
+        project_id: UUID | None = None,
     ) -> list[AgentRequirement]:
         active = rules or RuleEngine().load_default("extraction")
         evidence = self._select_evidence(sources, active.content)
@@ -85,10 +94,86 @@ class RequirementAgent:
         extracted: list[AgentRequirement] = []
         for start in range(0, len(evidence), self.batch_size):
             batch = evidence[start : start + self.batch_size]
-            extracted.extend(
-                self._extract_batch(batch, active, workflow_run_id)
+            fingerprint = self._batch_fingerprint(batch, active.checksum)
+            cached = (
+                self.checkpoint_service.load(project_id, fingerprint)
+                if project_id is not None
+                else None
             )
+            if cached is not None:
+                extracted.extend(self._deserialize(cached))
+                continue
+            result = self._extract_batch(batch, active, workflow_run_id)
+            if project_id is not None:
+                self.checkpoint_service.save(
+                    project_id,
+                    fingerprint,
+                    active.checksum,
+                    self._serialize(result),
+                )
+            extracted.extend(result)
         return extracted
+
+    @staticmethod
+    def _batch_fingerprint(
+        batch: list[RequirementEvidence],
+        rule_checksum: str,
+    ) -> str:
+        payload = [
+            {
+                "source_id": str(item.source_id),
+                "source_ref": item.source_ref,
+                "text": item.text,
+                "context": item.context,
+            }
+            for item in batch
+        ]
+        return hashlib.sha256(
+            (
+                rule_checksum
+                + json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            ).encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _serialize(items: list[AgentRequirement]) -> list[dict]:
+        return [
+            {
+                "source_id": str(item.source_id),
+                "title": item.title,
+                "normalized_text": item.normalized_text,
+                "quote": item.quote,
+                "requirement_type": item.requirement_type,
+                "importance": item.importance,
+                "confidence": item.confidence,
+            }
+            for item in items
+        ]
+
+    @staticmethod
+    def _deserialize(items: list[dict]) -> list[AgentRequirement]:
+        results: list[AgentRequirement] = []
+        for item in items:
+            try:
+                results.append(
+                    AgentRequirement(
+                        source_id=UUID(str(item["source_id"])),
+                        title=str(item["title"]),
+                        normalized_text=str(item["normalized_text"]),
+                        quote=str(item["quote"]),
+                        requirement_type=str(item["requirement_type"]),
+                        importance=str(item["importance"]),
+                        confidence=float(item["confidence"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return results
 
     def _extract_batch(
         self,
