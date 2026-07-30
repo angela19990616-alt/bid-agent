@@ -4,7 +4,6 @@ from pathlib import Path
 from uuid import UUID
 
 from app.database.db import connect
-from app.knowledge.engine import EnterpriseKnowledgeEngine
 from app.rules.engine import RuleEngine
 from app.services.project_document_service import ProjectDocumentService
 from app.services.processing_eta_service import ProcessingEtaService
@@ -35,15 +34,11 @@ class WorkspaceService:
         requirement_service: RequirementService | None = None,
         plan_service: ProposalPlanService | None = None,
         rule_engine: RuleEngine | None = None,
-        knowledge_engine: EnterpriseKnowledgeEngine | None = None,
     ):
         self.document_service = document_service or ProjectDocumentService()
         self.requirement_service = requirement_service or RequirementService()
         self.plan_service = plan_service or ProposalPlanService()
         self.rule_engine = rule_engine or RuleEngine()
-        self.knowledge_engine = (
-            knowledge_engine or EnterpriseKnowledgeEngine()
-        )
 
     def create_from_upload(
         self,
@@ -143,24 +138,6 @@ class WorkspaceService:
                 run_id,
             )
 
-            technical = self.requirement_service.list(
-                workspace_id, need_generation=True
-            )
-            pipeline.record(run_id, "load_enterprise_knowledge")
-            knowledge_matches = self.knowledge_engine.match(
-                section_title=ProjectService().get(workspace_id).name,
-                requirements=technical,
-                exclude_document_ids={document_id},
-                exclude_project_id=workspace_id,
-            )
-            pipeline.record(
-                run_id,
-                "knowledge_matching",
-                knowledge_snapshot=[
-                    item.snapshot() for item in knowledge_matches
-                ],
-                details={"match_count": len(knowledge_matches)},
-            )
             writing_rules = self.rule_engine.load("writing")
             pipeline.record(
                 run_id,
@@ -208,14 +185,13 @@ class WorkspaceService:
     def get(self, workspace_id: UUID) -> dict:
         workspace = ProjectService().get(workspace_id)
         documents = self.document_service.list(workspace_id)
-        technical = self.requirement_service.list(
-            workspace_id,
-            need_generation=True,
-        )
-        compliance = self.requirement_service.list(
-            workspace_id,
-            need_generation=False,
-        )
+        requirements = self.requirement_service.list(workspace_id)
+        technical = [
+            item for item in requirements if item["need_generation"]
+        ]
+        compliance = [
+            item for item in requirements if not item["need_generation"]
+        ]
         source_count = documents[0].source_count if documents else 0
         estimate = ProcessingEtaService.estimate(
             workspace_id,

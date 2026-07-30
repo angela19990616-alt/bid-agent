@@ -489,27 +489,19 @@ export default function Home() {
 
   async function createExport() {
     if (!workspace) return;
-    await run("正在生成 Word", async () => {
+    await run("正在校核并生成 Word", async () => {
       const created = await request<ExportItem>(`/workspaces/${workspace.id}/exports`, {
         method: "POST",
       });
-      setExportItem(created);
-      setNotice("Word 文件已经生成。");
-    });
-  }
-
-  async function reviewProposal() {
-    if (!workspace) return;
-    await run("正在执行来源、真实性和交付审查", async () => {
       const review = await request<ProposalReview>(
         `/workspaces/${workspace.id}/review`,
-        { method: "POST" },
       );
+      setExportItem(created);
       setProposalReview(review);
       setNotice(
         review.overall.recommended_for_delivery
-          ? "校核和自动清理已完成，可以继续导出。"
-          : `校核完成，有 ${review.overall.blocking_risk_count} 项建议人工留意，但不会阻断导出。`,
+          ? "校核完成，Word 文件已经生成。"
+          : `Word 已生成，有 ${review.overall.blocking_risk_count} 项建议人工留意。`,
       );
     });
   }
@@ -791,8 +783,7 @@ export default function Home() {
               </div>
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
-                <p>先执行校核和自动清理，检查结果仅作提醒，不会阻断 Word 导出。</p>
-                <button className="secondary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={reviewProposal}>执行交付审查</button>
+                <p>一次完成来源校核、真实性检查、自动清理和 Word 生成；检查结果仅作提醒，不会阻断导出。</p>
                 {proposalReview && (
                   <div className="review-summary ready">
                     <strong>{proposalReview.overall.recommended_for_delivery ? "校核完成" : "校核完成，请留意建议"}</strong>
@@ -808,7 +799,7 @@ export default function Home() {
                     <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=json`}>下载 JSON</a>
                   </div>
                 )}
-                <button className="primary large" disabled={!proposalReview || !sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>生成整本 Word</button>
+                <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>
                 {exportItem?.status === "succeeded" && workspace && (
                   <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
                 )}
