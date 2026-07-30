@@ -396,6 +396,14 @@ export default function Home() {
         },
       );
       setRequirements((items) => items.map((current) => current.id === updated.id ? updated : current));
+      setWorkspace((current) => current ? {
+        ...current,
+        technical_requirements: current.technical_requirements.map(
+          (requirement) => requirement.id === updated.id
+            ? updated
+            : requirement,
+        ),
+      } : current);
       setIgnoreMenuId("");
       setNotice(
         feedback === "source_mismatch"
@@ -428,15 +436,26 @@ export default function Home() {
   async function saveOutline() {
     if (!workspace) return;
     await run("正在保存目录", async () => {
+      const eligibleRequirementIds = new Set(
+        workspace.technical_requirements
+          .filter((item) => item.status !== "rejected")
+          .map((item) => item.id),
+      );
+      const chapters = sections
+        .map((item) => ({
+          title: item.title,
+          requirement_ids: item.requirement_ids.filter(
+            (requirementId) => eligibleRequirementIds.has(requirementId),
+          ),
+        }))
+        .filter((item) => item.requirement_ids.length > 0);
+      if (chapters.length === 0) {
+        throw new Error("当前没有需要写入技术方案的内容，请返回调整处理方式。");
+      }
       const saved = await request<SectionItem[]>(`/workspaces/${workspace.id}/outline`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chapters: sections.map((item) => ({
-            title: item.title,
-            requirement_ids: item.requirement_ids,
-          })),
-        }),
+        body: JSON.stringify({ chapters }),
       });
       setSections(saved);
       setActiveSectionId(saved[0]?.id ?? "");

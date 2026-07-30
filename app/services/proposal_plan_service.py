@@ -149,15 +149,22 @@ class ProposalPlanService:
                     (project_id, list(dict.fromkeys(requirement_ids))),
                 )
                 eligible = {row["id"] for row in cursor.fetchall()}
-                if eligible != set(requirement_ids):
+                filtered_chapters = self._filter_chapters(
+                    chapters,
+                    eligible,
+                )
+                if not filtered_chapters:
                     raise ProposalPlanError(
-                        "目录包含无效或不参与技术方案生成的要求。"
+                        "当前没有需要写入技术方案的内容。"
                     )
                 cursor.execute(
                     "DELETE FROM sections WHERE project_id = %s",
                     (project_id,),
                 )
-                for index, chapter in enumerate(chapters, start=1):
+                for index, chapter in enumerate(
+                    filtered_chapters,
+                    start=1,
+                ):
                     cursor.execute(
                         """
                         INSERT INTO sections (
@@ -184,3 +191,23 @@ class ProposalPlanService:
                         ],
                     )
         return SectionService().list(project_id)
+
+    @staticmethod
+    def _filter_chapters(
+        chapters: list[dict],
+        eligible: set[UUID],
+    ) -> list[dict]:
+        filtered = [
+            {
+                **chapter,
+                "requirement_ids": [
+                    requirement_id
+                    for requirement_id in dict.fromkeys(
+                        chapter["requirement_ids"]
+                    )
+                    if requirement_id in eligible
+                ],
+            }
+            for chapter in chapters
+        ]
+        return [chapter for chapter in filtered if chapter["requirement_ids"]]
