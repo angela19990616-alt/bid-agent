@@ -15,13 +15,17 @@ type Source = {
 };
 type Requirement = {
   id: string;
-  type: "technical_capability" | "functional_requirement" | "system_architecture" | "security_requirement" | "performance_requirement" | "implementation_requirement" | "project_management" | "operation_maintenance" | "training_requirement" | "delivery_requirement" | "commercial_requirement" | "qualification_requirement" | "scoring_requirement" | "other" | "technical" | "scoring" | "delivery" | "commercial" | "qualification" | "compliance";
+  type: "technical_requirement" | "scoring_requirement" | "commercial_requirement" | "qualification_requirement" | "delivery_requirement" | "compliance_requirement" | "format_requirement";
   title: string;
   normalized_text: string;
   quote: string;
   importance: "critical" | "high" | "medium" | "low";
   proposal_relevance: "high" | "medium" | "low";
   proposal_chapter: string | null;
+  response_action: "write_into_proposal" | "write_into_response_table" | "compliance_commitment" | "provide_attachment" | "risk_notice" | "ignore";
+  proposal_mapping: string | null;
+  scoring_impact: "score_item" | "qualification_pass" | "penalty_risk" | "no_score";
+  priority: "P0" | "P1" | "P2" | "P3";
   scoring_relation: "high_score_item" | "medium_score_item" | "requirement_only" | "unknown";
   classification_confidence: number;
   classification_conflict: boolean;
@@ -129,26 +133,13 @@ const steps: Array<{ id: Step; title: string; subtitle: string }> = [
   { id: "export", title: "导出 Word", subtitle: "交付技术方案" },
 ];
 const typeLabels: Record<Requirement["type"], string> = {
-  technical_capability: "技术能力",
-  functional_requirement: "功能要求",
-  system_architecture: "系统架构",
-  security_requirement: "安全要求",
-  performance_requirement: "性能要求",
-  implementation_requirement: "实施要求",
-  project_management: "项目管理",
-  operation_maintenance: "运维要求",
-  training_requirement: "培训要求",
+  technical_requirement: "技术要求",
+  scoring_requirement: "评分要求",
+  commercial_requirement: "商务要求",
+  qualification_requirement: "资格要求",
   delivery_requirement: "交付要求",
-  commercial_requirement: "商务提醒",
-  qualification_requirement: "资格提醒",
-  scoring_requirement: "技术评分点",
-  other: "其他",
-  technical: "技术要求",
-  scoring: "技术评分点",
-  delivery: "交付与实施",
-  commercial: "商务提醒",
-  qualification: "资格提醒",
-  compliance: "合规提醒",
+  compliance_requirement: "合规要求",
+  format_requirement: "格式要求",
 };
 const importanceLabels: Record<Requirement["importance"], string> = {
   critical: "关键",
@@ -224,7 +215,7 @@ export default function Home() {
   }), [requirements]);
   const grouped = useMemo(() => {
     const sorted = [...requirements].sort((left, right) => {
-      const otherDelta = Number(left.type === "other") - Number(right.type === "other");
+      const otherDelta = Number(left.type === "compliance_requirement") - Number(right.type === "compliance_requirement");
       if (otherDelta) return otherDelta;
       const importanceDelta = importanceRank[left.importance] - importanceRank[right.importance];
       if (importanceDelta) return importanceDelta;
@@ -662,7 +653,7 @@ export default function Home() {
             <div className="requirement-layout">
               <div className="section-toolbar">
                 <div><strong>{requirements.length}</strong><span>条技术写作要点</span></div>
-                <div><strong>{requirements.filter((item) => item.type === "scoring_requirement" || item.type === "scoring").length}</strong><span>个技术评分点</span></div>
+                <div><strong>{requirements.filter((item) => item.scoring_impact === "score_item").length}</strong><span>个评分事项</span></div>
                 <div><strong>{feedbackSummary.confirmed}</strong><span>条已确认需要</span></div>
                 <button className="primary" disabled={Boolean(busy)} onClick={() => setStep("outline")}>下一步：查看推荐目录</button>
               </div>
@@ -704,7 +695,7 @@ export default function Home() {
                   <h3>{chapter}<small>{items.length} 条</small></h3>
                   <div className="requirement-list">
                     {items.map((item) => (
-                      <article className={`requirement-card feedback-${item.feedback} ${item.type === "scoring_requirement" || item.type === "scoring" ? "scoring-card" : ""}`} key={item.id}>
+                      <article className={`requirement-card feedback-${item.feedback} ${item.scoring_impact === "score_item" ? "scoring-card" : ""}`} key={item.id}>
                         <div className="requirement-top">
                           <div className="requirement-tags">
                             <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>

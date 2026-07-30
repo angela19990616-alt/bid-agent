@@ -8,16 +8,28 @@ from app.models.documents import SourceLocatorResponse
 
 
 RequirementType = Literal[
+    "technical_requirement", "scoring_requirement",
+    "commercial_requirement", "qualification_requirement",
+    "delivery_requirement", "compliance_requirement",
+    "format_requirement",
+    # Transitional API compatibility; migration 020 rewrites stored values.
     "technical_capability", "functional_requirement",
     "system_architecture", "security_requirement",
     "performance_requirement", "implementation_requirement",
     "project_management", "operation_maintenance",
-    "training_requirement", "delivery_requirement",
-    "commercial_requirement", "qualification_requirement",
-    "scoring_requirement", "other",
-    "technical", "scoring", "delivery", "qualification",
-    "compliance", "commercial",
+    "training_requirement", "other",
+    "technical", "scoring", "delivery",
+    "qualification", "compliance", "commercial",
 ]
+ResponseAction = Literal[
+    "write_into_proposal", "write_into_response_table",
+    "compliance_commitment", "provide_attachment",
+    "risk_notice", "ignore",
+]
+ScoringImpact = Literal[
+    "score_item", "qualification_pass", "penalty_risk", "no_score"
+]
+RequirementPriority = Literal["P0", "P1", "P2", "P3"]
 RequirementStatus = Literal["pending", "confirmed", "rejected"]
 RequirementFeedback = Literal[
     "pending",
@@ -58,6 +70,10 @@ class RequirementResponse(BaseModel):
     knowledge_support_required: bool = False
     proposal_relevance: ProposalRelevance = "low"
     proposal_chapter: str | None = None
+    response_action: ResponseAction = "write_into_response_table"
+    proposal_mapping: str | None = None
+    scoring_impact: ScoringImpact = "no_score"
+    priority: RequirementPriority = "P2"
     target_chapter: str | None = None
     need_generation: bool = False
     status: RequirementStatus

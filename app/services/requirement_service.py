@@ -30,6 +30,7 @@ from app.agents.requirement_reviewer import (
     ReviewedRequirement,
 )
 from app.database.db import connect
+from app.core.requirement_taxonomy import RequirementTaxonomy
 from app.rules.engine import RuleDocument, RuleEngine
 from app.services.model_budget_service import ModelBudgetExceeded
 from app.workflows.controlled_pipeline import ControlledPipeline
@@ -53,6 +54,10 @@ class Candidate:
     proposal_chapter: str | None
     target_chapter: str | None
     need_generation: bool
+    response_action: str
+    proposal_mapping: str | None
+    scoring_impact: str
+    priority: str
     fingerprint: str
 
 
@@ -212,12 +217,14 @@ class RequirementService:
                             classification_conflict, classification_notes,
                             knowledge_support_required, proposal_relevance,
                             proposal_chapter, target_chapter,
-                            need_generation, fingerprint
+                            need_generation, response_action,
+                            proposal_mapping, scoring_impact, priority,
+                            fingerprint
                         )
                         VALUES (
                             %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s
                         )
                         ON CONFLICT (project_id, fingerprint) DO NOTHING
                         RETURNING id
@@ -239,6 +246,10 @@ class RequirementService:
                             candidate.proposal_chapter,
                             candidate.target_chapter,
                             candidate.need_generation,
+                            candidate.response_action,
+                            candidate.proposal_mapping,
+                            candidate.scoring_impact,
+                            candidate.priority,
                             candidate.fingerprint,
                         ),
                     )
@@ -456,6 +467,14 @@ class RequirementService:
                     """
                     UPDATE requirements
                     SET status = %s,
+                        response_action = CASE
+                            WHEN %s = 'rejected' THEN 'ignore'
+                            WHEN proposal_mapping IS NOT NULL
+                                THEN 'write_into_proposal'
+                            WHEN response_action = 'ignore'
+                                THEN 'write_into_response_table'
+                            ELSE response_action
+                        END,
                         classification_conflict = %s,
                         classification_notes = CASE
                             WHEN %s::text IS NOT NULL THEN %s
@@ -467,6 +486,7 @@ class RequirementService:
                     WHERE project_id = %s AND id = %s
                     """,
                     (
+                        status,
                         status,
                         conflict,
                         marker,
@@ -601,6 +621,20 @@ class RequirementService:
             canonical = RequirementService._canonical(
                 item.normalized_text
             )
+            taxonomy = RequirementTaxonomy.decide(
+                legacy_type=classified.requirement_type,
+                proposal_chapter=proposal_chapter,
+                scoring_relation=classified.scoring_relation,
+                importance=classified.importance,
+                text=(
+                    f"{item.title} {item.normalized_text} {item.quote}"
+                ),
+            )
+            proposal_chapter = taxonomy.proposal_mapping
+            need_generation = (
+                taxonomy.response_action == "write_into_proposal"
+                and proposal_chapter is not None
+            )
             duplicate = next(
                 (
                     current
@@ -622,7 +656,7 @@ class RequirementService:
                         "title": item.title,
                         "normalized_text": item.normalized_text,
                         "quote": item.quote,
-                        "requirement_type": classified.requirement_type,
+                        "requirement_type": taxonomy.requirement_type,
                         "importance": classified.importance,
                         "confidence": item.confidence,
                         "scoring_relation": classified.scoring_relation,
@@ -636,6 +670,10 @@ class RequirementService:
                         "proposal_chapter": proposal_chapter,
                         "target_chapter": proposal_chapter,
                         "need_generation": need_generation,
+                        "response_action": taxonomy.response_action,
+                        "proposal_mapping": taxonomy.proposal_mapping,
+                        "scoring_impact": taxonomy.scoring_impact,
+                        "priority": taxonomy.priority,
                     }
                 )
                 continue
@@ -648,7 +686,7 @@ class RequirementService:
                         "title": item.title,
                         "normalized_text": item.normalized_text,
                         "quote": item.quote,
-                        "requirement_type": classified.requirement_type,
+                        "requirement_type": taxonomy.requirement_type,
                         "importance": classified.importance,
                         "confidence": item.confidence,
                         "scoring_relation": classified.scoring_relation,
@@ -662,6 +700,10 @@ class RequirementService:
                         "proposal_chapter": proposal_chapter,
                         "target_chapter": proposal_chapter,
                         "need_generation": need_generation,
+                        "response_action": taxonomy.response_action,
+                        "proposal_mapping": taxonomy.proposal_mapping,
+                        "scoring_impact": taxonomy.scoring_impact,
+                        "priority": taxonomy.priority,
                     }
                 )
         return [
@@ -686,6 +728,10 @@ class RequirementService:
                 proposal_chapter=item["proposal_chapter"],
                 target_chapter=item["target_chapter"],
                 need_generation=item["need_generation"],
+                response_action=item["response_action"],
+                proposal_mapping=item["proposal_mapping"],
+                scoring_impact=item["scoring_impact"],
+                priority=item["priority"],
                 fingerprint=hashlib.sha256(
                     item["canonical"].encode()
                 ).hexdigest(),
@@ -766,6 +812,10 @@ class RequirementService:
                 requirements.status,
                 requirements.proposal_relevance,
                 requirements.proposal_chapter,
+                requirements.response_action,
+                requirements.proposal_mapping,
+                requirements.scoring_impact,
+                requirements.priority,
                 requirements.target_chapter,
                 requirements.need_generation,
                 requirements.created_at,
@@ -824,6 +874,10 @@ class RequirementService:
                     ),
                     "proposal_relevance": row["proposal_relevance"],
                     "proposal_chapter": row["proposal_chapter"],
+                    "response_action": row["response_action"],
+                    "proposal_mapping": row["proposal_mapping"],
+                    "scoring_impact": row["scoring_impact"],
+                    "priority": row["priority"],
                     "target_chapter": row["target_chapter"],
                     "need_generation": row["need_generation"],
                     "created_at": row["created_at"],

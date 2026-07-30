@@ -32,12 +32,15 @@ class ProposalPlanService:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
                     """
-                    SELECT id, proposal_chapter, target_chapter,
+                    SELECT id,
+                           proposal_mapping AS proposal_chapter,
+                           proposal_mapping AS target_chapter,
                            need_generation
                     FROM requirements
                     WHERE project_id = %s
                       AND status <> 'rejected'
-                      AND need_generation = TRUE
+                      AND response_action = 'write_into_proposal'
+                      AND proposal_mapping IS NOT NULL
                     ORDER BY created_at, id
                     """,
                     (project_id,),
@@ -144,7 +147,8 @@ class ProposalPlanService:
                     WHERE project_id = %s
                       AND id = ANY(%s)
                       AND status <> 'rejected'
-                      AND need_generation = TRUE
+                      AND response_action = 'write_into_proposal'
+                      AND proposal_mapping IS NOT NULL
                     """,
                     (project_id, list(dict.fromkeys(requirement_ids))),
                 )
