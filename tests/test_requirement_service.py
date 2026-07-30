@@ -56,3 +56,25 @@ def test_source_mismatch_feedback_key_ignores_spacing_and_case():
     assert RequirementService._feedback_key(" 支持 QWEN 模型\n") == (
         RequirementService._feedback_key("支持qwen模型")
     )
+
+
+def test_feedback_reason_is_recovered_from_human_marker():
+    assert RequirementService._feedback_from_row(
+        "rejected",
+        "human_feedback:classification_error",
+    ) == "classification_error"
+    assert RequirementService._feedback_from_row(
+        "rejected",
+        "human_feedback:duplicate",
+    ) == "duplicate"
+    assert RequirementService._feedback_from_row(
+        "rejected",
+        "human_feedback:incomplete",
+    ) == "incomplete"
+
+
+def test_legacy_rejected_requirement_defaults_to_not_needed():
+    assert RequirementService._feedback_from_row(
+        "rejected",
+        None,
+    ) == "not_needed"

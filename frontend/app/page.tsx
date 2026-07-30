@@ -28,8 +28,17 @@ type Requirement = {
   target_chapter: string | null;
   need_generation: boolean;
   status: "pending" | "confirmed" | "rejected";
-  feedback: "pending" | "confirmed" | "not_needed" | "source_mismatch";
+  feedback: "pending" | "confirmed" | "not_needed" | "classification_error" | "source_mismatch" | "duplicate" | "incomplete";
   sources: Source[];
+};
+type IgnoreFeedback = Exclude<Requirement["feedback"], "pending" | "confirmed">;
+
+const ignoreFeedbackLabels: Record<IgnoreFeedback, string> = {
+  not_needed: "本次不需要",
+  classification_error: "分类错误（含合规误分）",
+  source_mismatch: "与原文不符",
+  duplicate: "重复内容",
+  incomplete: "信息不完整",
 };
 type SectionVersion = {
   id: string;
@@ -195,6 +204,7 @@ export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [requirementView, setRequirementView] = useState<"proposal" | "compliance">("proposal");
+  const [ignoreMenuId, setIgnoreMenuId] = useState("");
   const [sections, setSections] = useState<SectionItem[]>([]);
   const [activeSectionId, setActiveSectionId] = useState("");
   const [editorContent, setEditorContent] = useState("");
@@ -208,8 +218,8 @@ export default function Home() {
   const activeSection = sections.find((item) => item.id === activeSectionId);
   const feedbackSummary = useMemo(() => ({
     confirmed: requirements.filter((item) => item.feedback === "confirmed").length,
-    notNeeded: requirements.filter((item) => item.feedback === "not_needed").length,
-    mismatch: requirements.filter((item) => item.feedback === "source_mismatch").length,
+    ignored: requirements.filter((item) => item.feedback !== "pending" && item.feedback !== "confirmed").length,
+    issues: requirements.filter((item) => ["classification_error", "source_mismatch", "duplicate", "incomplete"].includes(item.feedback)).length,
     pending: requirements.filter((item) => item.feedback === "pending").length,
   }), [requirements]);
   const grouped = useMemo(() => {
@@ -386,9 +396,16 @@ export default function Home() {
         },
       );
       setRequirements((items) => items.map((current) => current.id === updated.id ? updated : current));
+      setIgnoreMenuId("");
       setNotice(
         feedback === "source_mismatch"
           ? "已记录为与原文不符；相同错误内容下次将被自动过滤。"
+          : feedback === "classification_error"
+          ? "已记录分类错误，后续分类复核将使用这条反馈。"
+          : feedback === "duplicate"
+          ? "已记录为重复内容。"
+          : feedback === "incomplete"
+          ? "已记录为信息不完整，后续需要重新核对原文。"
           : "人工确认结果已保存。",
       );
     });
@@ -659,8 +676,8 @@ export default function Home() {
                 </div>
                 <div className="feedback-summary" aria-label="人工确认进度">
                   <span><b>{feedbackSummary.pending}</b> 待判断</span>
-                  <span><b>{feedbackSummary.notNeeded}</b> 不采用</span>
-                  {feedbackSummary.mismatch > 0 && <span className="warning"><b>{feedbackSummary.mismatch}</b> 原文不符</span>}
+                  <span><b>{feedbackSummary.ignored}</b> 已忽略</span>
+                  {feedbackSummary.issues > 0 && <span className="warning"><b>{feedbackSummary.issues}</b> 条问题反馈</span>}
                 </div>
               </div>
               {Object.entries(grouped).map(([chapter, items]) => (
@@ -682,23 +699,37 @@ export default function Home() {
                           <div className="source-row">{item.sources.map((source) => <span key={source.id}>{source.filename} · {sourceLabel(source)}</span>)}</div>
                         </details>
                         <div className="card-actions feedback-actions" aria-label="人工确认">
-                          <span>人工确认</span>
+                          <span>
+                            {item.feedback === "pending"
+                              ? "请选择处理方式"
+                              : item.feedback === "confirmed"
+                              ? "已写入方案"
+                              : `已忽略 · ${ignoreFeedbackLabels[item.feedback as IgnoreFeedback]}`}
+                          </span>
                           <button
                             className={item.feedback === "confirmed" ? "selected" : ""}
                             disabled={Boolean(busy)}
                             onClick={() => recordRequirementFeedback(item, "confirmed")}
-                          >需要写入方案</button>
+                          >写入方案</button>
                           <button
-                            className={item.feedback === "not_needed" ? "selected" : ""}
+                            className={item.feedback !== "pending" && item.feedback !== "confirmed" ? "selected warning" : ""}
                             disabled={Boolean(busy)}
-                            onClick={() => recordRequirementFeedback(item, "not_needed")}
-                          >本次不需要</button>
-                          <button
-                            className={item.feedback === "source_mismatch" ? "selected warning" : ""}
-                            disabled={Boolean(busy)}
-                            onClick={() => recordRequirementFeedback(item, "source_mismatch")}
-                          >与原文不符</button>
+                            onClick={() => setIgnoreMenuId((current) => current === item.id ? "" : item.id)}
+                          >忽略</button>
                         </div>
+                        {ignoreMenuId === item.id && (
+                          <div className="ignore-reasons" role="group" aria-label="选择忽略原因">
+                            <strong>为什么忽略？</strong>
+                            {(Object.entries(ignoreFeedbackLabels) as [IgnoreFeedback, string][]).map(([value, label]) => (
+                              <button
+                                key={value}
+                                className={item.feedback === value ? "selected" : ""}
+                                disabled={Boolean(busy)}
+                                onClick={() => recordRequirementFeedback(item, value)}
+                              >{label}</button>
+                            ))}
+                          </div>
+                        )}
                       </article>
                     ))}
                   </div>

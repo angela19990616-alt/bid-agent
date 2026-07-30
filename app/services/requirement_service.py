@@ -70,6 +70,18 @@ class RequirementExtractionError(Exception):
 
 class RequirementService:
     SOURCE_MISMATCH_MARKER = "human_feedback:source_mismatch"
+    FEEDBACK_MARKERS = {
+        "not_needed": "human_feedback:not_needed",
+        "classification_error": "human_feedback:classification_error",
+        "source_mismatch": SOURCE_MISMATCH_MARKER,
+        "duplicate": "human_feedback:duplicate",
+        "incomplete": "human_feedback:incomplete",
+    }
+    CONFLICT_FEEDBACK = {
+        "classification_error",
+        "source_mismatch",
+        "incomplete",
+    }
 
     def __init__(
         self,
@@ -426,36 +438,42 @@ class RequirementService:
         requirement_id: UUID,
         feedback: str,
     ) -> dict:
-        if feedback not in {
-            "pending", "confirmed", "not_needed", "source_mismatch"
-        }:
+        allowed = {"pending", "confirmed", *self.FEEDBACK_MARKERS}
+        if feedback not in allowed:
             raise RequirementValidationError("不支持的人工确认结果。")
-        if feedback == "confirmed":
-            return self.update(
-                project_id, requirement_id, {"status": "confirmed"}
-            )
-        if feedback == "pending":
-            return self.update(
-                project_id, requirement_id, {"status": "pending"}
-            )
-
-        notes = None
-        conflict = False
-        if feedback == "source_mismatch":
-            notes = self.SOURCE_MISMATCH_MARKER
-            conflict = True
+        status = (
+            "confirmed"
+            if feedback == "confirmed"
+            else "pending"
+            if feedback == "pending"
+            else "rejected"
+        )
+        marker = self.FEEDBACK_MARKERS.get(feedback)
+        conflict = feedback in self.CONFLICT_FEEDBACK
         with connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
                     UPDATE requirements
-                    SET status = 'rejected',
+                    SET status = %s,
                         classification_conflict = %s,
-                        classification_notes = %s,
+                        classification_notes = CASE
+                            WHEN %s::text IS NOT NULL THEN %s
+                            WHEN classification_notes LIKE
+                                 'human_feedback:%%' THEN NULL
+                            ELSE classification_notes
+                        END,
                         updated_at = NOW()
                     WHERE project_id = %s AND id = %s
                     """,
-                    (conflict, notes, project_id, requirement_id),
+                    (
+                        status,
+                        conflict,
+                        marker,
+                        marker,
+                        project_id,
+                        requirement_id,
+                    ),
                 )
                 if cursor.rowcount == 0:
                     raise RequirementNotFoundError(str(requirement_id))
@@ -489,6 +507,25 @@ class RequirementService:
     @staticmethod
     def _feedback_key(text: str) -> str:
         return re.sub(r"\s+", "", text).casefold()
+
+    @classmethod
+    def _feedback_from_row(
+        cls,
+        status: str,
+        classification_notes: str | None,
+    ) -> str:
+        marker_to_feedback = {
+            marker: feedback
+            for feedback, marker in cls.FEEDBACK_MARKERS.items()
+        }
+        if classification_notes in marker_to_feedback:
+            return marker_to_feedback[classification_notes]
+        if status == "confirmed":
+            return "confirmed"
+        if status == "rejected":
+            # Records saved before ignore reasons remain understandable.
+            return "not_needed"
+        return "pending"
 
     def get(self, project_id: UUID, requirement_id: UUID) -> dict:
         with connect() as conn:
@@ -781,15 +818,9 @@ class RequirementService:
                         "knowledge_support_required"
                     ],
                     "status": row["status"],
-                    "feedback": (
-                        "source_mismatch"
-                        if row["classification_notes"]
-                        == RequirementService.SOURCE_MISMATCH_MARKER
-                        else "confirmed"
-                        if row["status"] == "confirmed"
-                        else "not_needed"
-                        if row["status"] == "rejected"
-                        else "pending"
+                    "feedback": RequirementService._feedback_from_row(
+                        row["status"],
+                        row["classification_notes"],
                     ),
                     "proposal_relevance": row["proposal_relevance"],
                     "proposal_chapter": row["proposal_chapter"],

@@ -20,7 +20,13 @@ RequirementType = Literal[
 ]
 RequirementStatus = Literal["pending", "confirmed", "rejected"]
 RequirementFeedback = Literal[
-    "pending", "confirmed", "not_needed", "source_mismatch"
+    "pending",
+    "confirmed",
+    "not_needed",
+    "classification_error",
+    "source_mismatch",
+    "duplicate",
+    "incomplete",
 ]
 Importance = Literal["low", "medium", "high", "critical"]
 ScoringRelation = Literal[
