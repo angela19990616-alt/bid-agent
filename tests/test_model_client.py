@@ -258,6 +258,28 @@ def test_retryable_provider_error_switches_to_rule_fallback():
     )
 
 
+def test_forbidden_model_switches_to_rule_fallback():
+    completions = SequencedCompletions(
+        [ProviderError("model access forbidden", 403), "备用模型完成"]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions)
+    )
+
+    result = ModelClient(client=client).chat(
+        [{"role": "user", "content": "生成章节"}],
+        task="writing",
+    )
+
+    assert result == "备用模型完成"
+    assert len(completions.calls) == 2
+    assert completions.calls[0]["model"] == settings.writing_model
+    assert (
+        completions.calls[1]["model"]
+        == "qwen-plus-2025-07-28"
+    )
+
+
 def test_non_retryable_provider_error_does_not_switch_model():
     completions = SequencedCompletions(
         [ProviderError("invalid request body", 400)]

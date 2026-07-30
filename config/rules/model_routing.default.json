@@ -12,8 +12,8 @@
     "review": ["qwen-plus-2025-07-28", "qwen-max"],
     "default": ["qwen-plus-2025-07-28", "qwen-max"]
   },
-  "retryable_status_codes": [404, 408, 409, 429, 500, 502, 503, 504],
-  "zero_usage_status_codes": [404, 429],
+  "retryable_status_codes": [403, 404, 408, 409, 429, 500, 502, 503, 504],
+  "zero_usage_status_codes": [403, 404, 429],
   "retryable_error_markers": [
     "quota",
     "insufficient",
@@ -24,6 +24,11 @@
     "model not found",
     "模型不存在",
     "未开通",
+    "forbidden",
+    "access denied",
+    "permission denied",
+    "no permission",
+    "not authorized for this model",
     "temporarily unavailable",
     "service unavailable",
     "timeout",
