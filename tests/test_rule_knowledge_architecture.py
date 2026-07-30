@@ -7,6 +7,7 @@ from app.agents.requirement_agent import AgentRequirement
 from app.agents.requirement_reviewer import RequirementReviewer
 from app.knowledge.engine import EnterpriseKnowledgeEngine
 from app.rules.engine import RuleEngine
+from app.core.model_routing import ModelRoutingRules
 from app.services.document_service import SourceSegment
 from app.services.section_service import SectionService
 
@@ -38,6 +39,19 @@ def test_default_rules_are_external_versioned_and_valid():
     )
     assert compliance.content["checks"]
     assert len(extraction.checksum) == 64
+
+
+def test_model_routing_rules_are_external_and_bounded():
+    routing = ModelRoutingRules.load()
+
+    assert routing.max_attempts == 3
+    assert routing.models_for_task("writing", "primary") == [
+        "primary",
+        "qwen-plus-2025-07-28",
+        "qwen-max",
+    ]
+    assert routing.is_retryable(RuntimeError("额度不足"))
+    assert not routing.is_retryable(RuntimeError("业务字段缺失"))
 
 
 def test_document_validator_uses_loaded_extraction_rule():

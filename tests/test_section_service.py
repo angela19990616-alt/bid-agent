@@ -1,4 +1,10 @@
+from app.services import section_service
+from app.services.model_budget_service import ModelBudgetService
 from app.services.section_service import SectionService
+
+
+def test_section_generation_budget_dependency_is_wired():
+    assert section_service.ModelBudgetService is ModelBudgetService
 
 
 def test_review_warns_without_blocking_unsupported_claims():

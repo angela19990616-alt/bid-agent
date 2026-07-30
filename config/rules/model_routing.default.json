@@ -1,0 +1,32 @@
+{
+  "key": "default-model-routing",
+  "rule_type": "model_routing",
+  "version": 1,
+  "name": "模型受控切换规则",
+  "description": "主模型额度不足、限流或暂时不可用时，在同一供应商兼容接口内有限切换。",
+  "max_attempts": 3,
+  "task_fallbacks": {
+    "extraction": ["qwen3.7-plus", "qwen-max"],
+    "classification": ["qwen-plus-2025-07-28", "glm-5"],
+    "writing": ["qwen-plus-2025-07-28", "qwen-max", "glm-5"],
+    "review": ["qwen-plus-2025-07-28", "qwen-max"],
+    "default": ["qwen-plus-2025-07-28", "qwen-max"]
+  },
+  "retryable_status_codes": [404, 408, 409, 429, 500, 502, 503, 504],
+  "zero_usage_status_codes": [404, 429],
+  "retryable_error_markers": [
+    "quota",
+    "insufficient",
+    "额度",
+    "余额不足",
+    "rate limit",
+    "too many requests",
+    "model not found",
+    "模型不存在",
+    "未开通",
+    "temporarily unavailable",
+    "service unavailable",
+    "timeout",
+    "timed out"
+  ]
+}

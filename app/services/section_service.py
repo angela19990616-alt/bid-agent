@@ -15,7 +15,10 @@ from app.knowledge.engine import (
     KnowledgeMatchRepository,
 )
 from app.rules.engine import RuleDocument, RuleEngine
-from app.services.model_budget_service import ModelBudgetExceeded
+from app.services.model_budget_service import (
+    ModelBudgetExceeded,
+    ModelBudgetService,
+)
 from app.services.provenance_service import ProvenanceService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
@@ -153,8 +156,8 @@ class SectionService:
         )
         ModelBudgetService.configure_limits(
             workflow_run_id,
-            call_limit=2,
-            token_limit=80000,
+            call_limit=3,
+            token_limit=180000,
         )
         matches = self.knowledge_engine.match(
             section_title=section["title"],

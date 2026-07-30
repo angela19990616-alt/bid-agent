@@ -35,6 +35,32 @@ class FakeOpenAI:
         )
 
 
+class ProviderError(RuntimeError):
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class SequencedCompletions:
+    def __init__(self, outcomes):
+        self.outcomes = iter(outcomes)
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        outcome = next(self.outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=outcome)
+                )
+            ],
+            usage=SimpleNamespace(total_tokens=100),
+        )
+
+
 def test_chat_uses_openai_compatible_chat_completions_api():
     client = FakeOpenAI("生成结果")
 
@@ -180,12 +206,51 @@ def test_chapter_budget_is_smaller_than_workflow_hard_cap(monkeypatch):
 
     limits = ModelBudgetService.configure_limits(
         run_id,
-        call_limit=2,
-        token_limit=80000,
+        call_limit=3,
+        token_limit=180000,
     )
 
     assert limits == {
-        "model_call_limit": 2,
-        "model_token_limit": 80000,
+        "model_call_limit": 3,
+        "model_token_limit": 180000,
     }
-    assert captured["params"] == (2, 80000, run_id)
+    assert captured["params"] == (3, 180000, run_id)
+
+
+def test_retryable_provider_error_switches_to_rule_fallback():
+    completions = SequencedCompletions(
+        [ProviderError("insufficient quota", 429), "备用模型完成"]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions)
+    )
+
+    result = ModelClient(client=client).chat(
+        [{"role": "user", "content": "生成章节"}],
+        task="writing",
+    )
+
+    assert result == "备用模型完成"
+    assert len(completions.calls) == 2
+    assert completions.calls[0]["model"] == settings.writing_model
+    assert (
+        completions.calls[1]["model"]
+        == "qwen-plus-2025-07-28"
+    )
+
+
+def test_non_retryable_provider_error_does_not_switch_model():
+    completions = SequencedCompletions(
+        [ProviderError("invalid request body", 400)]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions)
+    )
+
+    with pytest.raises(ProviderError, match="invalid request"):
+        ModelClient(client=client).chat(
+            [{"role": "user", "content": "生成章节"}],
+            task="writing",
+        )
+
+    assert len(completions.calls) == 1
