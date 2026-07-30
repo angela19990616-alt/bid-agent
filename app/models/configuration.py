@@ -6,7 +6,9 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
-RuleType = Literal["extraction", "knowledge", "writing", "compliance"]
+RuleType = Literal[
+    "extraction", "classification", "knowledge", "writing", "compliance"
+]
 
 
 class RuleCreate(BaseModel):

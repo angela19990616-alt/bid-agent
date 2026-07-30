@@ -27,6 +27,16 @@ class Settings:
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
     llm_model: str = os.getenv("LLM_MODEL", "qwen-plus")
+    extraction_model: str = os.getenv(
+        "EXTRACTION_MODEL", "qwen-plus-2025-07-28"
+    )
+    classification_model: str = os.getenv(
+        "CLASSIFICATION_MODEL", "qwen3.7-plus"
+    )
+    writing_model: str = os.getenv(
+        "WRITING_MODEL", "qwen3.7-plus"
+    )
+    review_model: str = os.getenv("REVIEW_MODEL", "glm-5")
     embedding_model: str = os.getenv(
         "EMBEDDING_MODEL",
         "text-embedding-v4",
@@ -62,6 +72,14 @@ class Settings:
     @property
     def model_api_key(self) -> str:
         return self.dashscope_api_key or self.openai_api_key
+
+    def model_for_task(self, task: str) -> str:
+        return {
+            "extraction": self.extraction_model,
+            "classification": self.classification_model,
+            "writing": self.writing_model,
+            "review": self.review_model,
+        }.get(task, self.llm_model)
 
     @property
     def postgres_dsn(self) -> str:

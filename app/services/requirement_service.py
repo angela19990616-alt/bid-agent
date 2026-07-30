@@ -15,6 +15,12 @@ from app.agents.requirement_agent import (
     RequirementAgent,
     RequirementAgentError,
 )
+from app.agents.requirement_classifier import (
+    ClassificationReviewer,
+    ClassifiedRequirement,
+    RequirementClassifier,
+)
+from app.agents.output_quality import ReviewedDebugPipeline
 from app.agents.requirement_reviewer import (
     RequirementReviewer,
     ReviewedRequirement,
@@ -32,7 +38,13 @@ class Candidate:
     requirement_type: str
     importance: str
     confidence: float
+    scoring_relation: str
+    classification_confidence: float
+    classification_conflict: bool
+    classification_notes: str
+    knowledge_support_required: bool
     proposal_relevance: str
+    proposal_chapter: str | None
     target_chapter: str | None
     need_generation: bool
     fingerprint: str
@@ -56,9 +68,17 @@ class RequirementService:
         requirement_agent: RequirementAgent | None = None,
         reviewer: RequirementReviewer | None = None,
         rule_engine: RuleEngine | None = None,
+        classifier: RequirementClassifier | None = None,
+        classification_reviewer: ClassificationReviewer | None = None,
+        quality_pipeline: ReviewedDebugPipeline | None = None,
     ):
         self.requirement_agent = requirement_agent
         self.reviewer = reviewer or RequirementReviewer()
+        self.classifier = classifier or RequirementClassifier()
+        self.classification_reviewer = (
+            classification_reviewer or ClassificationReviewer()
+        )
+        self.quality_pipeline = quality_pipeline or ReviewedDebugPipeline()
         self.rule_engine = rule_engine or RuleEngine()
 
     def extract(
@@ -66,6 +86,7 @@ class RequirementService:
         project_id: UUID,
         document_ids: list[UUID],
         rules: RuleDocument | None = None,
+        classification_rules: RuleDocument | None = None,
     ) -> tuple[int, int]:
         sources = self._load_sources(project_id, document_ids)
         if not sources:
@@ -81,9 +102,18 @@ class RequirementService:
             raise RequirementExtractionError(
                 "Requirement Agent 未能完成提取，请检查模型配置后重试。"
             ) from exc
-        candidates = self._deduplicate(
-            self.reviewer.review(agent_items, active_rules)
-        )[:200]
+        active_classification_rules = (
+            classification_rules
+            or self.rule_engine.load("classification")
+        )
+        classified = self.classifier.classify(
+            agent_items, active_classification_rules
+        )
+        reviewed = self.classification_reviewer.review(
+            classified, active_classification_rules
+        )
+        quality_checked = self.quality_pipeline.run(reviewed)
+        candidates = self._deduplicate(quality_checked)[:200]
 
         created = 0
         skipped = 0
@@ -100,11 +130,15 @@ class RequirementService:
                         INSERT INTO requirements (
                             project_id, requirement_type, title,
                             normalized_text, quote, importance, confidence,
-                            proposal_relevance, target_chapter,
+                            scoring_relation, classification_confidence,
+                            classification_conflict, classification_notes,
+                            knowledge_support_required, proposal_relevance,
+                            proposal_chapter, target_chapter,
                             need_generation, fingerprint
                         )
                         VALUES (
                             %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s
                         )
                         ON CONFLICT (project_id, fingerprint) DO NOTHING
@@ -118,7 +152,13 @@ class RequirementService:
                             candidate.quote,
                             candidate.importance,
                             candidate.confidence,
+                            candidate.scoring_relation,
+                            candidate.classification_confidence,
+                            candidate.classification_conflict,
+                            candidate.classification_notes,
+                            candidate.knowledge_support_required,
                             candidate.proposal_relevance,
+                            candidate.proposal_chapter,
                             candidate.target_chapter,
                             candidate.need_generation,
                             candidate.fingerprint,
@@ -198,6 +238,8 @@ class RequirementService:
             "status": "status",
             "proposal_relevance": "proposal_relevance",
             "target_chapter": "target_chapter",
+            "proposal_chapter": "proposal_chapter",
+            "scoring_relation": "scoring_relation",
             "need_generation": "need_generation",
         }
         values = {
@@ -298,16 +340,34 @@ class RequirementService:
 
     @staticmethod
     def _deduplicate(
-        items: list[ReviewedRequirement | AgentRequirement],
+        items: list[
+            ClassifiedRequirement | ReviewedRequirement | AgentRequirement
+        ],
     ) -> list[Candidate]:
         merged: list[dict] = []
         for raw_item in items:
-            reviewed = (
-                raw_item
-                if isinstance(raw_item, ReviewedRequirement)
-                else RequirementReviewer().review_one(raw_item)
-            )
-            item = reviewed.item
+            if isinstance(raw_item, ClassifiedRequirement):
+                classified = raw_item
+                item = classified.item
+                proposal_chapter = classified.proposal_chapter
+                need_generation = proposal_chapter is not None
+                relevance = (
+                    "high"
+                    if classified.importance in {"critical", "high"}
+                    or classified.scoring_relation == "high_score_item"
+                    else "medium" if need_generation else "low"
+                )
+            else:
+                reviewed = (
+                    raw_item
+                    if isinstance(raw_item, ReviewedRequirement)
+                    else RequirementReviewer().review_one(raw_item)
+                )
+                item = reviewed.item
+                classified = RequirementClassifier.classify_by_rules(item)
+                proposal_chapter = reviewed.target_chapter
+                need_generation = reviewed.need_generation
+                relevance = reviewed.proposal_relevance
             canonical = RequirementService._canonical(
                 item.normalized_text
             )
@@ -332,12 +392,20 @@ class RequirementService:
                         "title": item.title,
                         "normalized_text": item.normalized_text,
                         "quote": item.quote,
-                        "requirement_type": item.requirement_type,
-                        "importance": item.importance,
+                        "requirement_type": classified.requirement_type,
+                        "importance": classified.importance,
                         "confidence": item.confidence,
-                        "proposal_relevance": reviewed.proposal_relevance,
-                        "target_chapter": reviewed.target_chapter,
-                        "need_generation": reviewed.need_generation,
+                        "scoring_relation": classified.scoring_relation,
+                        "classification_confidence": classified.confidence,
+                        "classification_conflict": classified.conflict,
+                        "classification_notes": classified.rationale,
+                        "knowledge_support_required": (
+                            classified.knowledge_support_required
+                        ),
+                        "proposal_relevance": relevance,
+                        "proposal_chapter": proposal_chapter,
+                        "target_chapter": proposal_chapter,
+                        "need_generation": need_generation,
                     }
                 )
                 continue
@@ -350,12 +418,20 @@ class RequirementService:
                         "title": item.title,
                         "normalized_text": item.normalized_text,
                         "quote": item.quote,
-                        "requirement_type": item.requirement_type,
-                        "importance": item.importance,
+                        "requirement_type": classified.requirement_type,
+                        "importance": classified.importance,
                         "confidence": item.confidence,
-                        "proposal_relevance": reviewed.proposal_relevance,
-                        "target_chapter": reviewed.target_chapter,
-                        "need_generation": reviewed.need_generation,
+                        "scoring_relation": classified.scoring_relation,
+                        "classification_confidence": classified.confidence,
+                        "classification_conflict": classified.conflict,
+                        "classification_notes": classified.rationale,
+                        "knowledge_support_required": (
+                            classified.knowledge_support_required
+                        ),
+                        "proposal_relevance": relevance,
+                        "proposal_chapter": proposal_chapter,
+                        "target_chapter": proposal_chapter,
+                        "need_generation": need_generation,
                     }
                 )
         return [
@@ -367,7 +443,17 @@ class RequirementService:
                 requirement_type=item["requirement_type"],
                 importance=item["importance"],
                 confidence=item["confidence"],
+                scoring_relation=item["scoring_relation"],
+                classification_confidence=item[
+                    "classification_confidence"
+                ],
+                classification_conflict=item["classification_conflict"],
+                classification_notes=item["classification_notes"],
+                knowledge_support_required=item[
+                    "knowledge_support_required"
+                ],
                 proposal_relevance=item["proposal_relevance"],
+                proposal_chapter=item["proposal_chapter"],
                 target_chapter=item["target_chapter"],
                 need_generation=item["need_generation"],
                 fingerprint=hashlib.sha256(
@@ -442,8 +528,14 @@ class RequirementService:
                 requirements.quote,
                 requirements.importance,
                 requirements.confidence,
+                requirements.scoring_relation,
+                requirements.classification_confidence,
+                requirements.classification_conflict,
+                requirements.classification_notes,
+                requirements.knowledge_support_required,
                 requirements.status,
                 requirements.proposal_relevance,
+                requirements.proposal_chapter,
                 requirements.target_chapter,
                 requirements.need_generation,
                 requirements.created_at,
@@ -484,8 +576,20 @@ class RequirementService:
                         if isinstance(row["confidence"], Decimal)
                         else row["confidence"]
                     ),
+                    "scoring_relation": row["scoring_relation"],
+                    "classification_confidence": float(
+                        row["classification_confidence"]
+                    ),
+                    "classification_conflict": row[
+                        "classification_conflict"
+                    ],
+                    "classification_notes": row["classification_notes"],
+                    "knowledge_support_required": row[
+                        "knowledge_support_required"
+                    ],
                     "status": row["status"],
                     "proposal_relevance": row["proposal_relevance"],
+                    "proposal_chapter": row["proposal_chapter"],
                     "target_chapter": row["target_chapter"],
                     "need_generation": row["need_generation"],
                     "created_at": row["created_at"],

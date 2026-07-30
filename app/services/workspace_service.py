@@ -115,12 +115,28 @@ class WorkspaceService:
         try:
             extraction_rules = self.rule_engine.load("extraction")
             pipeline.record(run_id, "requirement_extractor")
+            classification_rules = self.rule_engine.load("classification")
+            pipeline.record(
+                run_id,
+                "proposal_classification",
+                rule_snapshot=classification_rules.snapshot(),
+                details={
+                    "modules": [
+                        "classification_agent",
+                        "classification_reviewer",
+                        "output_review_agent",
+                        "debug_agent",
+                        "post_debug_review",
+                    ],
+                    "execution": "single_bounded_pass",
+                },
+            )
             self.requirement_service.extract(
                 workspace_id,
                 [document_id],
                 extraction_rules,
+                classification_rules,
             )
-            pipeline.record(run_id, "requirement_reviewer")
 
             technical = self.requirement_service.list(
                 workspace_id, need_generation=True

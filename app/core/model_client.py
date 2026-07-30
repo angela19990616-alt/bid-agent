@@ -51,9 +51,10 @@ class ModelClient:
         *,
         temperature: float = 0.2,
         max_tokens: int = 4000,
+        task: str = "default",
     ) -> str:
         response = self.client.chat.completions.create(
-            model=settings.llm_model,
+            model=settings.model_for_task(task),
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,

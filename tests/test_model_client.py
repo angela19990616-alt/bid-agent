@@ -54,3 +54,22 @@ def test_chat_rejects_empty_model_output():
         ModelClient(client=FakeOpenAI("")).chat(
             [{"role": "user", "content": "生成本章"}]
         )
+
+
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        ("extraction", settings.extraction_model),
+        ("classification", settings.classification_model),
+        ("writing", settings.writing_model),
+        ("review", settings.review_model),
+        ("unknown", settings.llm_model),
+    ],
+)
+def test_chat_routes_model_by_bounded_task(task, expected):
+    client = FakeOpenAI("完成")
+    ModelClient(client=client).chat(
+        [{"role": "user", "content": "测试"}],
+        task=task,
+    )
+    assert client.chat.completions.calls[0]["model"] == expected

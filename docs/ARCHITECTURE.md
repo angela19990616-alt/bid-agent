@@ -27,8 +27,9 @@ flowchart TD
     B --> C["Load Extraction Rules"]
     C --> D["Parser"]
     D --> E["Requirement Extractor"]
-    E --> F["Requirement Reviewer"]
-    F --> G["Load Enterprise Knowledge"]
+    E --> F["Proposal Classification"]
+    F --> FR["Reviewer + Debug + Re-review"]
+    FR --> G["Load Enterprise Knowledge"]
     G --> H["Knowledge Matching"]
     H --> I["Load Proposal Writing Rules"]
     I --> J["Proposal Planner"]
@@ -58,7 +59,8 @@ flowchart TD
 
 | 类型 | 控制内容 |
 | --- | --- |
-| extraction | 文件有效性、候选证据、忽略项、Requirement 定义、分类、命名、方案映射 |
+| extraction | 文件有效性、候选证据、忽略项、Requirement 定义和命名 |
+| classification | Requirement 类型、评分关系、方案章节映射、行业分类约束 |
 | writing | 目录顺序、章节风格、事实边界、知识引用、篇幅、重复率和术语策略 |
 | compliance | 长度、禁用表述、占位符、Requirement/Knowledge 可追溯门禁 |
 
@@ -110,7 +112,9 @@ Requirements；输出是按相关度排序的明确知识集合。`knowledge_mat
 - Document Validator：只判断输入是否值得进入后续流程。
 - Parser：只把 PDF/DOCX 转为可定位 SourceSegment。
 - Requirement Extractor：依据加载的 extraction rule 调用模型。
-- Requirement Reviewer：确定方案相关性与目标章节，不调用模型。
+- Classification Agent：规则优先；只对低置信和未映射条目进行一次批量模型分类。
+- Classification Reviewer：纠正分类冲突，确保资格和商务条款不进入技术方案正文。
+- Output Review / Debug：检查内部标识、无意义标签和缺失映射，只做安全机械修复并复检一次。
 - Knowledge Matching：一次性加载私有知识并匹配，不写正文。
 - Proposal Planner：按 writing rule 和映射生成有序目录。
 - Chapter Writer：只用 Requirement 证据、Matched Knowledge 和 writing rule。
@@ -135,7 +139,7 @@ Requirements；输出是按相关度排序的明确知识集合。`knowledge_mat
 | 可变内容 | 配置位置 | 消费模块 |
 | --- | --- | --- |
 | 有效招标文件判定、候选词、忽略项 | `extraction.document_validation`、`candidate_markers`、`ignore_*` | Document Validator、Requirement Extractor |
-| Requirement 类型、方案相关性和章节路由 | `extraction.types`、`proposal_mapping`、`proposal_routing_defaults` | Requirement Extractor、Requirement Reviewer |
+| Requirement 类型、评分关系和章节路由 | `classification.requirement_types`、`classifiers`、`chapter_mapping` | Classification Agent、Classification Reviewer |
 | 推荐目录与章节风格 | `writing.chapter_order`、`chapter_styles` | Proposal Planner、Chapter Writer |
 | 事实边界、篇幅和写作约束 | `writing.policies`、`knowledge_category_policy` | Chapter Writer |
 | 知识准入、匹配权重和数量 | `knowledge.eligibility`、`matching`、`fact_boundaries` | Knowledge Engine |

@@ -8,15 +8,21 @@ from app.models.documents import SourceLocatorResponse
 
 
 RequirementType = Literal[
-    "technical",
-    "scoring",
-    "delivery",
-    "qualification",
-    "compliance",
-    "commercial",
+    "technical_capability", "functional_requirement",
+    "system_architecture", "security_requirement",
+    "performance_requirement", "implementation_requirement",
+    "project_management", "operation_maintenance",
+    "training_requirement", "delivery_requirement",
+    "commercial_requirement", "qualification_requirement",
+    "scoring_requirement", "other",
+    "technical", "scoring", "delivery", "qualification",
+    "compliance", "commercial",
 ]
 RequirementStatus = Literal["pending", "confirmed", "rejected"]
-Importance = Literal["low", "medium", "high"]
+Importance = Literal["low", "medium", "high", "critical"]
+ScoringRelation = Literal[
+    "high_score_item", "medium_score_item", "requirement_only", "unknown"
+]
 ProposalRelevance = Literal["high", "medium", "low"]
 
 
@@ -36,7 +42,13 @@ class RequirementResponse(BaseModel):
     quote: str
     importance: Importance
     confidence: float
+    classification_confidence: float = 0.5
+    classification_conflict: bool = False
+    classification_notes: str | None = None
+    scoring_relation: ScoringRelation = "unknown"
+    knowledge_support_required: bool = False
     proposal_relevance: ProposalRelevance = "low"
+    proposal_chapter: str | None = None
     target_chapter: str | None = None
     need_generation: bool = False
     status: RequirementStatus
@@ -64,6 +76,8 @@ class RequirementUpdate(BaseModel):
     type: RequirementType | None = None
     importance: Importance | None = None
     proposal_relevance: ProposalRelevance | None = None
+    proposal_chapter: str | None = Field(default=None, max_length=200)
+    scoring_relation: ScoringRelation | None = None
     target_chapter: str | None = Field(default=None, max_length=200)
     need_generation: bool | None = None
     status: RequirementStatus | None = None

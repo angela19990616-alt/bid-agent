@@ -208,6 +208,7 @@ class SectionService:
                 ),
                 temperature=0.2,
                 max_tokens=5000,
+                task="writing",
             ).strip()
             content = self.sanitize_generated_content(content)
             if not content:

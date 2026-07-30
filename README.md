@@ -11,7 +11,7 @@ Bid Agent 是面向技术投标方案生成的受控 AI 工作台。用户只需
 
 系统不是 Prompt Driven，而是三个相互独立的底座：
 
-- Rule Engine：加载、校验、版本化和激活提取规则、写作规则、校核规则。
+- Rule Engine：加载、校验、版本化和激活提取、方案分类、写作与校核规则。
 - Knowledge Engine：读取机构私有企业知识，在写作前一次性完成 Knowledge
   Matching，并保存匹配依据。
 - Controlled Workflow：按有限阶段调用模块并保存规则快照、知识快照和运行轨迹；
@@ -25,7 +25,7 @@ Document Upload
   → Load Extraction Rules
   → Parser
   → Requirement Extractor
-  → Requirement Reviewer
+  → Proposal-oriented Classification（分类、复核、自检修复）
   → Load Enterprise Knowledge
   → Knowledge Matching
   → Load Proposal Writing Rules
@@ -43,6 +43,7 @@ Document Upload
 Git 中的默认规则：
 
 - `config/rules/extraction.default.json`
+- `config/rules/classification.default.json`
 - `config/rules/writing.default.json`
 - `config/rules/compliance.default.json`
 
@@ -165,6 +166,7 @@ HttpOnly、SameSite=Strict 签名 Cookie；邀请码不会写入前端存储。�
   私有知识资格、推荐目录顺序。
 - `010_rule_knowledge_engine.sql`：规则版本、企业知识、工作流轨迹、知识匹配、
   生成快照和整本方案导出。
+- `014_proposal_classification.sql`：方案导向分类字段、规则类型及历史分类迁移。
 - `012_proposal_review.sql`：段落级来源、历史案例使用记录、双轮 Proposal
   Review、自动修复版本和导出审查关联。
 - `013_session_workspace_access.sql`：临时浏览器会话哈希、来源 IP 绑定和访问
@@ -179,7 +181,11 @@ HttpOnly、SameSite=Strict 签名 Cookie；邀请码不会写入前端存储。�
 
 模型调用统一经过兼容 OpenAI SDK 的客户端接口，当前国内部署默认连接阿里云百炼：
 在私密 `.env` 中填写 `DASHSCOPE_API_KEY`，并使用百炼兼容端点、
-`qwen-plus` 和 `text-embedding-v4`。`OPENAI_BASE_URL`、`LLM_MODEL`、
+任务模型通过 `EXTRACTION_MODEL`、`CLASSIFICATION_MODEL`、
+`WRITING_MODEL` 和 `REVIEW_MODEL` 分开配置，通用回退使用 `LLM_MODEL`。
+默认分别使用 `qwen-plus-2025-07-28`、`qwen3.7-plus`、`qwen3.7-plus`、
+`glm-5` 和 `qwen-max`；向量模型使用 `text-embedding-v4`。
+`OPENAI_BASE_URL`、各模型变量、
 `EMBEDDING_MODEL` 和 `EMBEDDING_DIMENSIONS` 均可配置，切换供应商不需要修改
 Agent 或业务服务。真实 Key 只能写入本机或服务器 `.env`，禁止发到聊天或提交
 Git。
@@ -284,3 +290,16 @@ Auto Fix 只执行可确定的安全修复：删除内部标识、敏感字段�
 `deliverability_gate`，不是写死在 Prompt 中。只有最终复检完成且真实性、
 隐私、需求覆盖、评分点覆盖和来源追溯全部达到配置阈值，正式 DOCX 导出才会
 放行；否则 Review 会明确标记“不建议正式交付”。
+
+### 面向技术方案的 Requirement 分类
+
+Requirement 提取后会加载独立的 classification rule，输出
+`requirement_type`、`proposal_chapter`、`scoring_relation`、`importance`
+和分类置信度。资格与商务要求保留为合规提醒，但不进入技术方案正文。
+Proposal Planner 优先使用 `proposal_chapter`，`target_chapter` 仅作为旧数据
+兼容字段。
+
+分类采用混合执行：明确命中高优先级规则的条目不调用模型；只有低置信或无法映射
+的条目才进行一次批量模型分类。随后在同一进程内完成分类冲突复核、用户可见内容
+Review、安全机械修复和复检，不逐条调用模型，也不进行无限循环。Review 报告展示
+分类质量、高置信比例、低置信数量、未映射数量与冲突数量。

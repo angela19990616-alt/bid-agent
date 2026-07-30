@@ -13,7 +13,9 @@ from app.config.settings import settings
 from app.database.db import connect
 
 
-RULE_TYPES = {"extraction", "knowledge", "writing", "compliance"}
+RULE_TYPES = {
+    "extraction", "classification", "knowledge", "writing", "compliance"
+}
 
 
 class RuleValidationError(ValueError):
@@ -48,6 +50,7 @@ class RuleDocument:
 class RuleEngine:
     FILES = {
         "extraction": "extraction.default.json",
+        "classification": "classification.default.json",
         "knowledge": "knowledge.default.json",
         "writing": "writing.default.json",
         "compliance": "compliance.default.json",
@@ -235,6 +238,12 @@ class RuleEngine:
                 "document_validation", "candidate_markers", "types",
                 "proposal_mapping",
                 "proposal_routing_defaults",
+                "model_instruction", "output_schema"
+            )
+        elif rule_type == "classification":
+            required = (
+                "requirement_types", "classifiers", "chapter_mapping",
+                "scoring_keywords", "importance_keywords",
                 "model_instruction", "output_schema"
             )
         elif rule_type == "knowledge":

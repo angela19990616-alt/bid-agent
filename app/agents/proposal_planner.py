@@ -25,7 +25,11 @@ class ProposalPlanner:
         for item in requirements:
             if not item.get("need_generation"):
                 continue
-            title = item.get("target_chapter") or chapter_order[0]
+            title = (
+                item.get("proposal_chapter")
+                or item.get("target_chapter")
+                or chapter_order[0]
+            )
             grouped.setdefault(title, []).append(item["id"])
 
         ordered_titles = [

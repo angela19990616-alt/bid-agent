@@ -32,7 +32,8 @@ class ProposalPlanService:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
                     """
-                    SELECT id, target_chapter, need_generation
+                    SELECT id, proposal_chapter, target_chapter,
+                           need_generation
                     FROM requirements
                     WHERE project_id = %s
                       AND status <> 'rejected'

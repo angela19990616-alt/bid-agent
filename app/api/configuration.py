@@ -30,7 +30,9 @@ def get_knowledge_engine() -> EnterpriseKnowledgeEngine:
     response_model=RuleResponse,
 )
 def get_active_rule(
-    rule_type: Literal["extraction", "knowledge", "writing", "compliance"],
+    rule_type: Literal[
+        "extraction", "classification", "knowledge", "writing", "compliance"
+    ],
 ):
     return RuleEngine().load(rule_type).__dict__
 
@@ -38,7 +40,7 @@ def get_active_rule(
 @router.get("/rules")
 def list_rule_versions(
     rule_type: Literal[
-        "extraction", "knowledge", "writing", "compliance"
+        "extraction", "classification", "knowledge", "writing", "compliance"
     ] | None = None,
 ):
     return RuleEngine().list_versions(rule_type)

@@ -167,6 +167,7 @@ class RequirementAgent:
                 ],
                 temperature=0,
                 max_tokens=6000,
+                task="extraction",
             )
         except Exception as exc:
             raise RequirementAgentError(

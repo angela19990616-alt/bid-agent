@@ -198,7 +198,7 @@ class ProposalReviewService:
                 ),
             }
             requirement_coverage.append(coverage_item)
-            if item.get("type") == "scoring":
+            if item.get("type") in {"scoring", "scoring_requirement"}:
                 score_match = re.search(
                     r"(\d+(?:\.\d+)?)\s*分",
                     f"{item.get('title', '')} {item.get('normalized_text', '')}",
@@ -471,6 +471,17 @@ class ProposalReviewService:
                 "high_risk_count": high_risk,
                 "blocking_risk_count": blocking,
             },
+            "classification_quality": data.get(
+                "classification_quality",
+                {
+                    "quality_rate": 1.0,
+                    "total_count": len(data["requirements"]),
+                    "high_confidence_ratio": 1.0,
+                    "low_confidence_count": 0,
+                    "unmapped_count": 0,
+                    "conflict_count": 0,
+                },
+            ),
             "requirement_coverage": requirement_coverage,
             "scoring_coverage": scoring_coverage,
             "knowledge_usage": _deduplicate_usage(knowledge_usage),
@@ -664,6 +675,29 @@ class ProposalReviewService:
                 requirements = [dict(row) for row in cursor.fetchall()]
                 cursor.execute(
                     """
+                    SELECT
+                        COUNT(*) AS total_count,
+                        COUNT(*) FILTER (
+                            WHERE classification_confidence >= 0.8
+                        ) AS high_confidence_count,
+                        COUNT(*) FILTER (
+                            WHERE classification_confidence < 0.6
+                        ) AS low_confidence_count,
+                        COUNT(*) FILTER (
+                            WHERE need_generation = TRUE
+                              AND proposal_chapter IS NULL
+                        ) AS unmapped_count,
+                        COUNT(*) FILTER (
+                            WHERE classification_conflict = TRUE
+                        ) AS conflict_count
+                    FROM requirements
+                    WHERE project_id = %s AND status <> 'rejected'
+                    """,
+                    (project_id,),
+                )
+                classification_counts = dict(cursor.fetchone())
+                cursor.execute(
+                    """
                     SELECT sr.section_id, sr.requirement_id
                     FROM section_requirements sr
                     JOIN sections s ON s.id = sr.section_id
@@ -703,8 +737,27 @@ class ProposalReviewService:
                 item["section_version_id"], []
             ).append(dict(item))
         source_locations = self._requirement_locations(project_id)
+        total = int(classification_counts["total_count"])
+        high = int(classification_counts["high_confidence_count"])
+        low = int(classification_counts["low_confidence_count"])
+        unmapped = int(classification_counts["unmapped_count"])
+        conflicts = int(classification_counts["conflict_count"])
+        penalty = low + (unmapped * 2) + conflicts
+        classification_quality = {
+            "quality_rate": round(
+                max(0.0, 1 - penalty / max(total, 1)), 4
+            ),
+            "total_count": total,
+            "high_confidence_ratio": round(
+                high / total if total else 1.0, 4
+            ),
+            "low_confidence_count": low,
+            "unmapped_count": unmapped,
+            "conflict_count": conflicts,
+        }
         return {
             "project_name": project["name"],
+            "classification_quality": classification_quality,
             "requirements": [
                 {
                     "public_key": public_keys[item["id"]],
@@ -915,6 +968,7 @@ def _remove_internal_ids(value: Any) -> Any:
 
 def _to_markdown(report: dict[str, Any]) -> str:
     overall = report["overall"]
+    classification = report.get("classification_quality", {})
     lines = [
         "# Proposal Review",
         "",
@@ -928,6 +982,15 @@ def _to_markdown(report: dict[str, Any]) -> str:
         f"- 企业事实核验率：{overall['enterprise_fact_verification_rate']:.1%}",
         f"- 未验证断言：{overall['unverified_assertion_count']} 项",
         f"- 内部标识泄露：{overall['internal_identifier_leak_count']} 项",
+        "",
+        "## Classification Quality",
+        "",
+        f"- 分类质量：{classification.get('quality_rate', 1):.1%}",
+        f"- Requirement 数量：{classification.get('total_count', 0)}",
+        f"- 高置信分类比例：{classification.get('high_confidence_ratio', 1):.1%}",
+        f"- 低置信分类：{classification.get('low_confidence_count', 0)} 项",
+        f"- 未映射章节：{classification.get('unmapped_count', 0)} 项",
+        f"- 分类冲突：{classification.get('conflict_count', 0)} 项",
         "",
         "## Requirement Coverage",
         "",

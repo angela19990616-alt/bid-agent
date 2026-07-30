@@ -15,7 +15,7 @@ STAGES = (
     "load_extraction_rules",
     "parser",
     "requirement_extractor",
-    "requirement_reviewer",
+    "proposal_classification",
     "load_enterprise_knowledge",
     "knowledge_matching",
     "load_writing_rules",

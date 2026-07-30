@@ -15,11 +15,15 @@ type Source = {
 };
 type Requirement = {
   id: string;
-  type: "technical" | "scoring" | "delivery" | "qualification" | "compliance" | "commercial";
+  type: "technical_capability" | "functional_requirement" | "system_architecture" | "security_requirement" | "performance_requirement" | "implementation_requirement" | "project_management" | "operation_maintenance" | "training_requirement" | "delivery_requirement" | "commercial_requirement" | "qualification_requirement" | "scoring_requirement" | "other" | "technical" | "scoring" | "delivery" | "commercial" | "qualification" | "compliance";
   title: string;
   normalized_text: string;
   quote: string;
   proposal_relevance: "high" | "medium" | "low";
+  proposal_chapter: string | null;
+  scoring_relation: "high_score_item" | "medium_score_item" | "requirement_only" | "unknown";
+  classification_confidence: number;
+  classification_conflict: boolean;
   target_chapter: string | null;
   need_generation: boolean;
   sources: Source[];
@@ -72,6 +76,14 @@ type ProposalReview = {
     high_risk_count: number;
     blocking_risk_count: number;
   };
+  classification_quality: {
+    quality_rate: number;
+    total_count: number;
+    high_confidence_ratio: number;
+    low_confidence_count: number;
+    unmapped_count: number;
+    conflict_count: number;
+  };
 };
 type AccessStatus = {
   required: boolean;
@@ -98,12 +110,26 @@ const steps: Array<{ id: Step; title: string; subtitle: string }> = [
   { id: "export", title: "导出 Word", subtitle: "交付技术方案" },
 ];
 const typeLabels: Record<Requirement["type"], string> = {
+  technical_capability: "技术能力",
+  functional_requirement: "功能要求",
+  system_architecture: "系统架构",
+  security_requirement: "安全要求",
+  performance_requirement: "性能要求",
+  implementation_requirement: "实施要求",
+  project_management: "项目管理",
+  operation_maintenance: "运维要求",
+  training_requirement: "培训要求",
+  delivery_requirement: "交付要求",
+  commercial_requirement: "商务提醒",
+  qualification_requirement: "资格提醒",
+  scoring_requirement: "技术评分点",
+  other: "其他",
   technical: "技术要求",
   scoring: "技术评分点",
   delivery: "交付与实施",
+  commercial: "商务提醒",
   qualification: "资格提醒",
   compliance: "合规提醒",
-  commercial: "商务提醒",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -159,7 +185,7 @@ export default function Home() {
   const activeSection = sections.find((item) => item.id === activeSectionId);
   const grouped = useMemo(() => {
     return requirements.reduce<Record<string, Requirement[]>>((result, item) => {
-      const chapter = item.target_chapter ?? "其他技术要求";
+      const chapter = item.proposal_chapter ?? item.target_chapter ?? "其他技术要求";
       result[chapter] = [...(result[chapter] ?? []), item];
       return result;
     }, {});
@@ -533,7 +559,7 @@ export default function Home() {
             <div className="requirement-layout">
               <div className="section-toolbar">
                 <div><strong>{requirements.length}</strong><span>条技术写作要点</span></div>
-                <div><strong>{requirements.filter((item) => item.type === "scoring").length}</strong><span>个技术评分点</span></div>
+                <div><strong>{requirements.filter((item) => item.type === "scoring_requirement" || item.type === "scoring").length}</strong><span>个技术评分点</span></div>
                 <button className="secondary" onClick={showCompliance}>查看 {workspace?.compliance_reminder_count ?? 0} 条合规提醒</button>
                 <button className="primary" onClick={() => setStep("outline")}>查看推荐目录</button>
               </div>
@@ -542,7 +568,7 @@ export default function Home() {
                   <h3>{chapter}<small>{items.length} 条</small></h3>
                   <div className="requirement-list">
                     {items.map((item) => (
-                      <article className={`requirement-card ${item.type === "scoring" ? "scoring-card" : ""}`} key={item.id}>
+                      <article className={`requirement-card ${item.type === "scoring_requirement" || item.type === "scoring" ? "scoring-card" : ""}`} key={item.id}>
                         <div className="requirement-top">
                           <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
                           <span className="confidence">{item.proposal_relevance === "high" ? "重点响应" : "建议响应"}</span>
@@ -645,6 +671,10 @@ export default function Home() {
                     <span>评分点覆盖 {(proposalReview.overall.scoring_coverage_rate * 100).toFixed(0)}%</span>
                     <span>来源追溯 {(proposalReview.overall.traceability_rate * 100).toFixed(0)}%</span>
                     <span>重点提醒 {proposalReview.overall.blocking_risk_count}</span>
+                    <span>分类质量 {(proposalReview.classification_quality.quality_rate * 100).toFixed(0)}%</span>
+                    <span>低置信分类 {proposalReview.classification_quality.low_confidence_count}</span>
+                    <span>未映射章节 {proposalReview.classification_quality.unmapped_count}</span>
+                    <span>分类冲突 {proposalReview.classification_quality.conflict_count}</span>
                     <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=md`}>下载可读 Review</a>
                     <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=json`}>下载 JSON</a>
                   </div>

@@ -92,7 +92,9 @@ class ProvenanceService:
                 requirement_type = item.get("type", "technical")
                 source_type = (
                     "scoring_criterion"
-                    if requirement_type == "scoring"
+                    if requirement_type in {
+                        "scoring", "scoring_requirement"
+                    }
                     else "requirement"
                 )
                 records.append(
