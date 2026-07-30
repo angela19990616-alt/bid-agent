@@ -1,7 +1,7 @@
 {
   "key": "default-model-routing",
   "rule_type": "model_routing",
-  "version": 2,
+  "version": 3,
   "name": "模型受控切换规则",
   "description": "维护可编辑的文本模型池；按任务、健康状态、输入限制和费用边界进行有限切换。",
   "max_attempts": 10,
@@ -21,9 +21,9 @@
   ],
   "task_fallbacks": {
     "extraction": ["qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus", "qwen3-235b-a22b-instruct-2507"],
-    "classification": ["qwen-plus-latest", "qwen3.7-flash", "glm-5", "qwen-max", "deepseek-v3", "qwen3-max", "qwen3.5-plus", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
+    "classification": ["qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b", "qwen3.5-plus", "qwen-plus-latest", "qwen3.7-flash"],
     "writing": ["qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
-    "review": ["glm-5", "qwen-max", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
+    "review": ["qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b", "qwen3.5-plus", "qwen-plus-latest", "qwen3.7-flash"],
     "default": ["qwen-max", "glm-5", "deepseek-v3", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b", "qwen3-max"]
   },
   "retryable_status_codes": [403, 404, 408, 409, 429, 500, 502, 503, 504],

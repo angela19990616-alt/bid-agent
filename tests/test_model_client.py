@@ -122,9 +122,9 @@ def test_chat_rejects_empty_model_output():
     ("task", "expected"),
     [
         ("extraction", "qwen-plus-latest"),
-        ("classification", "qwen-plus-latest"),
+        ("classification", "qwen-max"),
         ("writing", "qwen-max"),
-        ("review", "glm-5"),
+        ("review", "qwen-max"),
         ("unknown", "qwen-max"),
     ],
 )

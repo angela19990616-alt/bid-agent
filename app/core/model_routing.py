@@ -79,10 +79,7 @@ class ModelRoutingRules:
         )
 
     def models_for_task(self, task: str, primary: str) -> list[str]:
-        with _HEALTH_LOCK:
-            preferred = _PREFERRED_MODEL.get(task)
         candidates = [
-            preferred,
             *self.task_fallbacks.get(
                 task,
                 self.task_fallbacks.get("default", []),
@@ -126,7 +123,6 @@ class ModelRoutingRules:
     def mark_success(task: str, model: str) -> None:
         with _HEALTH_LOCK:
             _COOLDOWN_UNTIL.pop(model, None)
-            _PREFERRED_MODEL[task] = model
 
     @staticmethod
     def reset_health() -> None:

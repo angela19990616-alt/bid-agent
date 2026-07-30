@@ -61,6 +61,18 @@ def test_model_routing_rules_are_external_and_bounded():
         "qwen3-235b-a22b-instruct-2507",
         "deepseek-r1-distill-qwen-32b",
     ]
+    assert routing.models_for_task("classification", "primary") == [
+        "qwen-max",
+        "glm-5",
+        "deepseek-v3",
+        "qwen3-max",
+        "deepseek-v3.2",
+        "qwen3-235b-a22b-instruct-2507",
+        "deepseek-r1-distill-qwen-32b",
+        "qwen3.5-plus",
+        "qwen-plus-latest",
+        "qwen3.7-flash",
+    ]
     assert routing.is_retryable(RuntimeError("额度不足"))
     assert not routing.is_retryable(RuntimeError("业务字段缺失"))
 
