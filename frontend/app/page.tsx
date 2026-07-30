@@ -114,7 +114,7 @@ const workspaceStatusLabels: Record<string, string> = {
 };
 const steps: Array<{ id: Step; title: string; subtitle: string }> = [
   { id: "upload", title: "上传文件", subtitle: "自动识别与解析" },
-  { id: "requirements", title: "技术要点", subtitle: "要求与评分点" },
+  { id: "requirements", title: "招标响应分析", subtitle: "响应事项与评分点" },
   { id: "outline", title: "推荐目录", subtitle: "确认章节结构" },
   { id: "writer", title: "章节写作", subtitle: "生成、编辑、校核" },
   { id: "export", title: "导出 Word", subtitle: "交付技术方案" },
@@ -363,7 +363,7 @@ export default function Home() {
 
   async function showRequirements(view: "proposal" | "compliance") {
     if (!workspace) return;
-    await run(view === "proposal" ? "正在读取技术要点" : "正在读取合规提醒", async () => {
+    await run(view === "proposal" ? "正在读取响应事项" : "正在读取合规提醒", async () => {
       const items = await request<Requirement[]>(`/workspaces/${workspace.id}/requirements?view=${view}`);
       setRequirements(items);
       setRequirementView(view);

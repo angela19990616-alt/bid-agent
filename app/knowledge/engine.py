@@ -11,6 +11,10 @@ from uuid import UUID
 from psycopg.rows import dict_row
 
 from app.database.db import connect
+from app.knowledge.permissions import (
+    KnowledgeAccessContext,
+    KnowledgePermissionFilter,
+)
 from app.services.document_service import extract_text, parse_document
 from app.rules.engine import RuleDocument, RuleEngine
 
@@ -55,12 +59,45 @@ class KnowledgeValidationError(ValueError):
 class EnterpriseKnowledgeEngine:
     """Loads all eligible private knowledge before deterministic matching."""
 
-    def list_active(self) -> list[dict]:
+    @staticmethod
+    def access_context(
+        project_id: UUID,
+        *,
+        user_id: str | None = None,
+    ) -> KnowledgeAccessContext:
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT organization_key
+                    FROM projects
+                    WHERE id = %s
+                    """,
+                    (project_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            raise KnowledgeValidationError("无法确定方案所属机构。")
+        return KnowledgeAccessContext(
+            organization_key=row[0],
+            workspace_id=project_id,
+            user_id=user_id,
+        )
+
+    def list_active(
+        self,
+        access_context: KnowledgeAccessContext | None = None,
+    ) -> list[dict]:
+        permission = KnowledgePermissionFilter(
+            access_context or KnowledgeAccessContext.default()
+        )
+        organization_key, allowed_scopes = permission.sql_params
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
                     """
                     SELECT enterprise_knowledge.id,
+                           enterprise_knowledge.organization_key,
                            enterprise_knowledge.category,
                            enterprise_knowledge.title,
                            enterprise_knowledge.content,
@@ -73,17 +110,24 @@ class EnterpriseKnowledgeEngine:
                     FROM enterprise_knowledge
                     LEFT JOIN documents
                       ON documents.id = enterprise_knowledge.source_document_id
-                    WHERE enterprise_knowledge.organization_key = 'default'
+                    WHERE enterprise_knowledge.organization_key = %s
                       AND enterprise_knowledge.status = 'active'
-                      AND enterprise_knowledge.permission_scope =
-                          'organization_private'
+                      AND enterprise_knowledge.permission_scope = ANY(%s)
                     ORDER BY enterprise_knowledge.category,
                              enterprise_knowledge.updated_at DESC
-                    """
+                    """,
+                    (organization_key, allowed_scopes),
                 )
-                return [dict(row) for row in cursor.fetchall()]
+                return [
+                    dict(row)
+                    for row in cursor.fetchall()
+                    if permission.allows(dict(row))
+                ]
 
-    def list_summaries(self) -> list[dict]:
+    def list_summaries(
+        self,
+        access_context: KnowledgeAccessContext | None = None,
+    ) -> list[dict]:
         return [
             {
                 key: item[key]
@@ -98,7 +142,7 @@ class EnterpriseKnowledgeEngine:
                 )
             }
             | {"text_chars": len(item["content"])}
-            for item in self.list_active()
+            for item in self.list_active(access_context)
         ]
 
     def add(
@@ -107,6 +151,8 @@ class EnterpriseKnowledgeEngine:
         title: str,
         content: str,
         metadata: dict[str, Any] | None = None,
+        *,
+        organization_key: str = "default",
     ) -> dict:
         if category not in KNOWLEDGE_CATEGORIES:
             raise KnowledgeValidationError("不支持的企业知识分类。")
@@ -120,14 +166,16 @@ class EnterpriseKnowledgeEngine:
                 cursor.execute(
                     """
                     INSERT INTO enterprise_knowledge (
-                        category, title, content, metadata, checksum
+                        organization_key, category, title, content,
+                        metadata, checksum
                     )
-                    VALUES (%s, %s, %s, %s::jsonb, %s)
+                    VALUES (%s, %s, %s, %s, %s::jsonb, %s)
                     RETURNING id, category, title, content, metadata,
                               permission_scope, status, version,
                               checksum, created_at, updated_at
                     """,
                     (
+                        organization_key,
                         category,
                         clean_title,
                         clean_content,
@@ -145,6 +193,7 @@ class EnterpriseKnowledgeEngine:
         content: bytes,
         *,
         source_role: str = "response_content",
+        organization_key: str = "default",
     ) -> dict:
         clean_filename = Path(filename).name
         if len(content) > 20 * 1024 * 1024:
@@ -162,12 +211,12 @@ class EnterpriseKnowledgeEngine:
                            status, version, checksum,
                            LENGTH(content) AS text_chars
                     FROM enterprise_knowledge
-                    WHERE organization_key = 'default'
+                    WHERE organization_key = %s
                       AND metadata->>'source_sha256' = %s
                     ORDER BY created_at DESC
                     LIMIT 1
                     """,
-                    (source_sha256,),
+                    (organization_key, source_sha256),
                 )
                 existing = cursor.fetchone()
                 if existing:
@@ -189,16 +238,18 @@ class EnterpriseKnowledgeEngine:
                 cursor.execute(
                     """
                     INSERT INTO enterprise_knowledge (
-                        category, title, content, metadata, checksum
+                        organization_key, category, title, content,
+                        metadata, checksum
                     )
                     VALUES (
-                        'historical_bid', %s, %s, %s::jsonb, %s
+                        %s, 'historical_bid', %s, %s, %s::jsonb, %s
                     )
                     RETURNING id, category, title, metadata,
                               permission_scope, status, version, checksum,
                               LENGTH(content) AS text_chars
                     """,
                     (
+                        organization_key,
                         Path(clean_filename).stem,
                         text,
                         json.dumps(metadata, ensure_ascii=False),
@@ -220,12 +271,19 @@ class EnterpriseKnowledgeEngine:
         exclude_document_ids: set[UUID] | None = None,
         exclude_project_id: UUID | None = None,
         rules: RuleDocument | None = None,
+        access_context: KnowledgeAccessContext | None = None,
     ) -> list[KnowledgeMatch]:
         # Loading is intentionally completed before matching/writing.
         active = rules or RuleEngine().load("knowledge")
         matching = active.content["matching"]
         limit = min(limit, int(matching["max_matches"]))
-        knowledge_items = self.list_active()
+        if access_context is None and exclude_project_id is not None:
+            access_context = self.access_context(exclude_project_id)
+        knowledge_items = (
+            self.list_active(access_context)
+            if access_context is not None
+            else self.list_active()
+        )
         query = " ".join(
             [
                 section_title,

@@ -24,14 +24,17 @@ Document Upload
   → Document Validator
   → Load Extraction Rules
   → Parser
-  → Requirement Extractor
+  → Response Item Extractor
+  → Response Item Normalizer
   → Proposal-oriented Classification（分类、复核、自检修复）
   → Load Enterprise Knowledge
   → Knowledge Matching
+  → Proposal Memory Matching
   → Load Proposal Writing Rules
   → Proposal Planner
   → Chapter Writer
-  → Compliance Checker
+  → Chapter Review
+  → Delivery Gate
   → Export
 ```
 

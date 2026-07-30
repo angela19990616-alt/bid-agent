@@ -94,6 +94,14 @@ class WorkspaceService:
                 content,
                 extraction_rules,
             )
+            pipeline.record(
+                run_id,
+                "document_ingestion",
+                details={
+                    "document_id": str(document.id),
+                    "source_count": document.source_count,
+                },
+            )
             if document.validation_status != "valid":
                 self._set_status(workspace.id, "draft")
                 raise InvalidTenderDocumentError(
@@ -127,21 +135,6 @@ class WorkspaceService:
                 details=budget,
             )
             classification_rules = self.rule_engine.load("classification")
-            pipeline.record(
-                run_id,
-                "proposal_classification",
-                rule_snapshot=classification_rules.snapshot(),
-                details={
-                    "modules": [
-                        "classification_agent",
-                        "classification_reviewer",
-                        "output_review_agent",
-                        "debug_agent",
-                        "post_debug_review",
-                    ],
-                    "execution": "single_bounded_pass",
-                },
-            )
             self.requirement_service.extract(
                 workspace_id,
                 [document_id],

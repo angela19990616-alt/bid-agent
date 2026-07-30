@@ -1043,13 +1043,13 @@ def _to_markdown(report: dict[str, Any]) -> str:
         "## Classification Quality",
         "",
         f"- 分类质量：{classification.get('quality_rate', 1):.1%}",
-        f"- Requirement 数量：{classification.get('total_count', 0)}",
+        f"- 响应事项数量：{classification.get('total_count', 0)}",
         f"- 高置信分类比例：{classification.get('high_confidence_ratio', 1):.1%}",
         f"- 低置信分类：{classification.get('low_confidence_count', 0)} 项",
         f"- 未映射章节：{classification.get('unmapped_count', 0)} 项",
         f"- 分类冲突：{classification.get('conflict_count', 0)} 项",
         "",
-        "## Requirement Coverage",
+        "## 响应事项覆盖情况",
         "",
     ]
     for item in report["requirement_coverage"]:

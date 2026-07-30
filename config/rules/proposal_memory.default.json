@@ -1,0 +1,17 @@
+{
+  "key": "default-proposal-memory",
+  "rule_type": "proposal_memory",
+  "version": 1,
+  "name": "优秀方案写作模式规则",
+  "eligibility": {
+    "review_status": "approved",
+    "permission_scope": "organization_private",
+    "minimum_quality_score": 0.7
+  },
+  "usage": {
+    "allowed": ["chapter_structure", "analysis_dimensions", "writing_method", "visual_pattern"],
+    "prohibited": ["enterprise_fact", "qualification_fact", "case_fact", "personnel_fact", "verbatim_copy"],
+    "max_matches": 3
+  },
+  "fact_boundary": "方案记忆只决定如何组织和表达，不得证明企业具备任何事实或能力。"
+}

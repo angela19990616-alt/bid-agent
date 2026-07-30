@@ -17,6 +17,7 @@ def test_default_rules_are_external_versioned_and_valid():
 
     extraction = engine.load_default("extraction")
     knowledge = engine.load_default("knowledge")
+    proposal_memory = engine.load_default("proposal_memory")
     writing = engine.load_default("writing")
     compliance = engine.load_default("compliance")
 
@@ -30,7 +31,8 @@ def test_default_rules_are_external_versioned_and_valid():
             "qualification_file"
         ]
     )
-    assert writing.version == 4
+    assert proposal_memory.content["usage"]["prohibited"]
+    assert writing.version == 5
     assert compliance.version == 4
     assert writing.content["policies"]["allow_invented_capability"] is False
     assert (

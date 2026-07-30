@@ -14,6 +14,10 @@ from app.knowledge.engine import (
     KnowledgeMatch,
     KnowledgeMatchRepository,
 )
+from app.memory.engine import (
+    ProposalMemoryEngine,
+    ProposalMemoryMatch,
+)
 from app.rules.engine import RuleDocument, RuleEngine
 from app.services.model_budget_service import (
     ModelBudgetExceeded,
@@ -54,11 +58,15 @@ class SectionService:
         model_client: ModelClient | None = None,
         rule_engine: RuleEngine | None = None,
         knowledge_engine: EnterpriseKnowledgeEngine | None = None,
+        proposal_memory_engine: ProposalMemoryEngine | None = None,
     ):
         self.model_client = model_client
         self.rule_engine = rule_engine or RuleEngine()
         self.knowledge_engine = (
             knowledge_engine or EnterpriseKnowledgeEngine()
+        )
+        self.proposal_memory_engine = (
+            proposal_memory_engine or ProposalMemoryEngine()
         )
 
     def create(
@@ -159,11 +167,13 @@ class SectionService:
             call_limit=3,
             token_limit=180000,
         )
+        access_context = self.knowledge_engine.access_context(project_id)
         matches = self.knowledge_engine.match(
             section_title=section["title"],
             requirements=requirements,
             exclude_document_ids=set(section["document_ids"]),
             exclude_project_id=project_id,
+            access_context=access_context,
         )
         KnowledgeMatchRepository.save(
             workflow_run_id, section_id, requirements, matches
@@ -173,6 +183,28 @@ class SectionService:
             "knowledge_matching",
             knowledge_snapshot=[item.snapshot() for item in matches],
             details={"match_count": len(matches)},
+        )
+        memory_rules = self.rule_engine.load("proposal_memory")
+        pipeline.record(
+            workflow_run_id,
+            "load_proposal_memory",
+            rule_snapshot=memory_rules.snapshot(),
+        )
+        memory_matches = self.proposal_memory_engine.match(
+            access_context=access_context,
+            section_title=section["title"],
+            requirements=requirements,
+            limit=int(
+                memory_rules.content["usage"]["max_matches"]
+            ),
+        )
+        pipeline.record(
+            workflow_run_id,
+            "proposal_memory_matching",
+            knowledge_snapshot=[
+                item.snapshot() for item in memory_matches
+            ],
+            details={"match_count": len(memory_matches)},
         )
         writing_rules = self.rule_engine.load("writing")
         pipeline.record(
@@ -194,6 +226,9 @@ class SectionService:
             ],
             "writing_rule": writing_rules.snapshot(),
             "knowledge_matches": [item.snapshot() for item in matches],
+            "proposal_memory": [
+                item.snapshot() for item in memory_matches
+            ],
             "generation_instruction": (
                 generation_instruction.strip()
                 if generation_instruction
@@ -215,6 +250,7 @@ class SectionService:
                     writing_rules,
                     generation_instruction,
                     section["format_constraints"],
+                    memory_matches=memory_matches,
                 ),
                 temperature=0.2,
                 max_tokens=5000,
@@ -244,7 +280,7 @@ class SectionService:
         compliance_rules = self.rule_engine.load("compliance")
         pipeline.record(
             workflow_run_id,
-            "compliance_checker",
+            "chapter_review",
             rule_snapshot=compliance_rules.snapshot(),
         )
         findings = self.review(content, compliance_rules)
@@ -269,11 +305,12 @@ class SectionService:
                     """
                     INSERT INTO section_versions (
                         section_id, version_no, content, origin,
-                        input_snapshot, rule_snapshot, knowledge_snapshot
+                        input_snapshot, rule_snapshot, knowledge_snapshot,
+                        memory_snapshot
                     )
                     VALUES (
                         %s, %s, %s, 'generated', %s::jsonb,
-                        %s::jsonb, %s::jsonb
+                        %s::jsonb, %s::jsonb, %s::jsonb
                     )
                     RETURNING id
                     """,
@@ -291,6 +328,13 @@ class SectionService:
                         ),
                         json.dumps(
                             [item.snapshot() for item in matches],
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            [
+                                item.snapshot()
+                                for item in memory_matches
+                            ],
                             ensure_ascii=False,
                         ),
                     ),
@@ -317,7 +361,7 @@ class SectionService:
                     (job_id,),
                 )
         ProvenanceService.persist(version_id, provenance, case_usage)
-        pipeline.succeed(workflow_run_id, "compliance_checker")
+        pipeline.succeed(workflow_run_id, "chapter_review")
         result = self.get(project_id, section_id)
         result["job_id"] = job_id
         return result
@@ -337,7 +381,7 @@ class SectionService:
         workflow_run_id = pipeline.latest(project_id)
         pipeline.record(
             workflow_run_id,
-            "compliance_checker",
+            "chapter_review",
             rule_snapshot=compliance_rules.snapshot(),
             details={"origin": "edited"},
         )
@@ -349,7 +393,8 @@ class SectionService:
                         sections.current_version_id,
                         sections.title,
                         section_versions.rule_snapshot,
-                        section_versions.knowledge_snapshot
+                        section_versions.knowledge_snapshot,
+                        section_versions.memory_snapshot
                     FROM sections
                     LEFT JOIN section_versions
                       ON section_versions.id = sections.current_version_id
@@ -385,11 +430,10 @@ class SectionService:
                     """
                     INSERT INTO section_versions (
                         section_id, version_no, content, origin,
-                        rule_snapshot, knowledge_snapshot
+                        rule_snapshot, knowledge_snapshot, memory_snapshot
                     )
-                    VALUES (
-                        %s, %s, %s, 'edited', %s::jsonb, %s::jsonb
-                    )
+                    VALUES (%s, %s, %s, 'edited', %s::jsonb,
+                            %s::jsonb, %s::jsonb)
                     RETURNING id
                     """,
                     (
@@ -407,6 +451,10 @@ class SectionService:
                         ),
                         json.dumps(
                             section["knowledge_snapshot"] or [],
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            section.get("memory_snapshot") or [],
                             ensure_ascii=False,
                         ),
                     ),
@@ -566,9 +614,11 @@ class SectionService:
         rules: RuleDocument | None = None,
         generation_instruction: str | None = None,
         format_constraints: list[dict] | None = None,
+        memory_matches: list[ProposalMemoryMatch] | None = None,
     ) -> list[dict[str, str]]:
         active = rules or RuleEngine().load_default("writing")
         matched_items = matches or []
+        memory_items = memory_matches or []
         evidence = "\n\n".join(
             f"[要求 {item['id']}]\n"
             f"规范描述：{item['normalized_text']}\n"
@@ -582,6 +632,14 @@ class SectionService:
             f"内容：{item.content}"
             for item in matched_items
         ) or "无匹配企业知识；涉及企业事实时必须使用规则中的待补充占位符。"
+        memory = "\n\n".join(
+            "章节模式："
+            + item.chapter_title
+            + "\n可参考结构："
+            + json.dumps(item.pattern, ensure_ascii=False)
+            + "\n限制：只能参考结构和分析维度，不得复制或推断任何历史事实。"
+            for item in memory_items
+        ) or "无匹配方案记忆；按当前响应事项和写作规则组织本章。"
         instruction = (generation_instruction or "").strip()
         format_evidence = "\n".join(
             f"- {item['normalized_text']}（原文：{item['quote']}）"
@@ -613,6 +671,7 @@ class SectionService:
                     + f"\n\nRequirements:\n{evidence}"
                     + f"\n\n招标文件硬性格式与必写内容：\n{format_evidence}"
                     + f"\n\nMatched Knowledge:\n{knowledge}"
+                    + f"\n\nProposal Memory Patterns:\n{memory}"
                     + refinement
                 ),
             },

@@ -14,7 +14,8 @@ from app.database.db import connect
 
 
 RULE_TYPES = {
-    "extraction", "classification", "knowledge", "writing", "compliance"
+    "extraction", "classification", "knowledge", "proposal_memory",
+    "writing", "compliance"
 }
 
 
@@ -52,6 +53,7 @@ class RuleEngine:
         "extraction": "extraction.default.json",
         "classification": "classification.default.json",
         "knowledge": "knowledge.default.json",
+        "proposal_memory": "proposal_memory.default.json",
         "writing": "writing.default.json",
         "compliance": "compliance.default.json",
     }
@@ -248,6 +250,8 @@ class RuleEngine:
             )
         elif rule_type == "knowledge":
             required = ("eligibility", "matching", "fact_boundaries")
+        elif rule_type == "proposal_memory":
+            required = ("eligibility", "usage", "fact_boundary")
         elif rule_type == "writing":
             required = (
                 "chapter_order", "policies", "chapter_styles",

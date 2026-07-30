@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -13,6 +14,10 @@ from app.agents.requirement_agent import (
     AgentRequirement,
     RequirementAgent,
     RequirementAgentError,
+)
+from app.agents.requirement_normalizer import (
+    NormalizationEvent,
+    ResponseItemNormalizer,
 )
 from app.agents.requirement_classifier import (
     ClassificationReviewer,
@@ -27,6 +32,7 @@ from app.agents.requirement_reviewer import (
 from app.database.db import connect
 from app.rules.engine import RuleDocument, RuleEngine
 from app.services.model_budget_service import ModelBudgetExceeded
+from app.workflows.controlled_pipeline import ControlledPipeline
 
 
 @dataclass(frozen=True)
@@ -72,6 +78,7 @@ class RequirementService:
         rule_engine: RuleEngine | None = None,
         classifier: RequirementClassifier | None = None,
         classification_reviewer: ClassificationReviewer | None = None,
+        normalizer: ResponseItemNormalizer | None = None,
         quality_pipeline: ReviewedDebugPipeline | None = None,
     ):
         self.requirement_agent = requirement_agent
@@ -80,6 +87,7 @@ class RequirementService:
         self.classification_reviewer = (
             classification_reviewer or ClassificationReviewer()
         )
+        self.normalizer = normalizer or ResponseItemNormalizer()
         self.quality_pipeline = quality_pipeline or ReviewedDebugPipeline()
         self.rule_engine = rule_engine or RuleEngine()
 
@@ -112,13 +120,48 @@ class RequirementService:
             raise RequirementExtractionError(
                 "Requirement Agent 未能完成提取，请检查模型配置后重试。"
             ) from exc
+        normalized = self.normalizer.normalize(agent_items)
+        if workflow_run_id is not None:
+            ControlledPipeline().record(
+                workflow_run_id,
+                "response_item_normalizer",
+                details={
+                    "input_count": len(agent_items),
+                    "output_count": len(normalized.items),
+                    "split_count": sum(
+                        event.operation == "split"
+                        for event in normalized.events
+                    ),
+                },
+            )
+        self._record_normalization_events(
+            project_id,
+            workflow_run_id,
+            normalized.events,
+        )
         active_classification_rules = (
             classification_rules
             or self.rule_engine.load("classification")
         )
+        if workflow_run_id is not None:
+            ControlledPipeline().record(
+                workflow_run_id,
+                "proposal_classification",
+                rule_snapshot=active_classification_rules.snapshot(),
+                details={
+                    "modules": [
+                        "classification_agent",
+                        "classification_reviewer",
+                        "output_review_agent",
+                        "debug_agent",
+                        "post_debug_review",
+                    ],
+                    "execution": "single_bounded_pass",
+                },
+            )
         try:
             classified = self.classifier.classify(
-                agent_items,
+                list(normalized.items),
                 active_classification_rules,
                 workflow_run_id=workflow_run_id,
             )
@@ -206,6 +249,40 @@ class RequirementService:
                     (project_id,),
                 )
         return created, skipped
+
+    @staticmethod
+    def _record_normalization_events(
+        project_id: UUID,
+        workflow_run_id: UUID | None,
+        events: tuple[NormalizationEvent, ...],
+    ) -> None:
+        if not events:
+            return
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO requirement_normalization_events (
+                        workflow_run_id, project_id, source_chunk_id,
+                        operation, input_text, output_texts
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                    """,
+                    [
+                        (
+                            workflow_run_id,
+                            project_id,
+                            event.source_id,
+                            event.operation,
+                            event.input_text,
+                            json.dumps(
+                                event.output_texts,
+                                ensure_ascii=False,
+                            ),
+                        )
+                        for event in events
+                    ],
+                )
 
     def list(
         self,
