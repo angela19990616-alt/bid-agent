@@ -131,6 +131,7 @@ class ProposalReviewService:
         )
         sections = data.get("sections", [])
         requirements = data.get("requirements", [])
+        format_constraints = data.get("format_constraints", [])
         all_paragraphs = [
             (section, index, paragraph)
             for section in sections
@@ -236,6 +237,39 @@ class ProposalReviewService:
                         "recommendation": coverage_item["recommendation"],
                     }
                 )
+        proposal_text = "\n".join(
+            f"{item.get('title', '')}\n{item.get('content', '')}"
+            for item in sections
+        )
+        manual_format_terms = {"签章", "盖章", "装订", "密封"}
+        format_constraint_coverage = []
+        for item in format_constraints:
+            constraint = item.get("normalized_text") or item.get("quote", "")
+            manual_only = any(
+                term in constraint for term in manual_format_terms
+            )
+            overlap = len(terms(constraint) & terms(proposal_text))
+            format_constraint_coverage.append(
+                {
+                    "constraint": constraint,
+                    "source_location": item.get("source_location")
+                    or "采购文件来源已记录",
+                    "status": (
+                        "manual_check_required"
+                        if manual_only
+                        else "covered"
+                        if overlap >= 2
+                        else "review_required"
+                    ),
+                    "recommendation": (
+                        "导出后人工完成并复核"
+                        if manual_only
+                        else "保持当前结构"
+                        if overlap >= 2
+                        else "检查目录、章节顺序或必写内容是否完整"
+                    ),
+                }
+            )
         truth_privacy: list[dict[str, Any]] = []
         style_findings: list[dict[str, Any]] = []
         tracked_paragraphs = 0
@@ -484,6 +518,7 @@ class ProposalReviewService:
             ),
             "requirement_coverage": requirement_coverage,
             "scoring_coverage": scoring_coverage,
+            "format_constraint_coverage": format_constraint_coverage,
             "knowledge_usage": _deduplicate_usage(knowledge_usage),
             "truth_and_privacy_review": truth_privacy,
             "language_and_ai_style_review": style_findings,
@@ -675,6 +710,25 @@ class ProposalReviewService:
                 requirements = [dict(row) for row in cursor.fetchall()]
                 cursor.execute(
                     """
+                    SELECT r.id, r.normalized_text, r.quote
+                    FROM requirements r
+                    WHERE r.project_id = %s
+                      AND r.status <> 'rejected'
+                      AND (
+                        r.normalized_text ~
+                          '目录|章节|编制|格式|字体|字号|行距|页数|字数|表格|签章|装订|必须包括|应包括'
+                        OR r.quote ~
+                          '目录|章节|编制|格式|字体|字号|行距|页数|字数|表格|签章|装订|必须包括|应包括'
+                      )
+                    ORDER BY r.created_at
+                    """,
+                    (project_id,),
+                )
+                format_constraints = [
+                    dict(row) for row in cursor.fetchall()
+                ]
+                cursor.execute(
+                    """
                     SELECT
                         COUNT(*) AS total_count,
                         COUNT(*) FILTER (
@@ -737,6 +791,8 @@ class ProposalReviewService:
                 item["section_version_id"], []
             ).append(dict(item))
         source_locations = self._requirement_locations(project_id)
+        for item in format_constraints:
+            item["source_location"] = source_locations.get(item["id"])
         total = int(classification_counts["total_count"])
         high = int(classification_counts["high_confidence_count"])
         low = int(classification_counts["low_confidence_count"])
@@ -769,6 +825,7 @@ class ProposalReviewService:
                 }
                 for item in requirements
             ],
+            "format_constraints": format_constraints,
             "sections": [
                 {
                     **item,

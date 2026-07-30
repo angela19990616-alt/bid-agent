@@ -76,6 +76,21 @@ def final_review(data):
     )
 
 
+def test_review_reports_hard_format_constraint_coverage():
+    data = proposal()
+    data["format_constraints"] = [
+        {
+            "normalized_text": "实施计划章节应包括进度安排",
+            "quote": "实施计划章节应包括进度安排",
+            "source_location": "采购文件，第 20 页",
+        }
+    ]
+
+    report = final_review(data)
+
+    assert report["format_constraint_coverage"][0]["status"] == "covered"
+
+
 def test_final_review_blocks_requirement_uuid_and_hides_it_from_report():
     leaked = str(uuid4())
     report = final_review(proposal(f"实施计划内部编号 {leaked}"))

@@ -1,7 +1,7 @@
 {
   "key": "default-writing",
   "rule_type": "writing",
-  "version": 3,
+  "version": 4,
   "name": "技术方案写作规则",
   "description": "控制目录、章节写作、企业知识引用和事实边界。",
   "chapter_order": [
@@ -32,6 +32,13 @@
     "forbid_markdown_decorations": true,
     "forbid_emoji": true,
     "forbid_internal_identifiers": true
+  },
+  "format_constraint_policy": {
+    "apply_before_chapter_writing": true,
+    "hard_constraints_override_default_style": true,
+    "never_invent_missing_format_values": true,
+    "manual_only_items": ["签章", "盖章", "装订", "密封"],
+    "instruction": "逐项遵守输入中的招标文件硬性格式与必写内容。仅应用原文明示的约束；没有明确数值时不得猜测字体、字号、页数或字数。"
   },
   "knowledge_category_policy": {
     "company_profile": "仅可陈述知识正文中明确记录的事实",

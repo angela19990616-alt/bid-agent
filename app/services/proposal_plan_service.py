@@ -42,9 +42,29 @@ class ProposalPlanService:
                     """,
                     (project_id,),
                 )
+                requirements = cursor.fetchall()
+                cursor.execute(
+                    """
+                    SELECT normalized_text, quote
+                    FROM requirements
+                    WHERE project_id = %s
+                      AND status <> 'rejected'
+                      AND (
+                        normalized_text ~
+                          '目录|章节|编制|格式|必须包括|应包括'
+                        OR quote ~
+                          '目录|章节|编制|格式|必须包括|应包括'
+                      )
+                    ORDER BY created_at
+                    """,
+                    (project_id,),
+                )
+                format_constraints = cursor.fetchall()
                 active_rules = rules or self.rule_engine.load("writing")
                 chapters = self.planner.plan(
-                    cursor.fetchall(), active_rules
+                    requirements,
+                    active_rules,
+                    format_constraints=format_constraints,
                 )
                 if not chapters:
                     raise ProposalPlanError(

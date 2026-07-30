@@ -18,10 +18,11 @@
     "commercial_requirement": {"label": "商务要求", "default_chapter": null},
     "qualification_requirement": {"label": "资格要求", "default_chapter": null},
     "scoring_requirement": {"label": "评分要求", "default_chapter": "技术评分点响应"},
-    "other": {"label": "其他", "default_chapter": "其他"}
+    "other": {"label": "其他", "default_chapter": null}
   },
   "classifiers": [
     {"type": "qualification_requirement", "keywords": ["不得存在失信", "失信情况", "资格条件", "资质证书", "法定代表人", "营业执照"], "chapter": null, "need_generation": false, "priority": 100},
+    {"type": "other", "keywords": ["目录格式", "章节顺序", "编制格式", "字体", "字号", "行距", "页数", "字数", "装订", "签章", "必须包括", "应包括"], "chapter": null, "need_generation": false, "priority": 98},
     {"type": "commercial_requirement", "keywords": ["报价", "付款", "保证金", "合同价", "发票", "密封"], "chapter": null, "need_generation": false, "priority": 95},
     {"type": "scoring_requirement", "keywords": ["评分", "得分", "加分", "分值"], "chapter": "技术评分点响应", "need_generation": true, "priority": 90},
     {"type": "training_requirement", "keywords": ["培训", "授课", "培训教材"], "chapter": "培训方案", "need_generation": true, "priority": 88},

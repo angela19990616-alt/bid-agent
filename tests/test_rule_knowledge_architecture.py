@@ -20,7 +20,7 @@ def test_default_rules_are_external_versioned_and_valid():
     writing = engine.load_default("writing")
     compliance = engine.load_default("compliance")
 
-    assert extraction.version == 3
+    assert extraction.version == 4
     assert extraction.content["proposal_mapping"]
     assert (
         knowledge.content["matching"]["source_role_weights"][
@@ -30,7 +30,7 @@ def test_default_rules_are_external_versioned_and_valid():
             "qualification_file"
         ]
     )
-    assert writing.version == 3
+    assert writing.version == 4
     assert compliance.version == 4
     assert writing.content["policies"]["allow_invented_capability"] is False
     assert (

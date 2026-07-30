@@ -61,6 +61,15 @@ def test_dishonesty_constraint_is_compliance_only():
     assert result.proposal_chapter is None
 
 
+def test_hard_format_constraint_stays_out_of_proposal_body():
+    result = classify(
+        "技术方案章节顺序必须包括项目理解和实施计划",
+        legacy_type="compliance",
+    )
+    assert result.requirement_type == "other"
+    assert result.proposal_chapter is None
+
+
 def test_strong_rule_classification_does_not_call_model():
     class ExplodingClient:
         def chat(self, *_args, **_kwargs):
@@ -97,6 +106,38 @@ def test_planner_prefers_proposal_chapter():
         RuleEngine().load_default("writing"),
     )
     assert result[0].title == "实施计划"
+
+
+def test_planner_applies_explicit_tender_chapter_order():
+    first_id = uuid4()
+    second_id = uuid4()
+    result = ProposalPlanner().plan(
+        [
+            {
+                "id": first_id,
+                "proposal_chapter": "服务范围与工作内容",
+                "need_generation": True,
+            },
+            {
+                "id": second_id,
+                "proposal_chapter": "实施计划与进度安排",
+                "need_generation": True,
+            },
+        ],
+        RuleEngine().load_default("writing"),
+        format_constraints=[
+            {
+                "normalized_text": (
+                    "章节顺序为实施计划与进度安排、服务范围与工作内容"
+                ),
+                "quote": "",
+            }
+        ],
+    )
+    assert [item.title for item in result] == [
+        "实施计划与进度安排",
+        "服务范围与工作内容",
+    ]
 
 
 def test_review_debug_review_removes_internal_labels():

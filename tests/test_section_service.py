@@ -62,6 +62,28 @@ def test_prompt_accepts_refinement_without_overriding_truth_rules():
     assert "不能覆盖事实边界" in messages[1]["content"]
 
 
+def test_prompt_includes_tender_format_constraints():
+    messages = SectionService._messages(
+        "实施计划",
+        [
+            {
+                "id": "requirement-1",
+                "normalized_text": "提交实施计划",
+                "quote": "供应商须提交实施计划。",
+            }
+        ],
+        format_constraints=[
+            {
+                "normalized_text": "本章必须包括进度表",
+                "quote": "实施计划章节应包括项目进度表。",
+            }
+        ],
+    )
+
+    assert "招标文件硬性格式与必写内容" in messages[1]["content"]
+    assert "实施计划章节应包括项目进度表" in messages[1]["content"]
+
+
 def test_generated_content_removes_internal_requirement_labels():
     content = SectionService.sanitize_generated_content(
         "一、实施安排（要求 123e4567-e89b-12d3-a456-426614174000）\n"

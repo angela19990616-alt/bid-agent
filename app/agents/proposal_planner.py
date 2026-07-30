@@ -18,6 +18,8 @@ class ProposalPlanner:
         self,
         requirements: list[dict],
         rules: RuleDocument | None = None,
+        *,
+        format_constraints: list[dict] | None = None,
     ) -> list[PlannedChapter]:
         active = rules or RuleEngine().load("writing")
         chapter_order = active.content["chapter_order"]
@@ -32,8 +34,24 @@ class ProposalPlanner:
             )
             grouped.setdefault(title, []).append(item["id"])
 
+        format_text = " ".join(
+            f"{item.get('normalized_text', '')} {item.get('quote', '')}"
+            for item in (format_constraints or [])
+        )
+        explicitly_ordered = sorted(
+            (
+                title
+                for title in chapter_order
+                if title in format_text and title in grouped
+            ),
+            key=format_text.index,
+        )
         ordered_titles = [
+            *explicitly_ordered,
+            *[
             title for title in chapter_order if title in grouped
+            and title not in explicitly_ordered
+            ],
         ]
         ordered_titles.extend(
             title for title in grouped if title not in ordered_titles

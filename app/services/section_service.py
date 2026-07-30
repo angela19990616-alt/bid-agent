@@ -199,6 +199,7 @@ class SectionService:
                 if generation_instruction
                 else None
             ),
+            "format_constraints": section["format_constraints"],
         }
         self._create_job(
             project_id, job_id, snapshot, workflow_run_id
@@ -213,6 +214,7 @@ class SectionService:
                     matches,
                     writing_rules,
                     generation_instruction,
+                    section["format_constraints"],
                 ),
                 temperature=0.2,
                 max_tokens=5000,
@@ -563,6 +565,7 @@ class SectionService:
         matches: list[KnowledgeMatch] | None = None,
         rules: RuleDocument | None = None,
         generation_instruction: str | None = None,
+        format_constraints: list[dict] | None = None,
     ) -> list[dict[str, str]]:
         active = rules or RuleEngine().load_default("writing")
         matched_items = matches or []
@@ -580,6 +583,10 @@ class SectionService:
             for item in matched_items
         ) or "无匹配企业知识；涉及企业事实时必须使用规则中的待补充占位符。"
         instruction = (generation_instruction or "").strip()
+        format_evidence = "\n".join(
+            f"- {item['normalized_text']}（原文：{item['quote']}）"
+            for item in (format_constraints or [])
+        ) or "本章未识别到额外硬性格式要求。"
         refinement = (
             "\n\n本章用户微调要求：\n"
             f"{instruction}\n"
@@ -604,6 +611,7 @@ class SectionService:
                         section_title=title
                     )
                     + f"\n\nRequirements:\n{evidence}"
+                    + f"\n\n招标文件硬性格式与必写内容：\n{format_evidence}"
                     + f"\n\nMatched Knowledge:\n{knowledge}"
                     + refinement
                 ),
@@ -696,6 +704,28 @@ class SectionService:
                 )
                 section["document_ids"] = [
                     item["id"] for item in cursor.fetchall()
+                ]
+                cursor.execute(
+                    """
+                    SELECT normalized_text, quote
+                    FROM requirements
+                    WHERE project_id = %s
+                      AND status <> 'rejected'
+                      AND (
+                        normalized_text ~
+                          '目录|章节|编制|格式|字体|字号|行距|页数|字数|表格|签章|装订|必须包括|应包括'
+                        OR quote ~
+                          '目录|章节|编制|格式|字体|字号|行距|页数|字数|表格|签章|装订|必须包括|应包括'
+                      )
+                    ORDER BY importance = 'critical' DESC,
+                             importance = 'high' DESC,
+                             created_at
+                    LIMIT 30
+                    """,
+                    (project_id,),
+                )
+                section["format_constraints"] = [
+                    dict(item) for item in cursor.fetchall()
                 ]
         if not requirements:
             raise SectionValidationError("章节没有可用于技术方案生成的要求。")

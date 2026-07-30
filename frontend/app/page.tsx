@@ -206,19 +206,35 @@ export default function Home() {
   const [error, setError] = useState("");
 
   const activeSection = sections.find((item) => item.id === activeSectionId);
+  const feedbackSummary = useMemo(() => ({
+    confirmed: requirements.filter((item) => item.feedback === "confirmed").length,
+    notNeeded: requirements.filter((item) => item.feedback === "not_needed").length,
+    mismatch: requirements.filter((item) => item.feedback === "source_mismatch").length,
+    pending: requirements.filter((item) => item.feedback === "pending").length,
+  }), [requirements]);
   const grouped = useMemo(() => {
     const sorted = [...requirements].sort((left, right) => {
       const otherDelta = Number(left.type === "other") - Number(right.type === "other");
       if (otherDelta) return otherDelta;
-      return importanceRank[left.importance] - importanceRank[right.importance];
+      const importanceDelta = importanceRank[left.importance] - importanceRank[right.importance];
+      if (importanceDelta) return importanceDelta;
+      return Number(right.proposal_relevance === "high") - Number(left.proposal_relevance === "high");
     });
-    return sorted.reduce<Record<string, Requirement[]>>((result, item) => {
+    const groups = sorted.reduce<Record<string, Requirement[]>>((result, item) => {
       const chapter = requirementView === "compliance"
         ? typeLabels[item.type]
         : item.proposal_chapter ?? item.target_chapter ?? "其他技术要求";
       result[chapter] = [...(result[chapter] ?? []), item];
       return result;
     }, {});
+    return Object.fromEntries(
+      Object.entries(groups).sort(([leftChapter, leftItems], [rightChapter, rightItems]) => {
+        const otherDelta = Number(leftChapter.includes("其他")) - Number(rightChapter.includes("其他"));
+        if (otherDelta) return otherDelta;
+        return Math.min(...leftItems.map((item) => importanceRank[item.importance]))
+          - Math.min(...rightItems.map((item) => importanceRank[item.importance]));
+      }),
+    );
   }, [requirements, requirementView]);
   const progress = workspace ? Math.max(20, (steps.findIndex((item) => item.id === step) + 1) * 20) : 0;
 
@@ -584,7 +600,7 @@ export default function Home() {
               <h2>{steps.find((item) => item.id === step)?.title}</h2>
               <p>系统按固定步骤处理，不会自由对话或无限循环。</p>
             </div>
-            {busy && <div className="busy-pill"><i />{busy}</div>}
+            {busy && <div className="busy-pill" role="status" aria-live="polite"><i />{busy}</div>}
           </div>
           {error && (
             <div className="message error">
@@ -619,29 +635,48 @@ export default function Home() {
               <div className="section-toolbar">
                 <div><strong>{requirements.length}</strong><span>条技术写作要点</span></div>
                 <div><strong>{requirements.filter((item) => item.type === "scoring_requirement" || item.type === "scoring").length}</strong><span>个技术评分点</span></div>
-                <div><strong>{workspace?.model_calls_used ?? 0}/{workspace?.model_calls_limit ?? 12}</strong><span>模型调用预算</span></div>
-                <button className="primary" onClick={() => setStep("outline")}>查看推荐目录</button>
+                <div><strong>{feedbackSummary.confirmed}</strong><span>条已确认需要</span></div>
+                <button className="primary" disabled={Boolean(busy)} onClick={() => setStep("outline")}>下一步：查看推荐目录</button>
               </div>
               <div className="requirement-tabs" role="tablist" aria-label="要求分类">
                 <button
+                  type="button"
+                  role="tab"
+                  aria-selected={requirementView === "proposal"}
                   className={requirementView === "proposal" ? "active" : ""}
+                  disabled={Boolean(busy)}
                   onClick={() => showRequirements("proposal")}
                 >
-                  技术方案要点
+                  技术方案要点 <span>{requirementView === "proposal" ? requirements.length : workspace?.technical_requirements.length ?? 0}</span>
                 </button>
                 <button
+                  type="button"
+                  role="tab"
+                  aria-selected={requirementView === "compliance"}
                   className={requirementView === "compliance" ? "active" : ""}
+                  disabled={Boolean(busy)}
                   onClick={() => showRequirements("compliance")}
                 >
                   合规要求 <span>{workspace?.compliance_reminder_count ?? 0}</span>
                 </button>
+              </div>
+              <div className="requirement-guidance">
+                <div>
+                  <strong>{requirementView === "proposal" ? "优先确认影响技术方案的要求" : "集中查看资格、商务及其他合规提醒"}</strong>
+                  <span>关键和重要内容优先展示，“其他”放在最后；无需逐条确认即可继续。</span>
+                </div>
+                <div className="feedback-summary" aria-label="人工确认进度">
+                  <span><b>{feedbackSummary.pending}</b> 待判断</span>
+                  <span><b>{feedbackSummary.notNeeded}</b> 不采用</span>
+                  {feedbackSummary.mismatch > 0 && <span className="warning"><b>{feedbackSummary.mismatch}</b> 原文不符</span>}
+                </div>
               </div>
               {Object.entries(grouped).map(([chapter, items]) => (
                 <section className="requirement-group" key={chapter}>
                   <h3>{chapter}<small>{items.length} 条</small></h3>
                   <div className="requirement-list">
                     {items.map((item) => (
-                      <article className={`requirement-card ${item.type === "scoring_requirement" || item.type === "scoring" ? "scoring-card" : ""}`} key={item.id}>
+                      <article className={`requirement-card feedback-${item.feedback} ${item.type === "scoring_requirement" || item.type === "scoring" ? "scoring-card" : ""}`} key={item.id}>
                         <div className="requirement-top">
                           <div className="requirement-tags">
                             <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
@@ -658,14 +693,17 @@ export default function Home() {
                           <span>人工确认</span>
                           <button
                             className={item.feedback === "confirmed" ? "selected" : ""}
+                            disabled={Boolean(busy)}
                             onClick={() => recordRequirementFeedback(item, "confirmed")}
-                          >需要</button>
+                          >需要写入方案</button>
                           <button
                             className={item.feedback === "not_needed" ? "selected" : ""}
+                            disabled={Boolean(busy)}
                             onClick={() => recordRequirementFeedback(item, "not_needed")}
-                          >不需要</button>
+                          >本次不需要</button>
                           <button
                             className={item.feedback === "source_mismatch" ? "selected warning" : ""}
+                            disabled={Boolean(busy)}
                             onClick={() => recordRequirementFeedback(item, "source_mismatch")}
                           >与原文不符</button>
                         </div>
