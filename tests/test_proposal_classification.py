@@ -222,19 +222,33 @@ def test_reviewer_never_routes_other_type_into_proposal():
     assert reviewed.conflict is True
 
 
-def test_strong_rule_classification_does_not_call_model():
-    class ExplodingClient:
+def test_strong_rule_item_still_receives_fresh_model_classification():
+    class RecordingClient:
+        called = False
+
         def chat(self, *_args, **_kwargs):
-            raise AssertionError("strong rules must not call model")
+            self.called = True
+            return """{"classifications":[{
+                "source_ref":"R1",
+                "requirement_type":"operation_maintenance",
+                "proposal_chapter":"运维保障方案",
+                "scoring_relation":"requirement_only",
+                "importance":"high",
+                "confidence":0.93,
+                "knowledge_support_required":false,
+                "rationale":"需要形成持续服务响应。"
+            }]}"""
 
     item = requirement("提供7×24小时运维服务")
-    result = RequirementClassifier(ExplodingClient()).classify(
+    client = RecordingClient()
+    result = RequirementClassifier(client).classify(
         [item], RuleEngine().load_default("classification")
     )
+    assert client.called is True
     assert result[0].proposal_chapter == "运维保障方案"
 
 
-def test_reviewer_corrects_model_conflict_and_marks_it():
+def test_reviewer_does_not_override_semantic_model_with_soft_keyword_rule():
     rule_result = classify("项目实施周期180日历天")
     wrong = replace(
         rule_result,
@@ -242,9 +256,9 @@ def test_reviewer_corrects_model_conflict_and_marks_it():
         proposal_chapter="系统功能设计",
     )
     reviewed = ClassificationReviewer().review_one(wrong)
-    assert reviewed.requirement_type == "implementation_requirement"
-    assert reviewed.proposal_chapter == "实施计划"
-    assert reviewed.conflict is True
+    assert reviewed.requirement_type == "functional_requirement"
+    assert reviewed.proposal_chapter == "系统功能设计"
+    assert reviewed.conflict is False
 
 
 def test_planner_prefers_proposal_chapter():

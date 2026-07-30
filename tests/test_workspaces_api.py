@@ -171,6 +171,47 @@ def test_upload_queues_long_running_extraction_without_running_it_inline():
     assert job_service.enqueued[0] == service.id
 
 
+def test_same_file_upload_creates_a_fresh_workspace_and_pipeline_each_time():
+    class FreshRunService(PreparedWorkspaceService):
+        def prepare_from_upload(self, filename, content_type, content):
+            self.id = uuid4()
+            return super().prepare_from_upload(
+                filename,
+                content_type,
+                content,
+            )
+
+    class RecordingJobs(FakeJobService):
+        def __init__(self):
+            super().__init__()
+            self.all_enqueued = []
+
+        def enqueue(self, workspace_id, document_id, run_id):
+            self.all_enqueued.append(
+                (workspace_id, document_id, run_id)
+            )
+            return super().enqueue(workspace_id, document_id, run_id)
+
+    service = FreshRunService()
+    jobs = RecordingJobs()
+    app.dependency_overrides[get_workspace_service] = lambda: service
+    app.dependency_overrides[get_workspace_job_service] = lambda: jobs
+    client = TestClient(app)
+    upload = {
+        "file": ("同一招标文件.docx", b"same-content", "application/docx")
+    }
+
+    first = client.post("/api/v1/workspaces", files=upload)
+    second = client.post("/api/v1/workspaces", files=upload)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] != second.json()["id"]
+    assert len(jobs.all_enqueued) == 2
+    assert jobs.all_enqueued[0][0] != jobs.all_enqueued[1][0]
+    assert jobs.all_enqueued[0][2] != jobs.all_enqueued[1][2]
+
+
 def test_other_session_cannot_read_review_or_download_files():
     class DeniedAccess(FakeAccessService):
         def authorize(self, workspace_id, request):

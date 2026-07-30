@@ -55,19 +55,13 @@ class RequirementClassifier:
             )
             for item in items
         ]
-        ambiguous_indexes = [
-            index for index, item in enumerate(fallback)
-            if (
-                item.confidence < 0.8
-                or item.proposal_chapter is None
-            )
-            and item.requirement_type not in {
-                "qualification_requirement", "commercial_requirement"
-            }
-        ]
-        if not ambiguous_indexes:
+        # Rules provide a bounded fallback and vocabulary, but every extracted
+        # item must receive a fresh semantic classification for each upload.
+        # A keyword hit is not evidence that the proposal impact is understood.
+        model_indexes = list(range(len(items)))
+        if not model_indexes:
             return fallback
-        ambiguous_items = [items[index] for index in ambiguous_indexes]
+        model_items = [items[index] for index in model_indexes]
         try:
             response = (self.model_client or ModelClient()).chat(
                 [
@@ -103,7 +97,7 @@ class RequirementClassifier:
                                         ),
                                     }
                                     for index, item in enumerate(
-                                        ambiguous_items, 1
+                                        model_items, 1
                                     )
                                 ],
                             },
@@ -128,9 +122,7 @@ class RequirementClassifier:
             if isinstance(raw, dict)
         }
         results = list(fallback)
-        for model_index, original_index in enumerate(
-            ambiguous_indexes, 1
-        ):
+        for model_index, original_index in enumerate(model_indexes, 1):
             raw = by_ref.get(f"R{model_index}")
             if raw:
                 results[original_index] = self._model_result(
@@ -363,8 +355,11 @@ class ClassificationReviewer:
         )
         conflict = False
         final = item
-        strong_rule = rule_result.confidence >= 0.8
-        if strong_rule and (
+        hard_exclusion = ClassificationReviewer._hard_exclusion(
+            item.item,
+            active,
+        )
+        if hard_exclusion and (
             item.requirement_type != rule_result.requirement_type
             or item.proposal_chapter != rule_result.proposal_chapter
         ):
@@ -427,4 +422,20 @@ class ClassificationReviewer:
                 0.98,
             ),
             conflict=conflict,
+        )
+
+    @staticmethod
+    def _hard_exclusion(
+        item: AgentRequirement,
+        rules: RuleDocument,
+    ) -> bool:
+        text = f"{item.title} {item.normalized_text} {item.quote}"
+        return any(
+            rule.get("enforcement") == "hard_exclusion"
+            and any(word in text for word in rule["keywords"])
+            and not any(
+                word in text
+                for word in rule.get("exclude_keywords", [])
+            )
+            for rule in rules.content["classifiers"]
         )
