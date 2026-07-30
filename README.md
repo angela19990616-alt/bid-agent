@@ -167,6 +167,7 @@ HttpOnly、SameSite=Strict 签名 Cookie；邀请码不会写入前端存储。�
 - `010_rule_knowledge_engine.sql`：规则版本、企业知识、工作流轨迹、知识匹配、
   生成快照和整本方案导出。
 - `014_proposal_classification.sql`：方案导向分类字段、规则类型及历史分类迁移。
+- `015_model_usage_budget.sql`：工作流模型调用与 Token 预算审计。
 - `012_proposal_review.sql`：段落级来源、历史案例使用记录、双轮 Proposal
   Review、自动修复版本和导出审查关联。
 - `013_session_workspace_access.sql`：临时浏览器会话哈希、来源 IP 绑定和访问
@@ -303,3 +304,16 @@ Proposal Planner 优先使用 `proposal_chapter`，`target_chapter` 仅作为旧
 的条目才进行一次批量模型分类。随后在同一进程内完成分类冲突复核、用户可见内容
 Review、安全机械修复和复检，不逐条调用模型，也不进行无限循环。Review 报告展示
 分类质量、高置信比例、低置信数量、未映射数量与冲突数量。
+
+### 模型额度保护与受控自检
+
+模型调用按 `workflow_run_id` 记入 `model_usage_events`。调用前使用数据库事务锁
+原子预留预算，调用成功后以供应商返回的实际 Token 用量结算；失败调用也保留
+预留量，避免异常重试绕过限制。默认每个工作流最多 12 次模型调用、80,000
+Token，可通过 `MAX_MODEL_CALLS_PER_WORKFLOW` 和
+`MAX_MODEL_TOKENS_PER_WORKFLOW` 调低。
+
+达到预算后系统停止新的模型请求，保留已完成解析、分类和章节版本，不自动扩大
+预算。分类只对低置信条目调用一次批量模型；Review、机械 Debug 和复检均为
+确定性单轮处理，不产生额外模型调用或自治循环。前端技术要点页显示当前工作流
+调用次数与上限。

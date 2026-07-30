@@ -43,6 +43,10 @@ flowchart TD
 `workflow_runs.stage_trace` 保存有限阶段轨迹。流程代码只能调用表中定义的阶段，
 没有 Agent 自由对话、自治工具选择或无限循环。
 
+所有模型节点在调用前通过 `model_usage_events` 预留工作流预算。预算检查使用事务
+级锁防止并发穿透；超限立即停止模型调用并保留断点。Review 和 Debug 固定为一次
+审查、一次安全机械修复、一次确定性复检。
+
 ## 3. Rule Engine
 
 默认配置位于 `config/rules/`，数据库中的激活规则可覆盖默认配置。Rule Engine

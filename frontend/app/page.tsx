@@ -61,6 +61,10 @@ type Workspace = {
   estimated_remaining_seconds_high: number | null;
   estimate_sample_count: number;
   estimate_basis: string;
+  model_calls_used: number;
+  model_calls_limit: number;
+  model_tokens_used: number;
+  model_tokens_limit: number;
 };
 type ExportItem = { id: string; status: string; filename?: string | null };
 type ProposalReview = {
@@ -560,6 +564,7 @@ export default function Home() {
               <div className="section-toolbar">
                 <div><strong>{requirements.length}</strong><span>条技术写作要点</span></div>
                 <div><strong>{requirements.filter((item) => item.type === "scoring_requirement" || item.type === "scoring").length}</strong><span>个技术评分点</span></div>
+                <div><strong>{workspace?.model_calls_used ?? 0}/{workspace?.model_calls_limit ?? 12}</strong><span>模型调用预算</span></div>
                 <button className="secondary" onClick={showCompliance}>查看 {workspace?.compliance_reminder_count ?? 0} 条合规提醒</button>
                 <button className="primary" onClick={() => setStep("outline")}>查看推荐目录</button>
               </div>

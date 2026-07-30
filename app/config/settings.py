@@ -37,6 +37,12 @@ class Settings:
         "WRITING_MODEL", "qwen3.7-plus"
     )
     review_model: str = os.getenv("REVIEW_MODEL", "glm-5")
+    max_model_calls_per_workflow: int = int(
+        os.getenv("MAX_MODEL_CALLS_PER_WORKFLOW", "12")
+    )
+    max_model_tokens_per_workflow: int = int(
+        os.getenv("MAX_MODEL_TOKENS_PER_WORKFLOW", "80000")
+    )
     embedding_model: str = os.getenv(
         "EMBEDDING_MODEL",
         "text-embedding-v4",
@@ -105,6 +111,14 @@ class Settings:
             )
         if self.chunk_overlap >= self.chunk_size:
             errors.append("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
+        if self.max_model_calls_per_workflow < 1:
+            errors.append(
+                "MAX_MODEL_CALLS_PER_WORKFLOW must be positive"
+            )
+        if self.max_model_tokens_per_workflow < 1000:
+            errors.append(
+                "MAX_MODEL_TOKENS_PER_WORKFLOW must be at least 1000"
+            )
         return errors
 
 

@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, replace
+from uuid import UUID
 
 from app.agents.requirement_agent import AgentRequirement
 from app.core.model_client import ModelClient
 from app.rules.engine import RuleDocument, RuleEngine
+from app.services.model_budget_service import ModelBudgetExceeded
 
 
 SCORING_RELATIONS = {
@@ -38,6 +40,7 @@ class RequirementClassifier:
         self,
         items: list[AgentRequirement],
         rules: RuleDocument | None = None,
+        workflow_run_id: UUID | None = None,
     ) -> list[ClassifiedRequirement]:
         active = rules or RuleEngine().load("classification")
         fallback = [
@@ -91,8 +94,11 @@ class RequirementClassifier:
                 temperature=0,
                 max_tokens=5000,
                 task="classification",
+                workflow_run_id=workflow_run_id,
             )
             payload = self._parse_json(response)
+        except ModelBudgetExceeded:
+            raise
         except Exception:
             return fallback
 

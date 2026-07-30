@@ -8,6 +8,7 @@ from app.knowledge.engine import EnterpriseKnowledgeEngine
 from app.rules.engine import RuleEngine
 from app.services.project_document_service import ProjectDocumentService
 from app.services.processing_eta_service import ProcessingEtaService
+from app.services.model_budget_service import ModelBudgetService
 from app.services.project_service import ProjectService
 from app.services.proposal_plan_service import ProposalPlanService
 from app.services.requirement_service import RequirementService
@@ -136,6 +137,7 @@ class WorkspaceService:
                 [document_id],
                 extraction_rules,
                 classification_rules,
+                run_id,
             )
 
             technical = self.requirement_service.list(
@@ -218,6 +220,7 @@ class WorkspaceService:
             created_at=workspace.created_at,
             source_count=source_count,
         )
+        budget = ModelBudgetService.summary_for_project(workspace_id)
         return {
             "id": workspace.id,
             "name": workspace.name,
@@ -236,6 +239,7 @@ class WorkspaceService:
             ),
             "estimate_sample_count": estimate.sample_count,
             "estimate_basis": estimate.basis,
+            **budget,
         }
 
     @staticmethod

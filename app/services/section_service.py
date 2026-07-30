@@ -15,6 +15,7 @@ from app.knowledge.engine import (
     KnowledgeMatchRepository,
 )
 from app.rules.engine import RuleDocument, RuleEngine
+from app.services.model_budget_service import ModelBudgetExceeded
 from app.services.provenance_service import ProvenanceService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
@@ -209,15 +210,21 @@ class SectionService:
                 temperature=0.2,
                 max_tokens=5000,
                 task="writing",
+                workflow_run_id=workflow_run_id,
             ).strip()
             content = self.sanitize_generated_content(content)
             if not content:
                 raise RuntimeError("模型返回空内容")
         except Exception as exc:
             self._fail_job(job_id, section_id, type(exc).__name__)
+            message = (
+                str(exc)
+                if isinstance(exc, ModelBudgetExceeded)
+                else "章节生成失败，请检查模型配置或稍后重试。"
+            )
             raise SectionGenerationError(
                 job_id,
-                "章节生成失败，请检查模型配置或稍后重试。",
+                message,
             ) from exc
 
         compliance_rules = self.rule_engine.load("compliance")

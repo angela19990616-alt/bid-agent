@@ -27,6 +27,7 @@ from app.agents.requirement_reviewer import (
 )
 from app.database.db import connect
 from app.rules.engine import RuleDocument, RuleEngine
+from app.services.model_budget_service import ModelBudgetExceeded
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ class RequirementService:
         document_ids: list[UUID],
         rules: RuleDocument | None = None,
         classification_rules: RuleDocument | None = None,
+        workflow_run_id: UUID | None = None,
     ) -> tuple[int, int]:
         sources = self._load_sources(project_id, document_ids)
         if not sources:
@@ -97,7 +99,13 @@ class RequirementService:
             active_rules = rules or self.rule_engine.load("extraction")
             agent_items = (
                 self.requirement_agent or RequirementAgent()
-            ).extract(sources, active_rules)
+            ).extract(
+                sources,
+                active_rules,
+                workflow_run_id=workflow_run_id,
+            )
+        except ModelBudgetExceeded as exc:
+            raise RequirementExtractionError(str(exc)) from exc
         except RequirementAgentError as exc:
             raise RequirementExtractionError(
                 "Requirement Agent 未能完成提取，请检查模型配置后重试。"
@@ -106,9 +114,14 @@ class RequirementService:
             classification_rules
             or self.rule_engine.load("classification")
         )
-        classified = self.classifier.classify(
-            agent_items, active_classification_rules
-        )
+        try:
+            classified = self.classifier.classify(
+                agent_items,
+                active_classification_rules,
+                workflow_run_id=workflow_run_id,
+            )
+        except ModelBudgetExceeded as exc:
+            raise RequirementExtractionError(str(exc)) from exc
         reviewed = self.classification_reviewer.review(
             classified, active_classification_rules
         )

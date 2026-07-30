@@ -8,6 +8,7 @@ from uuid import UUID
 
 from app.core.model_client import ModelClient
 from app.rules.engine import RuleDocument, RuleEngine
+from app.services.model_budget_service import ModelBudgetExceeded
 
 
 IMPORTANCE_LEVELS = {"low", "medium", "high"}
@@ -75,6 +76,7 @@ class RequirementAgent:
         self,
         sources: list[dict],
         rules: RuleDocument | None = None,
+        workflow_run_id: UUID | None = None,
     ) -> list[AgentRequirement]:
         active = rules or RuleEngine().load_default("extraction")
         evidence = self._select_evidence(sources, active.content)
@@ -83,16 +85,21 @@ class RequirementAgent:
         extracted: list[AgentRequirement] = []
         for start in range(0, len(evidence), self.batch_size):
             batch = evidence[start : start + self.batch_size]
-            extracted.extend(self._extract_batch(batch, active))
+            extracted.extend(
+                self._extract_batch(batch, active, workflow_run_id)
+            )
         return extracted
 
     def _extract_batch(
         self,
         batch: list[RequirementEvidence],
         rules: RuleDocument,
+        workflow_run_id: UUID | None = None,
     ) -> list[AgentRequirement]:
         try:
-            return self._extract_batch_once(batch, rules)
+            return self._extract_batch_once(
+                batch, rules, workflow_run_id=workflow_run_id
+            )
         except RequirementResponseFormatError:
             logger.warning(
                 "Model returned malformed requirement JSON; "
@@ -110,6 +117,7 @@ class RequirementAgent:
                         recovery_batch,
                         rules,
                         strict_retry=True,
+                        workflow_run_id=workflow_run_id,
                     )
                 )
             except RequirementResponseFormatError:
@@ -132,6 +140,7 @@ class RequirementAgent:
         rules: RuleDocument,
         *,
         strict_retry: bool = False,
+        workflow_run_id: UUID | None = None,
     ) -> list[AgentRequirement]:
         source_map = {item.source_ref: item for item in batch}
         content = [
@@ -168,7 +177,10 @@ class RequirementAgent:
                 temperature=0,
                 max_tokens=6000,
                 task="extraction",
+                workflow_run_id=workflow_run_id,
             )
+        except ModelBudgetExceeded:
+            raise
         except Exception as exc:
             raise RequirementAgentError(
                 "Requirement Agent 模型调用失败。"

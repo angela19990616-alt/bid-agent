@@ -1,8 +1,10 @@
 from typing import Any
+from uuid import UUID
 
 from openai import OpenAI
 
 from app.config.settings import settings
+from app.services.model_budget_service import ModelBudgetService
 
 
 class ModelConfigurationError(RuntimeError):
@@ -52,13 +54,40 @@ class ModelClient:
         temperature: float = 0.2,
         max_tokens: int = 4000,
         task: str = "default",
+        workflow_run_id: UUID | None = None,
     ) -> str:
-        response = self.client.chat.completions.create(
-            model=settings.model_for_task(task),
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        model = settings.model_for_task(task)
+        reservation = None
+        if workflow_run_id is not None:
+            reservation = ModelBudgetService.reserve(
+                workflow_run_id,
+                task=task,
+                model=model,
+                estimated_tokens=ModelBudgetService.estimate(
+                    messages, max_tokens
+                ),
+            )
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            if reservation is not None:
+                ModelBudgetService.finish(
+                    reservation,
+                    actual_tokens=None,
+                    error_type=type(exc).__name__,
+                )
+            raise
+        if reservation is not None:
+            usage = getattr(response, "usage", None)
+            ModelBudgetService.finish(
+                reservation,
+                actual_tokens=getattr(usage, "total_tokens", None),
+            )
         content = response.choices[0].message.content
         if not content:
             raise RuntimeError("模型返回了空内容")
