@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.documents import router as documents_router
+from app.api.access import router as access_router
 from app.api.configuration import router as configuration_router
 from app.api.exports import router as exports_router
 from app.api.projects import router as projects_router
@@ -51,14 +52,16 @@ if settings.enable_legacy_api:
     app.include_router(exports_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(configuration_router, prefix="/api/v1")
+app.include_router(access_router, prefix="/api/v1")
 
 
 @app.middleware("http")
 async def require_edge_proxy(request: Request, call_next):
-    if (
+    protected_api = (
         settings.app_env == "production"
         and request.url.path.startswith("/api/v1")
-    ):
+    )
+    if protected_api:
         provided = request.headers.get("X-Bid-Agent-Edge-Secret", "")
         if not settings.edge_proxy_secret or not compare_digest(
             provided,
@@ -73,6 +76,29 @@ async def require_edge_proxy(request: Request, call_next):
                     }
                 },
             )
+        public_access_paths = {
+            "/api/v1/access/status",
+            "/api/v1/access/invite",
+        }
+        invite_code = getattr(settings, "invite_code", "")
+        if (
+            invite_code
+            and request.url.path not in public_access_paths
+        ):
+            from app.services.invite_access_service import (
+                InviteAccessService,
+            )
+
+            if not InviteAccessService.authorize(request):
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": {
+                            "code": "INVITE_ACCESS_REQUIRED",
+                            "message": "请输入有效邀请码后继续。",
+                        }
+                    },
+                )
     return await call_next(request)
 
 

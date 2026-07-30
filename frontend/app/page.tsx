@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type Step = "upload" | "requirements" | "outline" | "writer" | "export";
 type Source = {
@@ -73,6 +73,10 @@ type ProposalReview = {
     blocking_risk_count: number;
   };
 };
+type AccessStatus = {
+  required: boolean;
+  authorized: boolean;
+};
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
 const ACTIVE_WORKSPACE_KEY = "bid-agent-active-workspace";
@@ -136,6 +140,10 @@ function estimateLabel(item: Workspace) {
 }
 
 export default function Home() {
+  const [accessState, setAccessState] = useState<"checking" | "required" | "authorized">("checking");
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteError, setInviteError] = useState("");
+  const [authorizing, setAuthorizing] = useState(false);
   const [step, setStep] = useState<Step>("upload");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
@@ -158,6 +166,45 @@ export default function Home() {
     }, {});
   }, [requirements]);
   const progress = workspace ? Math.max(20, (steps.findIndex((item) => item.id === step) + 1) * 20) : 0;
+
+  useEffect(() => {
+    let active = true;
+    void request<AccessStatus>("/access/status")
+      .then((result) => {
+        if (!active) return;
+        setAccessState(result.authorized ? "authorized" : "required");
+      })
+      .catch(() => {
+        if (active) {
+          setAccessState("required");
+          setInviteError("暂时无法验证访问权限，请稍后重试。");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function authorizeInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthorizing(true);
+    setInviteError("");
+    try {
+      await request<{ authorized: boolean }>("/access/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: inviteCode }),
+      });
+      setInviteCode("");
+      setAccessState("authorized");
+    } catch (caught) {
+      setInviteError(
+        caught instanceof Error ? caught.message : "邀请码验证失败。",
+      );
+    } finally {
+      setAuthorizing(false);
+    }
+  }
 
   function openCompletedWorkspace(completed: Workspace, message?: string) {
     setWorkspace(completed);
@@ -210,6 +257,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (accessState !== "authorized") return;
     const workspaceId = window.sessionStorage.getItem(ACTIVE_WORKSPACE_KEY);
     if (!workspaceId) return;
     let active = true;
@@ -242,7 +290,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [accessState]);
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -402,6 +450,47 @@ export default function Home() {
           : `校核完成，有 ${review.overall.blocking_risk_count} 项建议人工留意，但不会阻断导出。`,
       );
     });
+  }
+
+  if (accessState !== "authorized") {
+    return (
+      <main className="invite-shell">
+        <section className="invite-card">
+          <div className="brand-seal invite-seal">岳</div>
+          <span className="panel-label">PRIVATE PREVIEW</span>
+          <h1>技术方案工作台</h1>
+          {accessState === "checking" ? (
+            <p>正在验证访问权限…</p>
+          ) : (
+            <>
+              <p>本工作台仅向受邀用户开放。请输入邀请人提供的邀请码。</p>
+              <form onSubmit={authorizeInvite}>
+                <label htmlFor="invite-code">邀请码</label>
+                <input
+                  id="invite-code"
+                  value={inviteCode}
+                  minLength={4}
+                  maxLength={128}
+                  autoComplete="one-time-code"
+                  onChange={(event) => setInviteCode(event.target.value)}
+                  placeholder="请输入邀请码"
+                  required
+                />
+                {inviteError && <div className="invite-error">{inviteError}</div>}
+                <button
+                  className="primary large"
+                  type="submit"
+                  disabled={authorizing}
+                >
+                  {authorizing ? "正在验证…" : "进入工作台"}
+                </button>
+              </form>
+              <small>邀请码不会保存在浏览器页面中，请勿转发给无关人员。</small>
+            </>
+          )}
+        </section>
+      </main>
+    );
   }
 
   return (

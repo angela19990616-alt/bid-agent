@@ -23,17 +23,16 @@ async function render() {
   );
 }
 
-test("renders the bid proposal workspace", async () => {
+test("renders the private preview access gate", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /技术方案工作台/);
-  assert.match(html, /上传文件/);
-  assert.match(html, /技术要点/);
-  assert.match(html, /推荐目录/);
-  assert.match(html, /导出 Word/);
+  assert.match(html, /PRIVATE PREVIEW/);
+  assert.match(html, /正在验证访问权限/);
+  assert.doesNotMatch(html, /选择 PDF 或 DOCX 招标文件/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 });
 
@@ -86,4 +85,8 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(layout, /标书智能工作台/);
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/v1\/"\)/);
   assert.match(worker, /BID_AGENT_API_ORIGIN/);
+  assert.match(page, /access\/status/);
+  assert.match(page, /access\/invite/);
+  assert.match(page, /本工作台仅向受邀用户开放/);
+  assert.match(css, /invite-card/);
 });

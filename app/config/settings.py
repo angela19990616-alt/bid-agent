@@ -43,6 +43,10 @@ class Settings:
         os.getenv("DATABASE_CONNECT_TIMEOUT", "5")
     )
     edge_proxy_secret: str = os.getenv("BID_AGENT_EDGE_SECRET", "")
+    invite_code: str = os.getenv("BID_AGENT_INVITE_CODE", "")
+    invite_access_ttl_hours: int = int(
+        os.getenv("BID_AGENT_INVITE_ACCESS_TTL_HOURS", "168")
+    )
     enable_legacy_api: bool = (
         os.getenv(
             "ENABLE_LEGACY_API",
@@ -75,6 +79,12 @@ class Settings:
             errors.append("POSTGRES_PASSWORD is required in production")
         if self.app_env == "production" and not self.edge_proxy_secret:
             errors.append("BID_AGENT_EDGE_SECRET is required in production")
+        if self.app_env == "production" and not self.invite_code:
+            errors.append("BID_AGENT_INVITE_CODE is required in production")
+        if self.invite_access_ttl_hours < 1:
+            errors.append(
+                "BID_AGENT_INVITE_ACCESS_TTL_HOURS must be positive"
+            )
         if self.chunk_overlap >= self.chunk_size:
             errors.append("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
         return errors

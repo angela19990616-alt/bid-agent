@@ -2,7 +2,8 @@ from fastapi.testclient import TestClient
 from types import SimpleNamespace
 
 from app import main
-from app.api import documents
+from app.api import access, documents
+from app.services import invite_access_service
 
 
 client = TestClient(main.app)
@@ -84,6 +85,59 @@ def test_production_api_accepts_authorized_gateway(monkeypatch):
     )
 
     assert response.status_code != 403
+
+
+def test_production_invite_gate_issues_http_only_access_cookie(monkeypatch):
+    runtime = SimpleNamespace(
+        app_env="production",
+        edge_proxy_secret="edge-secret",
+        invite_code="DAYUE-TEST",
+        invite_access_ttl_hours=24,
+    )
+    monkeypatch.setattr(main, "settings", runtime)
+    monkeypatch.setattr(access, "settings", runtime)
+    monkeypatch.setattr(invite_access_service, "settings", runtime)
+    headers = {"X-Bid-Agent-Edge-Secret": "edge-secret"}
+
+    status_response = client.get(
+        "/api/v1/access/status",
+        headers=headers,
+    )
+    denied_response = client.get(
+        "/api/v1/workspaces/example",
+        headers=headers,
+    )
+    invalid_response = client.post(
+        "/api/v1/access/invite",
+        headers=headers,
+        json={"code": "WRONG-CODE"},
+    )
+    authorized_response = client.post(
+        "/api/v1/access/invite",
+        headers=headers,
+        json={"code": "DAYUE-TEST"},
+    )
+    allowed_response = client.get(
+        "/api/v1/workspaces/example",
+        headers=headers,
+    )
+
+    assert status_response.json() == {
+        "required": True,
+        "authorized": False,
+    }
+    assert denied_response.status_code == 401
+    assert (
+        denied_response.json()["error"]["code"]
+        == "INVITE_ACCESS_REQUIRED"
+    )
+    assert invalid_response.status_code == 401
+    assert authorized_response.status_code == 200
+    cookie_header = authorized_response.headers["set-cookie"]
+    assert "bid_agent_invite_access=" in cookie_header
+    assert "HttpOnly" in cookie_header
+    assert "SameSite=strict" in cookie_header
+    assert allowed_response.status_code != 401
 
 
 def test_upload_text_document(monkeypatch):
