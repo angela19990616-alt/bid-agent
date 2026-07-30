@@ -64,6 +64,8 @@ class RequirementExtractionError(Exception):
 
 
 class RequirementService:
+    SOURCE_MISMATCH_MARKER = "human_feedback:source_mismatch"
+
     def __init__(
         self,
         requirement_agent: RequirementAgent | None = None,
@@ -127,7 +129,9 @@ class RequirementService:
             classified, active_classification_rules
         )
         quality_checked = self.quality_pipeline.run(reviewed)
-        candidates = self._deduplicate(quality_checked)[:200]
+        candidates = self._exclude_known_source_mismatches(
+            self._deduplicate(quality_checked)
+        )[:200]
 
         created = 0
         skipped = 0
@@ -310,6 +314,76 @@ class RequirementService:
                 )
                 if cursor.rowcount == 0:
                     raise RequirementNotFoundError(str(requirement_id))
+
+    def record_feedback(
+        self,
+        project_id: UUID,
+        requirement_id: UUID,
+        feedback: str,
+    ) -> dict:
+        if feedback not in {
+            "pending", "confirmed", "not_needed", "source_mismatch"
+        }:
+            raise RequirementValidationError("不支持的人工确认结果。")
+        if feedback == "confirmed":
+            return self.update(
+                project_id, requirement_id, {"status": "confirmed"}
+            )
+        if feedback == "pending":
+            return self.update(
+                project_id, requirement_id, {"status": "pending"}
+            )
+
+        notes = None
+        conflict = False
+        if feedback == "source_mismatch":
+            notes = self.SOURCE_MISMATCH_MARKER
+            conflict = True
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE requirements
+                    SET status = 'rejected',
+                        classification_conflict = %s,
+                        classification_notes = %s,
+                        updated_at = NOW()
+                    WHERE project_id = %s AND id = %s
+                    """,
+                    (conflict, notes, project_id, requirement_id),
+                )
+                if cursor.rowcount == 0:
+                    raise RequirementNotFoundError(str(requirement_id))
+        return self.get(project_id, requirement_id)
+
+    def _exclude_known_source_mismatches(
+        self,
+        candidates: list[Candidate],
+    ) -> list[Candidate]:
+        """Suppress only exact text previously marked as not matching source."""
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT normalized_text
+                    FROM requirements
+                    WHERE status = 'rejected'
+                      AND classification_notes = %s
+                    """,
+                    (self.SOURCE_MISMATCH_MARKER,),
+                )
+                rejected = {
+                    self._feedback_key(row[0]) for row in cursor.fetchall()
+                }
+        return [
+            item
+            for item in candidates
+            if self._feedback_key(item.normalized_text) not in rejected
+        ]
+
+    @staticmethod
+    def _feedback_key(text: str) -> str:
+        return re.sub(r"\s+", "", text).casefold()
 
     def get(self, project_id: UUID, requirement_id: UUID) -> dict:
         with connect() as conn:
@@ -602,6 +676,16 @@ class RequirementService:
                         "knowledge_support_required"
                     ],
                     "status": row["status"],
+                    "feedback": (
+                        "source_mismatch"
+                        if row["classification_notes"]
+                        == RequirementService.SOURCE_MISMATCH_MARKER
+                        else "confirmed"
+                        if row["status"] == "confirmed"
+                        else "not_needed"
+                        if row["status"] == "rejected"
+                        else "pending"
+                    ),
                     "proposal_relevance": row["proposal_relevance"],
                     "proposal_chapter": row["proposal_chapter"],
                     "target_chapter": row["target_chapter"],

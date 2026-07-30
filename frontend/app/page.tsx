@@ -19,6 +19,7 @@ type Requirement = {
   title: string;
   normalized_text: string;
   quote: string;
+  importance: "critical" | "high" | "medium" | "low";
   proposal_relevance: "high" | "medium" | "low";
   proposal_chapter: string | null;
   scoring_relation: "high_score_item" | "medium_score_item" | "requirement_only" | "unknown";
@@ -26,6 +27,8 @@ type Requirement = {
   classification_conflict: boolean;
   target_chapter: string | null;
   need_generation: boolean;
+  status: "pending" | "confirmed" | "rejected";
+  feedback: "pending" | "confirmed" | "not_needed" | "source_mismatch";
   sources: Source[];
 };
 type SectionVersion = {
@@ -138,6 +141,18 @@ const typeLabels: Record<Requirement["type"], string> = {
   qualification: "资格提醒",
   compliance: "合规提醒",
 };
+const importanceLabels: Record<Requirement["importance"], string> = {
+  critical: "关键",
+  high: "重要",
+  medium: "一般",
+  low: "低",
+};
+const importanceRank: Record<Requirement["importance"], number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
@@ -179,6 +194,7 @@ export default function Home() {
   const [step, setStep] = useState<Step>("upload");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [requirementView, setRequirementView] = useState<"proposal" | "compliance">("proposal");
   const [sections, setSections] = useState<SectionItem[]>([]);
   const [activeSectionId, setActiveSectionId] = useState("");
   const [editorContent, setEditorContent] = useState("");
@@ -191,12 +207,19 @@ export default function Home() {
 
   const activeSection = sections.find((item) => item.id === activeSectionId);
   const grouped = useMemo(() => {
-    return requirements.reduce<Record<string, Requirement[]>>((result, item) => {
-      const chapter = item.proposal_chapter ?? item.target_chapter ?? "其他技术要求";
+    const sorted = [...requirements].sort((left, right) => {
+      const otherDelta = Number(left.type === "other") - Number(right.type === "other");
+      if (otherDelta) return otherDelta;
+      return importanceRank[left.importance] - importanceRank[right.importance];
+    });
+    return sorted.reduce<Record<string, Requirement[]>>((result, item) => {
+      const chapter = requirementView === "compliance"
+        ? typeLabels[item.type]
+        : item.proposal_chapter ?? item.target_chapter ?? "其他技术要求";
       result[chapter] = [...(result[chapter] ?? []), item];
       return result;
     }, {});
-  }, [requirements]);
+  }, [requirements, requirementView]);
   const progress = workspace ? Math.max(20, (steps.findIndex((item) => item.id === step) + 1) * 20) : 0;
 
   useEffect(() => {
@@ -241,6 +264,7 @@ export default function Home() {
   function openCompletedWorkspace(completed: Workspace, message?: string) {
     setWorkspace(completed);
     setRequirements(completed.technical_requirements);
+    setRequirementView("proposal");
     setSections(completed.outline);
     setActiveSectionId(completed.outline[0]?.id ?? "");
     setEditorContent(completed.outline[0]?.current_version?.content ?? "");
@@ -321,11 +345,36 @@ export default function Home() {
     });
   }
 
-  async function showCompliance() {
+  async function showRequirements(view: "proposal" | "compliance") {
     if (!workspace) return;
-    await run("正在读取合规提醒", async () => {
-      const items = await request<Requirement[]>(`/workspaces/${workspace.id}/requirements?view=compliance`);
-      setNotice(items.length ? items.map((item) => item.title).slice(0, 6).join("；") : "没有发现额外合规提醒。");
+    await run(view === "proposal" ? "正在读取技术要点" : "正在读取合规提醒", async () => {
+      const items = await request<Requirement[]>(`/workspaces/${workspace.id}/requirements?view=${view}`);
+      setRequirements(items);
+      setRequirementView(view);
+      setNotice(view === "compliance" && items.length === 0 ? "没有发现额外合规提醒。" : "");
+    });
+  }
+
+  async function recordRequirementFeedback(
+    item: Requirement,
+    feedback: Requirement["feedback"],
+  ) {
+    if (!workspace) return;
+    await run("正在保存人工确认", async () => {
+      const updated = await request<Requirement>(
+        `/workspaces/${workspace.id}/requirements/${item.id}/feedback`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ feedback }),
+        },
+      );
+      setRequirements((items) => items.map((current) => current.id === updated.id ? updated : current));
+      setNotice(
+        feedback === "source_mismatch"
+          ? "已记录为与原文不符；相同错误内容下次将被自动过滤。"
+          : "人工确认结果已保存。",
+      );
     });
   }
 
@@ -571,8 +620,21 @@ export default function Home() {
                 <div><strong>{requirements.length}</strong><span>条技术写作要点</span></div>
                 <div><strong>{requirements.filter((item) => item.type === "scoring_requirement" || item.type === "scoring").length}</strong><span>个技术评分点</span></div>
                 <div><strong>{workspace?.model_calls_used ?? 0}/{workspace?.model_calls_limit ?? 12}</strong><span>模型调用预算</span></div>
-                <button className="secondary" onClick={showCompliance}>查看 {workspace?.compliance_reminder_count ?? 0} 条合规提醒</button>
                 <button className="primary" onClick={() => setStep("outline")}>查看推荐目录</button>
+              </div>
+              <div className="requirement-tabs" role="tablist" aria-label="要求分类">
+                <button
+                  className={requirementView === "proposal" ? "active" : ""}
+                  onClick={() => showRequirements("proposal")}
+                >
+                  技术方案要点
+                </button>
+                <button
+                  className={requirementView === "compliance" ? "active" : ""}
+                  onClick={() => showRequirements("compliance")}
+                >
+                  合规要求 <span>{workspace?.compliance_reminder_count ?? 0}</span>
+                </button>
               </div>
               {Object.entries(grouped).map(([chapter, items]) => (
                 <section className="requirement-group" key={chapter}>
@@ -581,7 +643,10 @@ export default function Home() {
                     {items.map((item) => (
                       <article className={`requirement-card ${item.type === "scoring_requirement" || item.type === "scoring" ? "scoring-card" : ""}`} key={item.id}>
                         <div className="requirement-top">
-                          <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
+                          <div className="requirement-tags">
+                            <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
+                            <span className={`importance-tag ${item.importance}`}>{importanceLabels[item.importance]}</span>
+                          </div>
                           <span className="confidence">{item.proposal_relevance === "high" ? "重点响应" : "建议响应"}</span>
                         </div>
                         <h3>{item.title}</h3>
@@ -589,6 +654,21 @@ export default function Home() {
                         <details><summary>查看原文依据</summary><blockquote>{item.quote}</blockquote>
                           <div className="source-row">{item.sources.map((source) => <span key={source.id}>{source.filename} · {sourceLabel(source)}</span>)}</div>
                         </details>
+                        <div className="card-actions feedback-actions" aria-label="人工确认">
+                          <span>人工确认</span>
+                          <button
+                            className={item.feedback === "confirmed" ? "selected" : ""}
+                            onClick={() => recordRequirementFeedback(item, "confirmed")}
+                          >需要</button>
+                          <button
+                            className={item.feedback === "not_needed" ? "selected" : ""}
+                            onClick={() => recordRequirementFeedback(item, "not_needed")}
+                          >不需要</button>
+                          <button
+                            className={item.feedback === "source_mismatch" ? "selected warning" : ""}
+                            onClick={() => recordRequirementFeedback(item, "source_mismatch")}
+                          >与原文不符</button>
+                        </div>
                       </article>
                     ))}
                   </div>

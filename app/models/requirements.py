@@ -19,6 +19,9 @@ RequirementType = Literal[
     "compliance", "commercial",
 ]
 RequirementStatus = Literal["pending", "confirmed", "rejected"]
+RequirementFeedback = Literal[
+    "pending", "confirmed", "not_needed", "source_mismatch"
+]
 Importance = Literal["low", "medium", "high", "critical"]
 ScoringRelation = Literal[
     "high_score_item", "medium_score_item", "requirement_only", "unknown"
@@ -52,6 +55,7 @@ class RequirementResponse(BaseModel):
     target_chapter: str | None = None
     need_generation: bool = False
     status: RequirementStatus
+    feedback: RequirementFeedback = "pending"
     sources: list[RequirementSourceResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -81,3 +85,7 @@ class RequirementUpdate(BaseModel):
     target_chapter: str | None = Field(default=None, max_length=200)
     need_generation: bool | None = None
     status: RequirementStatus | None = None
+
+
+class RequirementFeedbackUpdate(BaseModel):
+    feedback: RequirementFeedback

@@ -50,3 +50,9 @@ def test_distinct_requirements_are_not_merged():
     )
 
     assert len(result) == 2
+
+
+def test_source_mismatch_feedback_key_ignores_spacing_and_case():
+    assert RequirementService._feedback_key(" 支持 QWEN 模型\n") == (
+        RequirementService._feedback_key("支持qwen模型")
+    )

@@ -16,7 +16,10 @@ from fastapi.responses import FileResponse
 
 from app.core.errors import AppError
 from app.models.exports import ExportResponse
-from app.models.requirements import RequirementResponse
+from app.models.requirements import (
+    RequirementFeedbackUpdate,
+    RequirementResponse,
+)
 from app.models.sections import (
     SectionContentUpdate,
     SectionGenerationRequest,
@@ -40,7 +43,9 @@ from app.services.proposal_plan_service import (
 from app.services.proposal_review_service import ProposalReviewService
 from app.services.requirement_service import (
     RequirementExtractionError,
+    RequirementNotFoundError,
     RequirementService,
+    RequirementValidationError,
 )
 from app.services.section_service import (
     SectionGenerationError,
@@ -227,6 +232,28 @@ def list_workspace_requirements(
         workspace_id,
         need_generation=view == "proposal",
     )
+
+
+@router.patch(
+    "/{workspace_id}/requirements/{requirement_id}/feedback",
+    response_model=RequirementResponse,
+)
+def record_workspace_requirement_feedback(
+    workspace_id: UUID,
+    requirement_id: UUID,
+    payload: RequirementFeedbackUpdate,
+    _access: None = Depends(authorize_workspace),
+):
+    try:
+        return RequirementService().record_feedback(
+            workspace_id,
+            requirement_id,
+            payload.feedback,
+        )
+    except RequirementNotFoundError as exc:
+        raise AppError(404, "REQUIREMENT_NOT_FOUND", "未找到该要求。") from exc
+    except RequirementValidationError as exc:
+        raise AppError(422, "REQUIREMENT_FEEDBACK_INVALID", str(exc)) from exc
 
 
 @router.put(

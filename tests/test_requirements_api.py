@@ -104,3 +104,14 @@ def test_reject_requirement():
     )
 
     assert response.status_code == 204
+
+
+def test_requirement_response_has_pending_feedback_by_default():
+    client, service = make_client()
+
+    response = client.get(
+        f"/api/v1/projects/{service.project_id}/requirements"
+    )
+
+    assert response.status_code == 200
+    assert response.json()[0]["feedback"] == "pending"

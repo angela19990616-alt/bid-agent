@@ -196,6 +196,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .section-toolbar span { color: var(--muted); font-size: 10px; }
 .section-toolbar button { margin-left: auto; }
 .requirement-list { display: grid; gap: 12px; }
+.requirement-tabs { display: flex; gap: 8px; margin-bottom: 18px; padding: 5px; width: fit-content; border: 1px solid var(--line); border-radius: 10px; background: white; }
+.requirement-tabs button { padding: 9px 14px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
+.requirement-tabs button.active { color: white; background: var(--green-700); }
+.requirement-tabs span { display: inline-grid; min-width: 19px; height: 19px; margin-left: 4px; place-items: center; border-radius: 99px; background: rgba(255,255,255,.18); font-size: 9px; }
 .requirement-group { margin: 0 0 28px; }
 .requirement-group > h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 11px; font-family: var(--serif); font-size: 18px; }
 .requirement-group > h3 small { color: var(--muted); font-family: var(--sans); font-size: 9px; }
@@ -209,7 +213,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .requirement-card.rejected { opacity: .55; }
 .requirement-top, .source-row, .card-actions { display: flex; align-items: center; }
 .requirement-top { justify-content: space-between; }
+.requirement-tags { display: flex; align-items: center; gap: 6px; }
 .type-tag { padding: 4px 8px; border-radius: 5px; color: var(--green-800); background: var(--green-100); font-size: 9px; font-weight: 700; }
+.importance-tag { padding: 4px 7px; border-radius: 5px; color: #626e68; background: #edf0ee; font-size: 9px; font-weight: 700; }
+.importance-tag.critical { color: #893d37; background: #f8e5e2; }
+.importance-tag.high { color: #7c5a1f; background: var(--gold-soft); }
 .type-tag.scoring { color: #7c5a1f; background: var(--gold-soft); }
 .type-tag.delivery { color: #3d6682; background: #e7f0f6; }
 .type-tag.qualification { color: #754f72; background: #f1e8f0; }
@@ -224,6 +232,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .source-row { flex-wrap: wrap; gap: 6px; }
 .source-row span { padding: 4px 7px; border: 1px solid #dce4df; border-radius: 5px; color: #5f6e66; font-size: 9px; background: #fafbf9; }
 .card-actions { justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.feedback-actions { padding-top: 11px; border-top: 1px solid #edf0ee; }
+.feedback-actions > span { margin-right: auto; color: var(--muted); font-size: 9px; }
+.feedback-actions button { padding: 6px 10px; border: 1px solid #d6dfda; border-radius: 7px; color: #526159; background: white; font-size: 10px; cursor: pointer; }
+.feedback-actions button.selected { border-color: #5e9679; color: #245a42; background: #e7f2ec; }
+.feedback-actions button.selected.warning { border-color: #b77670; color: #843c37; background: #f7e9e7; }
 
 .writer-layout { display: grid; grid-template-columns: 285px minmax(0, 1fr); gap: 18px; }
 .outline-layout { max-width: 980px; margin: 0 auto; }
