@@ -107,6 +107,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NGINX_ENVSUBST_FILTER: BID_AGENT_EDGE_SECRET
     ports:
       - "80:80"
 

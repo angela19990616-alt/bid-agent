@@ -1,3 +1,5 @@
+from typing import Any
+
 from openai import OpenAI
 
 from app.config.settings import settings
@@ -12,7 +14,11 @@ class ModelClient:
         self,
         api_key: str | None = None,
         base_url: str | None = None,
+        client: Any | None = None,
     ):
+        if client is not None:
+            self.client = client
+            return
         resolved_key = api_key or settings.model_api_key
         if not resolved_key:
             raise ModelConfigurationError(

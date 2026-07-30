@@ -167,6 +167,17 @@ DOCX 导出和所有下载接口都必须同时通过会话与 IP 校验；失�
 不要把真实密码或模型密钥提交到 Git。复制 `.env.example` 为 `.env`，在本机
 私密文件中人工填写。
 
+模型调用统一经过兼容 OpenAI SDK 的客户端接口，当前国内部署默认连接阿里云百炼：
+在私密 `.env` 中填写 `DASHSCOPE_API_KEY`，并使用百炼兼容端点、
+`qwen-plus` 和 `text-embedding-v4`。`OPENAI_BASE_URL`、`LLM_MODEL`、
+`EMBEDDING_MODEL` 和 `EMBEDDING_DIMENSIONS` 均可配置，切换供应商不需要修改
+Agent 或业务服务。真实 Key 只能写入本机或服务器 `.env`，禁止发到聊天或提交
+Git。
+
+公网部署必须使用许可生产自动化调用的百炼按量计费 Key 或 Token Plan 团队版
+Key。Token Plan 个人版（Lite、Standard、Pro）只用于个人交互式开发工具，不能
+作为本服务的生产 Key；不同产品的 Key 与 Base URL 也不能混用。
+
 ```bash
 docker compose up --build -d
 docker compose ps
