@@ -26,9 +26,9 @@ class Settings:
         "OPENAI_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
-    llm_model: str = os.getenv("LLM_MODEL", "qwen-plus")
+    llm_model: str = os.getenv("LLM_MODEL", "qwen3.7-plus")
     extraction_model: str = os.getenv(
-        "EXTRACTION_MODEL", "qwen-plus-2025-07-28"
+        "EXTRACTION_MODEL", "qwen3.7-plus"
     )
     classification_model: str = os.getenv(
         "CLASSIFICATION_MODEL", "qwen3.7-plus"
@@ -36,7 +36,7 @@ class Settings:
     writing_model: str = os.getenv(
         "WRITING_MODEL", "qwen3.7-plus"
     )
-    review_model: str = os.getenv("REVIEW_MODEL", "glm-5")
+    review_model: str = os.getenv("REVIEW_MODEL", "qwen3.7-plus")
     max_model_calls_per_workflow: int = int(
         os.getenv("MAX_MODEL_CALLS_PER_WORKFLOW", "40")
     )
