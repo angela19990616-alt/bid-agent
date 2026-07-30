@@ -14,6 +14,19 @@ class FakeModelClient:
         return json.dumps(self.response, ensure_ascii=False)
 
 
+class SequencedModelClient:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.calls = []
+
+    def chat(self, messages, **kwargs):
+        self.calls.append(messages)
+        response = next(self.responses)
+        if isinstance(response, str):
+            return response
+        return json.dumps(response, ensure_ascii=False)
+
+
 def source(text):
     return {
         "id": uuid4(),
@@ -151,3 +164,48 @@ def test_nontechnical_evaluation_rows_do_not_become_scoring_points():
     assert RequirementAgent(fake).extract(
         [source("第三章 评审办法"), *rows]
     ) == []
+
+
+def test_malformed_large_batch_is_retried_in_smaller_batches():
+    valid = {
+        "requirements": [
+            {
+                "source_ref": "S1",
+                "title": "提交项目实施计划",
+                "requirement": "供应商应提交项目实施计划。",
+                "type": "technical",
+                "importance": "high",
+                "confidence": 0.9,
+                "evidence": "供应商须提交项目实施计划。",
+            }
+        ]
+    }
+    client = SequencedModelClient(['{"requirements":[', valid])
+    agent = RequirementAgent(
+        client,
+        batch_size=30,
+        recovery_batch_size=8,
+    )
+
+    result = agent.extract([source("供应商须提交项目实施计划。")])
+
+    assert len(result) == 1
+    assert result[0].title == "提交项目实施计划"
+    assert len(client.calls) == 2
+    assert "上一次响应不是合法 JSON" in client.calls[1][1]["content"]
+
+
+def test_malformed_recovery_batch_keeps_scoring_fallback():
+    client = SequencedModelClient(
+        ['{"requirements":[', '{"requirements":[']
+    )
+    original = "技术方案完整、理解准确、措施可行的，得10分。"
+
+    result = RequirementAgent(
+        client,
+        recovery_batch_size=8,
+    ).extract([source("第三章 评分办法"), source(original)])
+
+    assert len(result) == 1
+    assert result[0].requirement_type == "scoring"
+    assert result[0].quote == original

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from uuid import UUID
@@ -10,6 +11,7 @@ from app.rules.engine import RuleDocument, RuleEngine
 
 
 IMPORTANCE_LEVELS = {"low", "medium", "high"}
+logger = logging.getLogger("bid-agent.requirement-agent")
 LIST_ITEM = re.compile(
     r"^(?:[（(]?[一二三四五六七八九十\d]+[）).、．.]|"
     r"\d+(?:\.\d+)+|[①②③④⑤⑥⑦⑧⑨⑩])"
@@ -47,15 +49,21 @@ class RequirementAgentError(RuntimeError):
     pass
 
 
+class RequirementResponseFormatError(RequirementAgentError):
+    pass
+
+
 class RequirementAgent:
     def __init__(
         self,
         model_client: ModelClient | None = None,
         *,
-        batch_size: int = 80,
+        batch_size: int = 30,
+        recovery_batch_size: int = 8,
     ):
         self.model_client = model_client
         self.batch_size = batch_size
+        self.recovery_batch_size = recovery_batch_size
 
     @property
     def client(self) -> ModelClient:
@@ -83,6 +91,48 @@ class RequirementAgent:
         batch: list[RequirementEvidence],
         rules: RuleDocument,
     ) -> list[AgentRequirement]:
+        try:
+            return self._extract_batch_once(batch, rules)
+        except RequirementResponseFormatError:
+            logger.warning(
+                "Model returned malformed requirement JSON; "
+                "retrying in %s-item recovery batches",
+                self.recovery_batch_size,
+            )
+        recovered: list[AgentRequirement] = []
+        for start in range(0, len(batch), self.recovery_batch_size):
+            recovery_batch = batch[
+                start : start + self.recovery_batch_size
+            ]
+            try:
+                recovered.extend(
+                    self._extract_batch_once(
+                        recovery_batch,
+                        rules,
+                        strict_retry=True,
+                    )
+                )
+            except RequirementResponseFormatError:
+                logger.error(
+                    "Model returned malformed JSON for a recovery "
+                    "batch; applying deterministic fallbacks"
+                )
+                recovered.extend(
+                    self._apply_deterministic_fallbacks(
+                        recovery_batch,
+                        [],
+                        rules.content,
+                    )
+                )
+        return recovered
+
+    def _extract_batch_once(
+        self,
+        batch: list[RequirementEvidence],
+        rules: RuleDocument,
+        *,
+        strict_retry: bool = False,
+    ) -> list[AgentRequirement]:
         source_map = {item.source_ref: item for item in batch}
         content = [
             {
@@ -104,17 +154,29 @@ class RequirementAgent:
                         "content": (
                             "请审查以下候选原文并返回 JSON。"
                             "不要解释，不要输出 Markdown。\n"
+                            + (
+                                "上一次响应不是合法 JSON。此次只返回"
+                                "一个完整 JSON 对象，确保所有字符串、"
+                                "逗号、括号均闭合。\n"
+                                if strict_retry
+                                else ""
+                            )
                             + json.dumps(content, ensure_ascii=False)
                         ),
                     },
                 ],
                 temperature=0,
-                max_tokens=7000,
+                max_tokens=6000,
             )
-            payload = self._parse_json(response)
         except Exception as exc:
             raise RequirementAgentError(
-                "Requirement Agent 调用或解析失败。"
+                "Requirement Agent 模型调用失败。"
+            ) from exc
+        try:
+            payload = self._parse_json(response)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise RequirementResponseFormatError(
+                "Requirement Agent 返回格式不完整。"
             ) from exc
 
         results: list[AgentRequirement] = []
