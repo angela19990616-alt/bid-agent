@@ -1,12 +1,13 @@
 from app.services.section_service import SectionService
 
 
-def test_review_blocks_unsupported_claims():
+def test_review_warns_without_blocking_unsupported_claims():
     findings = SectionService.review(
         "我公司拥有大量成功案例，并百分之百保证项目验收。"
     )
 
-    assert any(item.severity == "blocking" for item in findings)
+    assert findings
+    assert all(item.severity != "blocking" for item in findings)
 
 
 def test_review_does_not_block_technical_terms_without_evidence_context():
@@ -67,3 +68,18 @@ def test_generated_content_removes_internal_requirement_labels():
     assert "原文证据：" not in content
     assert "分阶段推进" in content
     assert "供应商须提交实施计划" in content
+
+
+def test_generated_content_removes_human_unreadable_requirement_codes():
+    content = SectionService.sanitize_generated_content(
+        "一、工作安排（要求xxxx）\n"
+        "二、进度控制【Requirement R0042】\n"
+        "三、成果验收（要求 requirement_code）"
+    )
+
+    assert "要求xxxx" not in content
+    assert "Requirement R0042" not in content
+    assert "要求 requirement_code" not in content
+    assert "工作安排" in content
+    assert "进度控制" in content
+    assert "成果验收" in content

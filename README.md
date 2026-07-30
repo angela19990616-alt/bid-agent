@@ -227,11 +227,11 @@ BID_AGENT_BRANCH=codex/feat-frontend-integration \
 - 规则版本及运行快照可查询；
 - 写作前企业知识匹配结果可查询；
 - 推荐目录映射正确；
-- 逐章真实模型生成、人工编辑和阻断校核；
+- 逐章真实模型生成、人工编辑和非阻断校核提醒；
 - 整本 DOCX 可打开、章节顺序正确、来源总表完整；
 - Docker 健康检查、失败重试和隐私边界检查。
 
-## Proposal Review 与交付门禁
+## Proposal Review 与交付提醒
 
 正式交付流程为：
 
@@ -251,7 +251,8 @@ BID_AGENT_BRANCH=codex/feat-frontend-integration \
 - `exports/{workspace}/reviews/Proposal_Review.md`：用户可读报告。
 
 报告分别列出 Requirement Coverage、Scoring Coverage、Knowledge Usage、
-Truth and Privacy Review、Language and AI Style Review 以及每一项交付门禁。
+Truth and Privacy Review、Language and AI Style Review 以及每一项交付检查。
+检查会自动清理可确定修复的问题，其余结果作为人工提醒，不阻断章节确认或 Word 导出。
 用户可见报告不展示 Requirement UUID、数据库 ID 或其他内部标识。
 
 Auto Fix 只执行可确定的安全修复：删除内部标识、敏感字段、未经核验的高风险

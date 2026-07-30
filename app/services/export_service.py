@@ -14,9 +14,9 @@ from app.services.docx_builder import (
     build_proposal_docx,
 )
 from app.services.proposal_review_service import (
-    ProposalNotDeliverableError,
     ProposalReviewService,
 )
+from app.services.section_service import SectionService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -30,17 +30,7 @@ class ExportValidationError(Exception):
 
 class ExportService:
     def create_full(self, project_id: UUID) -> dict:
-        try:
-            ProposalReviewService().prepare_for_export(project_id)
-        except ProposalNotDeliverableError as exc:
-            overall = exc.report["overall"]
-            raise ExportValidationError(
-                "最终审查未通过："
-                f"{overall['blocking_risk_count']} 个阻断项，"
-                f"需求覆盖率 {overall['requirement_coverage_rate']:.0%}，"
-                f"评分点覆盖率 {overall['scoring_coverage_rate']:.0%}。"
-                "请先查看 Proposal Review。"
-            ) from exc
+        ProposalReviewService().prepare_for_export(project_id)
         data = self._load_full_export_input(project_id)
         export_id = uuid4()
         safe_project = re.sub(
@@ -327,7 +317,9 @@ class ExportService:
         return {
             "project_name": section["project_name"],
             "section_title": section["section_title"],
-            "content": section["content"],
+            "content": SectionService.sanitize_generated_content(
+                section["content"]
+            ),
             "requirements": requirements,
         }
 
@@ -442,6 +434,14 @@ class ExportService:
             )
         return {
             "project_name": project["name"],
-            "sections": [dict(row) for row in sections],
+            "sections": [
+                {
+                    **dict(row),
+                    "content": SectionService.sanitize_generated_content(
+                        row["content"]
+                    ),
+                }
+                for row in sections
+            ],
             "requirements": list(grouped.values()),
         }

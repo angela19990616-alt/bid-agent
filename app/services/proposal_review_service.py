@@ -33,19 +33,11 @@ SECRET_PATTERN = re.compile(
     r"(api[_-]?key|access[_-]?token|secret)\s*[:=]\s*\S+",
     re.IGNORECASE,
 )
-class ProposalNotDeliverableError(ValueError):
-    def __init__(self, report: dict[str, Any]):
-        super().__init__("最终审查存在阻断项，仅可生成预览，不允许正式交付。")
-        self.report = report
-
-
 class ProposalReviewService:
     def __init__(self, rule_engine: RuleEngine | None = None):
         self.rule_engine = rule_engine or RuleEngine()
 
-    def prepare_for_export(
-        self, project_id: UUID, *, enforce: bool = True
-    ) -> dict[str, Any]:
+    def prepare_for_export(self, project_id: UUID) -> dict[str, Any]:
         rules = self.rule_engine.load("compliance")
         pipeline = ControlledPipeline()
         try:
@@ -81,8 +73,6 @@ class ProposalReviewService:
                 "passed": final["overall"]["recommended_for_delivery"]
             },
         )
-        if enforce and not final["overall"]["recommended_for_delivery"]:
-            raise ProposalNotDeliverableError(final)
         return final
 
     @staticmethod

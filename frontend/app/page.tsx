@@ -398,8 +398,8 @@ export default function Home() {
       setProposalReview(review);
       setNotice(
         review.overall.recommended_for_delivery
-          ? "双轮审查和自动修复已完成，当前满足正式交付门禁。"
-          : `审查完成，仍有 ${review.overall.blocking_risk_count} 个阻断项，不建议正式交付。`,
+          ? "校核和自动清理已完成，可以继续导出。"
+          : `校核完成，有 ${review.overall.blocking_risk_count} 项建议人工留意，但不会阻断导出。`,
       );
     });
   }
@@ -565,7 +565,7 @@ export default function Home() {
                     />
                     <span>{generationInstruction.length}/1000</span>
                   </div>
-                  {activeSection.findings.length > 0 && <div className="findings">{activeSection.findings.map((item) => <p className={item.severity} key={item.id}>{item.message}</p>)}</div>}
+                  {activeSection.findings.length > 0 && <div className="findings">{activeSection.findings.map((item) => <p className="warning" key={item.id}>{item.message}</p>)}</div>}
                   <textarea
                     value={editorContent}
                     onChange={(event) => setEditorContent(event.target.value)}
@@ -586,20 +586,20 @@ export default function Home() {
               </div>
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
-                <p>先执行双轮 Proposal Review 和自动修复，再通过交付门禁生成 Word。</p>
+                <p>先执行校核和自动清理，检查结果仅作提醒，不会阻断 Word 导出。</p>
                 <button className="secondary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={reviewProposal}>执行交付审查</button>
                 {proposalReview && (
-                  <div className={`review-summary ${proposalReview.overall.recommended_for_delivery ? "ready" : "blocked"}`}>
-                    <strong>{proposalReview.overall.recommended_for_delivery ? "建议正式交付" : "暂不建议正式交付"}</strong>
+                  <div className="review-summary ready">
+                    <strong>{proposalReview.overall.recommended_for_delivery ? "校核完成" : "校核完成，请留意建议"}</strong>
                     <span>需求覆盖 {(proposalReview.overall.requirement_coverage_rate * 100).toFixed(0)}%</span>
                     <span>评分点覆盖 {(proposalReview.overall.scoring_coverage_rate * 100).toFixed(0)}%</span>
                     <span>来源追溯 {(proposalReview.overall.traceability_rate * 100).toFixed(0)}%</span>
-                    <span>阻断项 {proposalReview.overall.blocking_risk_count}</span>
+                    <span>重点提醒 {proposalReview.overall.blocking_risk_count}</span>
                     <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=md`}>下载可读 Review</a>
                     <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=json`}>下载 JSON</a>
                   </div>
                 )}
-                <button className="primary large" disabled={!proposalReview?.overall.recommended_for_delivery || !sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>生成整本 Word</button>
+                <button className="primary large" disabled={!proposalReview || !sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>生成整本 Word</button>
                 {exportItem?.status === "succeeded" && workspace && (
                   <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
                 )}

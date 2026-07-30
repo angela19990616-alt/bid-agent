@@ -350,9 +350,7 @@ def run_proposal_review(
     _access: None = Depends(authorize_workspace),
 ):
     try:
-        return ProposalReviewService().prepare_for_export(
-            workspace_id, enforce=False
-        )
+        return ProposalReviewService().prepare_for_export(workspace_id)
     except ValueError as exc:
         raise AppError(422, "REVIEW_FAILED", str(exc)) from exc
 

@@ -306,6 +306,9 @@ class SectionService:
         base_version_id: UUID,
         content: str,
     ) -> dict:
+        content = self.sanitize_generated_content(content)
+        if not content:
+            raise SectionValidationError("章节内容不能为空。")
         compliance_rules = self.rule_engine.load("compliance")
         pipeline = ControlledPipeline()
         workflow_run_id = pipeline.latest(project_id)
@@ -411,11 +414,6 @@ class SectionService:
         section = self.get(project_id, section_id)
         if section["current_version"] is None:
             raise SectionValidationError("章节尚无可确认版本。")
-        if any(
-            item["severity"] == "blocking"
-            for item in section["findings"]
-        ):
-            raise SectionValidationError("章节仍有阻断级校核问题。")
         with connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -489,7 +487,7 @@ class SectionService:
             version = {
                 "id": row["current_version_id"],
                 "version_no": row["version_no"],
-                "content": row["content"],
+                "content": self.sanitize_generated_content(row["content"]),
                 "origin": row["origin"],
                 "created_at": row["version_created_at"],
             }
@@ -527,7 +525,11 @@ class SectionService:
                 findings.append(
                     ReviewFinding(
                         check["key"],
-                        check["severity"],
+                        (
+                            "warning"
+                            if check["severity"] == "blocking"
+                            else check["severity"]
+                        ),
                         check["message"],
                     )
                 )
@@ -616,6 +618,13 @@ class SectionService:
             r"[\[【（(]\s*要求\s*[:：#]?\s*[\]】）)]",
             "",
             value,
+        )
+        value = re.sub(
+            r"[\[【（(]\s*(?:要求|Requirement)\s*[:：#]?\s*"
+            r"(?:[A-Za-z][A-Za-z0-9_-]{1,63}|x{2,64})\s*[\]】）)]",
+            "",
+            value,
+            flags=re.IGNORECASE,
         )
         value = re.sub(r"[ \t]+\n", "\n", value)
         value = re.sub(r"\n{3,}", "\n\n", value)

@@ -29,7 +29,7 @@ def test_default_rules_are_external_versioned_and_valid():
         ]
     )
     assert writing.version == 3
-    assert compliance.version == 3
+    assert compliance.version == 4
     assert writing.content["policies"]["allow_invented_capability"] is False
     assert (
         writing.content["knowledge_category_policy"]["historical_bid"]
