@@ -15,6 +15,11 @@ SCORING_RELATIONS = {
     "high_score_item", "medium_score_item", "requirement_only", "unknown"
 }
 IMPORTANCE_LEVELS = {"low", "medium", "high", "critical"}
+NON_PROPOSAL_TYPES = {
+    "qualification_requirement",
+    "commercial_requirement",
+    "other",
+}
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,10 @@ class RequirementClassifier:
             (
                 rule for rule in matches
                 if any(word in text for word in rule["keywords"])
+                and not any(
+                    word in text
+                    for word in rule.get("exclude_keywords", [])
+                )
             ),
             None,
         )
@@ -188,9 +197,7 @@ class RequirementClassifier:
         chapter = raw.get("proposal_chapter")
         if chapter is not None:
             chapter = str(chapter).strip() or None
-        if requirement_type in {
-            "qualification_requirement", "commercial_requirement"
-        }:
+        if requirement_type in NON_PROPOSAL_TYPES:
             chapter = None
         scoring = str(raw.get("scoring_relation", "unknown"))
         importance = str(raw.get("importance", fallback.importance))
@@ -298,9 +305,7 @@ class ClassificationReviewer:
                     "分类 Reviewer 检测到冲突，已按高优先级规则纠正。"
                 ),
             )
-        if final.requirement_type in {
-            "qualification_requirement", "commercial_requirement"
-        }:
+        if final.requirement_type in NON_PROPOSAL_TYPES:
             if final.proposal_chapter is not None:
                 conflict = True
             final = replace(final, proposal_chapter=None)

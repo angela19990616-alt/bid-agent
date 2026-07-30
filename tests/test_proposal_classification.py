@@ -70,6 +70,60 @@ def test_hard_format_constraint_stays_out_of_proposal_body():
     assert result.proposal_chapter is None
 
 
+def test_statutory_technical_capacity_commitment_is_qualification_only():
+    result = classify(
+        "供应商应具有履行合同所必须的设备和专业技术能力"
+    )
+    assert result.requirement_type == "qualification_requirement"
+    assert result.proposal_chapter is None
+
+
+def test_registry_filing_is_not_system_architecture():
+    result = classify(
+        "供应商须在全国投资项目在线审批监管平台"
+        "工程咨询单位名录中备案"
+    )
+    assert result.requirement_type == "qualification_requirement"
+    assert result.proposal_chapter is None
+
+
+def test_procurement_announcement_query_is_not_system_function():
+    result = classify(
+        "供应商应在递交截止时间前查询本项目更正公告"
+    )
+    assert result.requirement_type == "other"
+    assert result.proposal_chapter is None
+
+
+def test_hypothetical_sample_clause_is_not_performance_requirement():
+    result = classify(
+        "若需提供样品，供应商应对样品性能和质量负责"
+    )
+    assert result.requirement_type == "other"
+    assert result.proposal_chapter is None
+
+
+def test_supplier_profile_form_is_not_proposal_chapter():
+    result = classify(
+        "供应商应在其他响应文件中提供供应商简介，格式自拟"
+    )
+    assert result.requirement_type == "other"
+    assert result.proposal_chapter is None
+
+
+def test_reviewer_never_routes_other_type_into_proposal():
+    rule_result = classify("供应商应查询本项目更正公告")
+    wrong = replace(
+        rule_result,
+        requirement_type="other",
+        proposal_chapter="系统功能设计",
+    )
+    reviewed = ClassificationReviewer().review_one(wrong)
+    assert reviewed.requirement_type == "other"
+    assert reviewed.proposal_chapter is None
+    assert reviewed.conflict is True
+
+
 def test_strong_rule_classification_does_not_call_model():
     class ExplodingClient:
         def chat(self, *_args, **_kwargs):
