@@ -1,4 +1,5 @@
 from uuid import uuid4
+from secrets import compare_digest
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -50,6 +51,29 @@ if settings.enable_legacy_api:
     app.include_router(exports_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(configuration_router, prefix="/api/v1")
+
+
+@app.middleware("http")
+async def require_edge_proxy(request: Request, call_next):
+    if (
+        settings.app_env == "production"
+        and request.url.path.startswith("/api/v1")
+    ):
+        provided = request.headers.get("X-Bid-Agent-Edge-Secret", "")
+        if not settings.edge_proxy_secret or not compare_digest(
+            provided,
+            settings.edge_proxy_secret,
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "code": "AUTHORIZED_ENTRY_REQUIRED",
+                        "message": "请通过已授权的标书工作台访问。",
+                    }
+                },
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")

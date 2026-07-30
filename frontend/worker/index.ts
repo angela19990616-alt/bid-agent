@@ -6,6 +6,7 @@ const BID_AGENT_API_ORIGIN = "http://101.200.154.141";
 
 interface Env {
   ASSETS: Fetcher;
+  BID_AGENT_EDGE_SECRET: string;
   DB: D1Database;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -32,12 +33,19 @@ const worker = {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/")) {
+      if (!env.BID_AGENT_EDGE_SECRET) {
+        return Response.json(
+          { error: { code: "GATEWAY_NOT_CONFIGURED", message: "服务入口尚未配置。" } },
+          { status: 503 },
+        );
+      }
       const upstream = new URL(url.pathname + url.search, BID_AGENT_API_ORIGIN);
       const headers = new Headers(request.headers);
       headers.delete("host");
       headers.delete("cf-connecting-ip");
       headers.delete("cf-ray");
       headers.delete("cf-visitor");
+      headers.set("X-Bid-Agent-Edge-Secret", env.BID_AGENT_EDGE_SECRET);
 
       return fetch(upstream, {
         method: request.method,

@@ -42,6 +42,7 @@ class Settings:
     database_connect_timeout: int = int(
         os.getenv("DATABASE_CONNECT_TIMEOUT", "5")
     )
+    edge_proxy_secret: str = os.getenv("BID_AGENT_EDGE_SECRET", "")
     enable_legacy_api: bool = (
         os.getenv(
             "ENABLE_LEGACY_API",
@@ -72,6 +73,8 @@ class Settings:
         errors: list[str] = []
         if self.app_env == "production" and not self.postgres_password:
             errors.append("POSTGRES_PASSWORD is required in production")
+        if self.app_env == "production" and not self.edge_proxy_secret:
+            errors.append("BID_AGENT_EDGE_SECRET is required in production")
         if self.chunk_overlap >= self.chunk_size:
             errors.append("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
         return errors

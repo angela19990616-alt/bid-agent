@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
 
 from app import main
 from app.api import documents
@@ -49,6 +50,40 @@ def test_health_does_not_require_dependencies():
 
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
+
+
+def test_production_api_rejects_direct_requests(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "settings",
+        SimpleNamespace(
+            app_env="production",
+            edge_proxy_secret="edge-secret",
+        ),
+    )
+
+    response = client.get("/api/v1/workspaces/example")
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "AUTHORIZED_ENTRY_REQUIRED"
+
+
+def test_production_api_accepts_authorized_gateway(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "settings",
+        SimpleNamespace(
+            app_env="production",
+            edge_proxy_secret="edge-secret",
+        ),
+    )
+
+    response = client.get(
+        "/api/v1/workspaces/example",
+        headers={"X-Bid-Agent-Edge-Secret": "edge-secret"},
+    )
+
+    assert response.status_code != 403
 
 
 def test_upload_text_document(monkeypatch):
