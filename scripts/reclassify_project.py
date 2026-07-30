@@ -40,6 +40,125 @@ def model_call_count(run_id: UUID) -> int:
             return int(cursor.fetchone()[0])
 
 
+def reconcile_draft_outline(cursor, project_id: UUID) -> int:
+    changed = 0
+    cursor.execute(
+        """
+        WITH targets AS (
+            SELECT sections.id, min(requirements.proposal_chapter) AS chapter
+            FROM sections
+            JOIN section_requirements
+              ON section_requirements.section_id = sections.id
+            JOIN requirements
+              ON requirements.id = section_requirements.requirement_id
+            WHERE sections.project_id = %s
+              AND sections.current_version_id IS NULL
+              AND requirements.need_generation = TRUE
+              AND requirements.proposal_chapter IS NOT NULL
+            GROUP BY sections.id
+            HAVING count(DISTINCT requirements.proposal_chapter) = 1
+        )
+        UPDATE sections
+        SET title = targets.chapter, updated_at = NOW()
+        FROM targets
+        WHERE sections.id = targets.id
+          AND sections.title <> targets.chapter
+        """,
+        (project_id,),
+    )
+    changed += cursor.rowcount
+    cursor.execute(
+        """
+        DELETE FROM section_requirements
+        USING sections, requirements
+        WHERE section_requirements.section_id = sections.id
+          AND section_requirements.requirement_id = requirements.id
+          AND sections.project_id = %s
+          AND sections.current_version_id IS NULL
+          AND (
+              requirements.need_generation = FALSE
+              OR requirements.proposal_chapter IS NULL
+              OR requirements.proposal_chapter <> sections.title
+          )
+        """,
+        (project_id,),
+    )
+    changed += cursor.rowcount
+    cursor.execute(
+        """
+        WITH missing AS (
+            SELECT DISTINCT requirements.proposal_chapter AS title
+            FROM requirements
+            WHERE requirements.project_id = %s
+              AND requirements.status <> 'rejected'
+              AND requirements.need_generation = TRUE
+              AND requirements.proposal_chapter IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM sections
+                  WHERE sections.project_id = requirements.project_id
+                    AND sections.title = requirements.proposal_chapter
+              )
+        ),
+        numbered AS (
+            SELECT title, row_number() OVER (ORDER BY title) AS offset
+            FROM missing
+        ),
+        base AS (
+            SELECT COALESCE(max(sort_order), 0) AS value
+            FROM sections
+            WHERE project_id = %s
+        )
+        INSERT INTO sections (
+            project_id, title, sort_order, is_recommended
+        )
+        SELECT %s, numbered.title, base.value + numbered.offset, TRUE
+        FROM numbered CROSS JOIN base
+        """,
+        (project_id, project_id, project_id),
+    )
+    changed += cursor.rowcount
+    cursor.execute(
+        """
+        INSERT INTO section_requirements (section_id, requirement_id)
+        SELECT target.id, requirements.id
+        FROM requirements
+        JOIN LATERAL (
+            SELECT sections.id
+            FROM sections
+            WHERE sections.project_id = requirements.project_id
+              AND sections.title = requirements.proposal_chapter
+            ORDER BY
+              (sections.current_version_id IS NOT NULL),
+              sections.created_at
+            LIMIT 1
+        ) AS target ON TRUE
+        WHERE requirements.project_id = %s
+          AND requirements.status <> 'rejected'
+          AND requirements.need_generation = TRUE
+          AND requirements.proposal_chapter IS NOT NULL
+        ON CONFLICT DO NOTHING
+        """,
+        (project_id,),
+    )
+    changed += cursor.rowcount
+    cursor.execute(
+        """
+        DELETE FROM sections
+        WHERE project_id = %s
+          AND current_version_id IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM section_requirements
+              WHERE section_requirements.section_id = sections.id
+          )
+        """,
+        (project_id,),
+    )
+    changed += cursor.rowcount
+    return changed
+
+
 def reclassify_project(project_id: UUID) -> dict[str, int]:
     service = RequirementService()
     stored = service.list(project_id)
@@ -110,6 +229,7 @@ def reclassify_project(project_id: UUID) -> dict[str, int]:
         )
         checked = service.quality_pipeline.run(reviewed)
         changed = 0
+        outline_changes = 0
         with connect() as conn:
             with conn.cursor() as cursor:
                 for stored_item, result in zip(
@@ -166,6 +286,10 @@ def reclassify_project(project_id: UUID) -> dict[str, int]:
                             stored_item["id"],
                         ),
                     )
+                outline_changes = reconcile_draft_outline(
+                    cursor,
+                    project_id,
+                )
         pipeline.succeed(run_id, "proposal_classification")
     except Exception as exc:
         pipeline.fail(run_id, "reclassification_failed", str(exc))
@@ -175,6 +299,7 @@ def reclassify_project(project_id: UUID) -> dict[str, int]:
         "total": len(eligible),
         "changed": changed,
         "model_calls": model_call_count(run_id),
+        "outline_changes": outline_changes,
     }
 
 
