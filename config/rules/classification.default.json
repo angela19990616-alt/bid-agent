@@ -22,7 +22,12 @@
   },
   "classifiers": [
     {"type": "qualification_requirement", "keywords": ["不得存在失信", "失信情况", "资格条件", "资质证书", "法定代表人", "营业执照", "履行合同所必须的设备和专业技术能力", "履行合同所必需的设备和专业技术能力", "工程咨询单位名录中备案"], "chapter": null, "need_generation": false, "priority": 110},
-    {"type": "other", "keywords": ["供应商简介", "供应商基本情况表", "服务要求应答表", "主要人员情况表", "作为其他响应文件的一部分", "更正公告", "若需提供样品", "纸质文档一式", "电子文档1份", "品名、规格型号、数量、详细参数"], "chapter": null, "need_generation": false, "priority": 108},
+    {"type": "project_management", "keywords": ["主要人员情况表", "项目负责人情况表", "项目团队情况表"], "chapter": "项目组织管理", "need_generation": true, "priority": 109},
+    {"type": "implementation_requirement", "keywords": ["服务方案（格式14）", "服务方案(格式14)", "重点难点分析", "服务质量保证"], "chapter": "实施方案与质量保障", "need_generation": true, "priority": 109},
+    {"type": "technical_capability", "keywords": ["编制地方政府专项债券实施方案", "编制本项目的可行性研究报告", "申报地方政府专项债券项目提供指导和服务", "申报地方政府专项债项目提供指导和服务", "协调律师事务所", "协调会计师事务所"], "chapter": "服务范围与工作内容", "need_generation": true, "priority": 109},
+    {"type": "other", "keywords": ["供应商简介", "供应商基本情况表", "服务要求应答表", "更正公告", "若需提供样品", "纸质文档一式", "电子文档1份", "品名、规格型号、数量、详细参数"], "chapter": null, "need_generation": false, "priority": 108},
+    {"type": "implementation_requirement", "keywords": ["180日历天", "实施周期", "服务期限", "工期", "进度安排"], "chapter": "实施计划", "need_generation": true, "priority": 107},
+    {"type": "delivery_requirement", "keywords": ["作为成果之一", "全部成果资料", "成果清单"], "chapter": "成果交付与验收", "need_generation": true, "priority": 106},
     {"type": "other", "keywords": ["目录格式", "章节顺序", "编制格式", "字体", "字号", "行距", "页数", "字数", "装订", "签章", "必须包括", "应包括"], "chapter": null, "need_generation": false, "priority": 98},
     {"type": "commercial_requirement", "keywords": ["报价", "付款", "保证金", "合同价", "发票", "密封"], "chapter": null, "need_generation": false, "priority": 95},
     {"type": "scoring_requirement", "keywords": ["评分", "得分", "加分", "分值"], "chapter": "技术评分点响应", "need_generation": true, "priority": 90},
@@ -39,6 +44,9 @@
   ],
   "chapter_mapping": {
     "项目理解": ["项目背景", "建设目标", "需求理解"],
+    "服务范围与工作内容": ["technical_capability", "咨询服务", "工作范围"],
+    "实施方案与质量保障": ["implementation_requirement", "重点难点", "质量保证"],
+    "成果交付与验收": ["delivery_requirement", "成果文件", "验收"],
     "总体技术架构": ["system_architecture", "performance_requirement"],
     "系统功能设计": ["functional_requirement"],
     "技术路线": ["technical_capability"],

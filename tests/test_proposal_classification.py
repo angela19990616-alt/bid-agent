@@ -111,6 +111,39 @@ def test_supplier_profile_form_is_not_proposal_chapter():
     assert result.proposal_chapter is None
 
 
+def test_consulting_scope_maps_to_service_scope_chapter():
+    result = classify(
+        "供应商须编制本项目的可行性研究报告"
+    )
+    assert result.requirement_type == "technical_capability"
+    assert result.proposal_chapter == "服务范围与工作内容"
+
+
+def test_consulting_deliverable_maps_to_delivery_chapter():
+    result = classify(
+        "供应商应提交《可行性研究报告》作为成果之一"
+    )
+    assert result.requirement_type == "delivery_requirement"
+    assert result.proposal_chapter == "成果交付与验收"
+
+
+def test_service_plan_form_maps_to_quality_implementation_chapter():
+    result = classify(
+        "供应商应提交服务方案（格式14），包括实施计划安排、"
+        "重点难点分析、服务质量保证"
+    )
+    assert result.requirement_type == "implementation_requirement"
+    assert result.proposal_chapter == "实施方案与质量保障"
+
+
+def test_key_personnel_form_maps_to_project_management():
+    result = classify(
+        "供应商应提交主要人员情况表（格式13）"
+    )
+    assert result.requirement_type == "project_management"
+    assert result.proposal_chapter == "项目组织管理"
+
+
 def test_reviewer_never_routes_other_type_into_proposal():
     rule_result = classify("供应商应查询本项目更正公告")
     wrong = replace(
