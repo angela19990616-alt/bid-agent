@@ -1,7 +1,7 @@
 {
   "key": "default-extraction",
   "rule_type": "extraction",
-  "version": 2,
+  "version": 3,
   "name": "招标文件要求提取规则",
   "description": "决定候选原文、Requirement 边界、分类、命名和技术方案相关性。",
   "document_validation": {
@@ -92,6 +92,23 @@
     {"requirement_types": ["technical", "delivery"], "keywords": ["工期", "进度", "计划", "实施"], "target_chapter": "实施计划与进度安排", "relevance": "high"},
     {"requirement_types": ["technical"], "keywords": ["服务范围", "服务内容", "工作内容", "技术要求", "功能", "性能"], "target_chapter": "服务范围与工作内容", "relevance": "high"}
   ],
+  "proposal_routing_defaults": {
+    "scoring": {
+      "target_chapter": "技术评分点响应",
+      "relevance": "high",
+      "need_generation": true
+    },
+    "technical": {
+      "target_chapter": "服务范围与工作内容",
+      "relevance": "high",
+      "need_generation": true
+    },
+    "delivery": {
+      "target_chapter": "服务范围与工作内容",
+      "relevance": "high",
+      "need_generation": true
+    }
+  },
   "compliance_only_types": ["qualification", "compliance", "commercial"],
   "title_rule": "8至30字、动作型、方向准确，让业务人员一眼看懂",
   "normalized_rule": "以供应商应、供应商须、供应商不得、响应文件应或报价应开头，表达一项完整可执行要求",

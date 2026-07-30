@@ -39,11 +39,6 @@ class RequirementReviewer:
         if compliance_only:
             return ReviewedRequirement(item, "low", None, False)
 
-        if item.requirement_type == "scoring":
-            return ReviewedRequirement(
-                item, "high", "技术评分点响应", True
-            )
-
         chapter = None
         relevance = "medium"
         for mapping in config["proposal_mapping"]:
@@ -61,12 +56,29 @@ class RequirementReviewer:
                 break
 
         if item.requirement_type in {"technical", "delivery"}:
+            fallback = config["proposal_routing_defaults"].get(
+                item.requirement_type, {}
+            )
             return ReviewedRequirement(
                 item,
-                relevance if chapter else "high",
-                chapter or "服务范围与工作内容",
-                True,
+                relevance if chapter else fallback.get("relevance", "low"),
+                chapter or fallback.get("target_chapter"),
+                (
+                    True
+                    if chapter
+                    else bool(fallback.get("need_generation", False))
+                ),
             )
         if chapter:
             return ReviewedRequirement(item, relevance, chapter, True)
+        fallback = config["proposal_routing_defaults"].get(
+            item.requirement_type
+        )
+        if fallback:
+            return ReviewedRequirement(
+                item,
+                fallback.get("relevance", "low"),
+                fallback.get("target_chapter"),
+                bool(fallback.get("need_generation", False)),
+            )
         return ReviewedRequirement(item, "low", None, False)

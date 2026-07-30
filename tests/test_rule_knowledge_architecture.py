@@ -1,3 +1,4 @@
+from dataclasses import replace
 from uuid import uuid4
 
 from app.agents.document_validator import DocumentValidator
@@ -18,7 +19,7 @@ def test_default_rules_are_external_versioned_and_valid():
     writing = engine.load_default("writing")
     compliance = engine.load_default("compliance")
 
-    assert extraction.version == 2
+    assert extraction.version == 3
     assert extraction.content["proposal_mapping"]
     assert (
         knowledge.content["matching"]["source_role_weights"][
@@ -161,6 +162,39 @@ def test_requirement_type_controls_scoring_and_compliance_routing():
     assert scored.need_generation is True
     assert qualified.target_chapter is None
     assert qualified.need_generation is False
+
+
+def test_reviewer_routing_defaults_are_project_configurable():
+    extraction = RuleEngine().load_default("extraction")
+    content = {
+        **extraction.content,
+        "proposal_routing_defaults": {
+            **extraction.content["proposal_routing_defaults"],
+            "technical": {
+                "target_chapter": "咨询服务总体方案",
+                "relevance": "medium",
+                "need_generation": True,
+            },
+        },
+    }
+    project_rules = replace(extraction, content=content)
+    requirement = AgentRequirement(
+        source_id=uuid4(),
+        title="提交总体咨询方案",
+        normalized_text="供应商应提交总体咨询方案。",
+        quote="供应商应提交总体咨询方案。",
+        requirement_type="technical",
+        importance="high",
+        confidence=0.9,
+    )
+
+    reviewed = RequirementReviewer().review_one(
+        requirement, project_rules
+    )
+
+    assert reviewed.target_chapter == "咨询服务总体方案"
+    assert reviewed.proposal_relevance == "medium"
+    assert reviewed.need_generation is True
 
 
 def test_writer_prompt_receives_rule_and_pre_matched_knowledge_boundary():

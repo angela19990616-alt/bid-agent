@@ -126,3 +126,22 @@ Requirements；输出是按相关度排序的明确知识集合。`knowledge_mat
 - AI 自动优化规则只能生成新草稿，必须经过专家差异审查和离线样本回归后激活。
 - 向量检索可替换当前确定性初筛，但 Knowledge Matching 的显式前置阶段和快照
   不能被移除。
+
+## 8. 跨项目复用边界
+
+主流程、数据库实体和模块接口属于稳定层，不因招标项目变化。可变内容统一放在
+`config/rules/`，需要企业定制时创建新的规则版本，不复制 Agent 或 Service。
+
+| 可变内容 | 配置位置 | 消费模块 |
+| --- | --- | --- |
+| 有效招标文件判定、候选词、忽略项 | `extraction.document_validation`、`candidate_markers`、`ignore_*` | Document Validator、Requirement Extractor |
+| Requirement 类型、方案相关性和章节路由 | `extraction.types`、`proposal_mapping`、`proposal_routing_defaults` | Requirement Extractor、Requirement Reviewer |
+| 推荐目录与章节风格 | `writing.chapter_order`、`chapter_styles` | Proposal Planner、Chapter Writer |
+| 事实边界、篇幅和写作约束 | `writing.policies`、`knowledge_category_policy` | Chapter Writer |
+| 知识准入、匹配权重和数量 | `knowledge.eligibility`、`matching`、`fact_boundaries` | Knowledge Engine |
+| 校核项、严重级别和可追溯要求 | `compliance.checks`、`required_traceability` | Compliance Checker |
+| 模型、端点、批次和切分参数 | 私密 `.env`；字段模板见 `.env.example` | Model Gateway、Ingestion |
+
+以下内容保持稳定，不进入项目规则：上传与会话安全、任务状态、失败重试、阶段轨迹、
+来源快照、人工确认和 DOCX 交付。这样更换项目时只激活一组经过测试的规则版本，
+无需重新组装工作流。

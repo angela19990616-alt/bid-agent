@@ -234,6 +234,7 @@ class RuleEngine:
             required = (
                 "document_validation", "candidate_markers", "types",
                 "proposal_mapping",
+                "proposal_routing_defaults",
                 "model_instruction", "output_schema"
             )
         elif rule_type == "knowledge":
