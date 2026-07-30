@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir .
 COPY app ./app
 COPY database ./database
 COPY config ./config
+COPY scripts ./scripts
 
 EXPOSE 8000
 
