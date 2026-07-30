@@ -30,6 +30,9 @@ class ModelClient:
         self.client = OpenAI(
             api_key=resolved_key,
             base_url=base_url or settings.openai_base_url,
+            timeout=settings.model_request_timeout_seconds,
+            # Retry and model switching are controlled by ModelRoutingRules.
+            max_retries=0,
         )
 
     def embed(self, texts: list[str]) -> list[list[float]]:

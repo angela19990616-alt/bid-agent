@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+import app.core.model_client as model_client_module
 from app.config.settings import settings
 from app.core.model_client import ModelClient
 from app.services.model_budget_service import (
@@ -59,6 +60,24 @@ class SequencedCompletions:
             ],
             usage=SimpleNamespace(total_tokens=100),
         )
+
+
+def test_client_uses_bounded_timeout_without_hidden_sdk_retries(monkeypatch):
+    captured: dict = {}
+
+    def fake_openai(**kwargs):
+        captured.update(kwargs)
+        return FakeOpenAI("")
+
+    monkeypatch.setattr(model_client_module, "OpenAI", fake_openai)
+
+    ModelClient(
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+    )
+
+    assert captured["timeout"] == settings.model_request_timeout_seconds
+    assert captured["max_retries"] == 0
 
 
 def test_chat_uses_openai_compatible_chat_completions_api():

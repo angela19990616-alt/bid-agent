@@ -44,7 +44,9 @@ docker compose up -d
 
 healthy=0
 for _ in $(seq 1 30); do
-  if curl --fail --silent --show-error "$HEALTH_URL" >/dev/null; then
+  if curl --fail --silent --show-error "$HEALTH_URL" >/dev/null \
+    && curl --fail --silent --show-error \
+      "http://127.0.0.1/api/v1/access/status" >/dev/null; then
     healthy=1
     break
   fi

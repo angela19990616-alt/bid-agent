@@ -43,6 +43,9 @@ class Settings:
     max_model_tokens_per_workflow: int = int(
         os.getenv("MAX_MODEL_TOKENS_PER_WORKFLOW", "300000")
     )
+    model_request_timeout_seconds: float = float(
+        os.getenv("MODEL_REQUEST_TIMEOUT_SECONDS", "180")
+    )
     embedding_model: str = os.getenv(
         "EMBEDDING_MODEL",
         "text-embedding-v4",
