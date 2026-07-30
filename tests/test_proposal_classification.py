@@ -41,6 +41,39 @@ def test_function_controls_map_to_system_function_design():
     assert result.proposal_chapter == "系统功能设计"
 
 
+def test_consulting_context_does_not_treat_function_positioning_as_software():
+    rules = RuleEngine().load_default("classification")
+    item = requirement(
+        "研究轨道交通线网功能定位与规划实施路径"
+    )
+    initial = RequirementClassifier.classify_by_rules(
+        item,
+        rules,
+        project_context="轨道交通十五五规划咨询服务项目",
+    )
+    result = ClassificationReviewer().review_one(
+        initial,
+        rules,
+        project_context="轨道交通十五五规划咨询服务项目",
+    )
+
+    assert result.requirement_type == "technical_capability"
+    assert result.proposal_chapter == "服务范围与工作内容"
+
+
+def test_consulting_context_keeps_explicit_software_function_requirement():
+    rules = RuleEngine().load_default("classification")
+    item = requirement("信息系统须支持用户管理和权限控制")
+    result = RequirementClassifier.classify_by_rules(
+        item,
+        rules,
+        project_context="规划咨询服务项目",
+    )
+
+    assert result.requirement_type == "functional_requirement"
+    assert result.proposal_chapter == "系统功能设计"
+
+
 def test_implementation_period_maps_to_implementation_plan():
     result = classify("项目实施周期180日历天")
     assert result.requirement_type == "implementation_requirement"

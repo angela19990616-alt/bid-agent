@@ -143,6 +143,9 @@ class RequirementService:
             classification_rules
             or self.rule_engine.load("classification")
         )
+        project_context = self._load_project_context(
+            project_id, document_ids
+        )
         if workflow_run_id is not None:
             ControlledPipeline().record(
                 workflow_run_id,
@@ -164,11 +167,14 @@ class RequirementService:
                 list(normalized.items),
                 active_classification_rules,
                 workflow_run_id=workflow_run_id,
+                project_context=project_context,
             )
         except ModelBudgetExceeded as exc:
             raise RequirementExtractionError(str(exc)) from exc
         reviewed = self.classification_reviewer.review(
-            classified, active_classification_rules
+            classified,
+            active_classification_rules,
+            project_context=project_context,
         )
         quality_checked = self.quality_pipeline.run(reviewed)
         candidates = self._exclude_known_source_mismatches(
@@ -249,6 +255,29 @@ class RequirementService:
                     (project_id,),
                 )
         return created, skipped
+
+    @staticmethod
+    def _load_project_context(
+        project_id: UUID,
+        document_ids: list[UUID],
+    ) -> str:
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT projects.name,
+                           COALESCE(string_agg(documents.filename, ' '), '')
+                    FROM projects
+                    LEFT JOIN documents
+                      ON documents.project_id = projects.id
+                     AND documents.public_id = ANY(%s)
+                    WHERE projects.id = %s
+                    GROUP BY projects.id
+                    """,
+                    (document_ids, project_id),
+                )
+                row = cursor.fetchone()
+        return " ".join(str(value or "") for value in row) if row else ""
 
     @staticmethod
     def _record_normalization_events(

@@ -2,7 +2,7 @@
   "rule_type": "classification",
   "key": "proposal-oriented-classification",
   "name": "面向技术方案生成的 Requirement 分类规则",
-  "version": 2,
+  "version": 3,
   "model_instruction": "你是投标技术方案分类器。不要根据“平台、查询、性能、技术能力”等孤立词语判断，而要判断整条要求会影响技术方案的哪一部分。先反证：如果内容只是资格承诺、供应商基本材料、响应文件格式、采购程序、公告查询、签章密封、假设性样品条款或单独表格提交要求，则不得进入技术方案正文。对每条要求回答：投标人需要响应什么、应写入哪一章、是否影响评分、是否需要企业知识支持。只能使用规则中定义的枚举；资格、商务和合规要求不得进入技术方案正文。只返回完整 JSON，不输出 Markdown。",
   "requirement_types": {
     "technical_capability": {"label": "技术能力", "default_chapter": "技术路线"},
@@ -42,6 +42,26 @@
     {"type": "delivery_requirement", "keywords": ["交付", "验收", "成果文件", "提交成果"], "chapter": "实施计划", "need_generation": true, "priority": 74},
     {"type": "technical_capability", "keywords": ["技术能力", "兼容", "接口", "集成", "技术要求"], "chapter": "技术路线", "need_generation": true, "priority": 70}
   ],
+  "context_profiles": {
+    "consulting_service": {
+      "project_keywords": ["咨询", "规划", "可研", "研究报告", "评估", "策划"],
+      "software_explicit_keywords": ["软件开发", "信息系统", "系统建设", "平台建设", "用户管理", "权限控制", "接口开发", "数据库", "部署架构", "日志审计"],
+      "overrides": {
+        "functional_requirement": {
+          "type": "technical_capability",
+          "chapter": "服务范围与工作内容"
+        },
+        "system_architecture": {
+          "type": "technical_capability",
+          "chapter": "技术路线"
+        },
+        "performance_requirement": {
+          "type": "implementation_requirement",
+          "chapter": "实施方案与质量保障"
+        }
+      }
+    }
+  },
   "chapter_mapping": {
     "项目理解": ["项目背景", "建设目标", "需求理解"],
     "服务范围与工作内容": ["technical_capability", "咨询服务", "工作范围"],

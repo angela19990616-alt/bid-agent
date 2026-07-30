@@ -6,6 +6,7 @@ import pytest
 import app.core.model_client as model_client_module
 from app.config.settings import settings
 from app.core.model_client import ModelClient
+from app.core.model_routing import ModelRoutingRules
 from app.services.model_budget_service import (
     ModelBudgetExceeded,
     ModelBudgetService,
@@ -62,6 +63,13 @@ class SequencedCompletions:
         )
 
 
+@pytest.fixture(autouse=True)
+def reset_model_health():
+    ModelRoutingRules.reset_health()
+    yield
+    ModelRoutingRules.reset_health()
+
+
 def test_client_uses_bounded_timeout_without_hidden_sdk_retries(monkeypatch):
     captured: dict = {}
 
@@ -90,9 +98,12 @@ def test_chat_uses_openai_compatible_chat_completions_api():
     )
 
     assert result == "生成结果"
+    expected_model = ModelRoutingRules.load().models_for_task(
+        "default", settings.llm_model
+    )[0]
     assert client.chat.completions.calls == [
         {
-            "model": settings.llm_model,
+            "model": expected_model,
             "messages": [{"role": "user", "content": "生成本章"}],
             "temperature": 0.1,
             "max_tokens": 1234,
@@ -110,11 +121,11 @@ def test_chat_rejects_empty_model_output():
 @pytest.mark.parametrize(
     ("task", "expected"),
     [
-        ("extraction", settings.extraction_model),
-        ("classification", settings.classification_model),
-        ("writing", settings.writing_model),
-        ("review", settings.review_model),
-        ("unknown", settings.llm_model),
+        ("extraction", "qwen-plus-latest"),
+        ("classification", "qwen-plus-latest"),
+        ("writing", "qwen-max"),
+        ("review", "glm-5"),
+        ("unknown", "qwen-max"),
     ],
 )
 def test_chat_routes_model_by_bounded_task(task, expected):
@@ -154,7 +165,7 @@ def test_budget_is_reserved_and_finished_around_model_call(monkeypatch):
 
     assert result == "完成"
     assert events[0][0:2] == ("reserve", run_id)
-    assert events[0][2]["model"] == settings.writing_model
+    assert events[0][2]["model"] == "qwen-max"
     assert events[1] == (
         "finish",
         7,
@@ -251,11 +262,8 @@ def test_retryable_provider_error_switches_to_rule_fallback():
 
     assert result == "备用模型完成"
     assert len(completions.calls) == 2
-    assert completions.calls[0]["model"] == settings.writing_model
-    assert (
-        completions.calls[1]["model"]
-        == "qwen-plus-2025-07-28"
-    )
+    assert completions.calls[0]["model"] == "qwen-max"
+    assert completions.calls[1]["model"] == "glm-5"
 
 
 def test_forbidden_model_switches_to_rule_fallback():
@@ -273,11 +281,76 @@ def test_forbidden_model_switches_to_rule_fallback():
 
     assert result == "备用模型完成"
     assert len(completions.calls) == 2
-    assert completions.calls[0]["model"] == settings.writing_model
-    assert (
-        completions.calls[1]["model"]
-        == "qwen-plus-2025-07-28"
+    assert completions.calls[0]["model"] == "qwen-max"
+    assert completions.calls[1]["model"] == "glm-5"
+
+
+def test_zero_usage_failures_can_scan_ten_model_pool():
+    completions = SequencedCompletions(
+        [
+            *[
+                ProviderError("model access forbidden", 403)
+                for _ in range(9)
+            ],
+            "第十个模型完成",
+        ]
     )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions)
+    )
+
+    result = ModelClient(client=client).chat(
+        [{"role": "user", "content": "生成章节"}],
+        task="writing",
+    )
+
+    assert result == "第十个模型完成"
+    assert len(completions.calls) == 10
+    assert len(
+        {item["model"] for item in completions.calls}
+    ) == 10
+
+
+def test_billable_failures_stop_after_rule_budget():
+    completions = SequencedCompletions(
+        [
+            ProviderError("temporary upstream error", 500),
+            ProviderError("temporary upstream error", 500),
+            "不应调用",
+        ]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions)
+    )
+
+    with pytest.raises(ProviderError, match="upstream"):
+        ModelClient(client=client).chat(
+            [{"role": "user", "content": "生成章节"}],
+            task="writing",
+        )
+
+    assert len(completions.calls) == 2
+
+
+def test_permission_failure_cools_model_for_next_request():
+    first = SequencedCompletions(
+        [ProviderError("model access forbidden", 403), "备用完成"]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=first)
+    )
+    ModelClient(client=client).chat(
+        [{"role": "user", "content": "第一次"}],
+        task="writing",
+    )
+
+    second = FakeOpenAI("第二次完成")
+    ModelClient(client=second).chat(
+        [{"role": "user", "content": "第二次"}],
+        task="writing",
+    )
+
+    assert second.chat.completions.calls[0]["model"] == "glm-5"
 
 
 def test_non_retryable_provider_error_does_not_switch_model():

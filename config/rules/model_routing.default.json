@@ -1,19 +1,41 @@
 {
   "key": "default-model-routing",
   "rule_type": "model_routing",
-  "version": 1,
+  "version": 2,
   "name": "模型受控切换规则",
-  "description": "主模型额度不足、限流或暂时不可用时，在同一供应商兼容接口内有限切换。",
-  "max_attempts": 3,
+  "description": "维护可编辑的文本模型池；按任务、健康状态、输入限制和费用边界进行有限切换。",
+  "max_attempts": 10,
+  "max_billable_failures": 2,
+  "cooldown_seconds": 1800,
+  "model_pool": [
+    {"id": "qwen-max", "tasks": ["writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "glm-5", "tasks": ["writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "deepseek-v3", "tasks": ["writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "qwen3-max", "tasks": ["writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "qwen-plus-latest", "tasks": ["extraction", "writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "qwen3.7-flash", "tasks": ["extraction", "writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "qwen3.5-plus", "tasks": ["extraction", "writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "deepseek-v3.2", "tasks": ["writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "qwen3-235b-a22b-instruct-2507", "tasks": ["extraction", "writing", "classification", "review"], "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "deepseek-r1-distill-qwen-32b", "tasks": ["writing", "classification", "review"], "max_input_chars": 20000, "max_output_tokens": 4000}
+  ],
   "task_fallbacks": {
-    "extraction": ["qwen3.7-plus", "qwen-max"],
-    "classification": ["qwen-plus-2025-07-28", "glm-5"],
-    "writing": ["qwen-plus-2025-07-28", "qwen-max", "glm-5"],
-    "review": ["qwen-plus-2025-07-28", "qwen-max"],
-    "default": ["qwen-plus-2025-07-28", "qwen-max"]
+    "extraction": ["qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus", "qwen3-235b-a22b-instruct-2507"],
+    "classification": ["qwen-plus-latest", "qwen3.7-flash", "glm-5", "qwen-max", "deepseek-v3", "qwen3-max", "qwen3.5-plus", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
+    "writing": ["qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
+    "review": ["glm-5", "qwen-max", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
+    "default": ["qwen-max", "glm-5", "deepseek-v3", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b", "qwen3-max"]
   },
   "retryable_status_codes": [403, 404, 408, 409, 429, 500, 502, 503, 504],
   "zero_usage_status_codes": [403, 404, 429],
+  "zero_usage_error_markers": [
+    "range of input length",
+    "invalidparameter",
+    "model access forbidden",
+    "model not found",
+    "未开通",
+    "无权限"
+  ],
   "retryable_error_markers": [
     "quota",
     "insufficient",
@@ -29,6 +51,8 @@
     "permission denied",
     "no permission",
     "not authorized for this model",
+    "range of input length",
+    "invalidparameter",
     "temporarily unavailable",
     "service unavailable",
     "timeout",

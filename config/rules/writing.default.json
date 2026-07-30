@@ -1,7 +1,7 @@
 {
   "key": "default-writing",
   "rule_type": "writing",
-  "version": 5,
+  "version": 6,
   "name": "技术方案写作规则",
   "description": "控制目录、章节写作、企业知识引用和事实边界。",
   "chapter_order": [
@@ -32,6 +32,15 @@
     "forbid_markdown_decorations": true,
     "forbid_emoji": true,
     "forbid_internal_identifiers": true
+  },
+  "prompt_budget": {
+    "max_input_chars": 24000,
+    "requirements_chars": 9000,
+    "knowledge_chars": 5500,
+    "format_constraints_chars": 2200,
+    "proposal_memory_chars": 2200,
+    "generation_instruction_chars": 1000,
+    "minimum_chars_per_item": 120
   },
   "format_constraint_policy": {
     "apply_before_chapter_writing": true,

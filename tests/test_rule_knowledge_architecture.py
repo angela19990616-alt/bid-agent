@@ -32,7 +32,7 @@ def test_default_rules_are_external_versioned_and_valid():
         ]
     )
     assert proposal_memory.content["usage"]["prohibited"]
-    assert writing.version == 5
+    assert writing.version == 6
     assert compliance.version == 4
     assert writing.content["policies"]["allow_invented_capability"] is False
     assert (
@@ -46,11 +46,20 @@ def test_default_rules_are_external_versioned_and_valid():
 def test_model_routing_rules_are_external_and_bounded():
     routing = ModelRoutingRules.load()
 
-    assert routing.max_attempts == 3
+    assert routing.max_attempts == 10
+    assert len(routing.model_pool) >= 10
+    assert routing.max_billable_failures == 2
     assert routing.models_for_task("writing", "primary") == [
-        "primary",
-        "qwen-plus-2025-07-28",
         "qwen-max",
+        "glm-5",
+        "deepseek-v3",
+        "qwen3-max",
+        "qwen-plus-latest",
+        "qwen3.7-flash",
+        "qwen3.5-plus",
+        "deepseek-v3.2",
+        "qwen3-235b-a22b-instruct-2507",
+        "deepseek-r1-distill-qwen-32b",
     ]
     assert routing.is_retryable(RuntimeError("额度不足"))
     assert not routing.is_retryable(RuntimeError("业务字段缺失"))

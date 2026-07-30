@@ -46,10 +46,14 @@ class RequirementClassifier:
         items: list[AgentRequirement],
         rules: RuleDocument | None = None,
         workflow_run_id: UUID | None = None,
+        project_context: str = "",
     ) -> list[ClassifiedRequirement]:
         active = rules or RuleEngine().load("classification")
         fallback = [
-            self.classify_by_rules(item, active) for item in items
+            self.classify_by_rules(
+                item, active, project_context=project_context
+            )
+            for item in items
         ]
         ambiguous_indexes = [
             index for index, item in enumerate(fallback)
@@ -80,18 +84,29 @@ class RequirementClassifier:
                     {
                         "role": "user",
                         "content": json.dumps(
-                            [
-                                {
-                                    "source_ref": f"R{index}",
-                                    "title": item.title,
-                                    "requirement": item.normalized_text,
-                                    "evidence": item.quote,
-                                    "extraction_type": item.requirement_type,
-                                }
-                                for index, item in enumerate(
-                                    ambiguous_items, 1
-                                )
-                            ],
+                            {
+                                "project_context": project_context,
+                                "instruction": (
+                                    "结合采购项目类型判断方案用途；"
+                                    "不得因孤立词语误判。"
+                                ),
+                                "requirements": [
+                                    {
+                                        "source_ref": f"R{index}",
+                                        "title": item.title,
+                                        "requirement": (
+                                            item.normalized_text
+                                        ),
+                                        "evidence": item.quote,
+                                        "extraction_type": (
+                                            item.requirement_type
+                                        ),
+                                    }
+                                    for index, item in enumerate(
+                                        ambiguous_items, 1
+                                    )
+                                ],
+                            },
                             ensure_ascii=False,
                         ),
                     },
@@ -128,6 +143,8 @@ class RequirementClassifier:
         cls,
         item: AgentRequirement,
         rules: RuleDocument | None = None,
+        *,
+        project_context: str = "",
     ) -> ClassifiedRequirement:
         active = rules or RuleEngine().load_default("classification")
         config = active.content
@@ -155,11 +172,25 @@ class RequirementClassifier:
                 "need_generation": False,
             }
         requirement_type = selected["type"]
+        chapter_override = None
+        context_override = cls._context_override(
+            requirement_type,
+            text,
+            project_context,
+            config,
+        )
+        if context_override:
+            requirement_type = context_override["type"]
+            chapter_override = context_override.get("chapter")
         definition = config["requirement_types"][requirement_type]
         chapter = (
-            selected.get("chapter")
-            if "chapter" in selected
-            else definition.get("default_chapter")
+            chapter_override
+            if context_override
+            else (
+                selected.get("chapter")
+                if "chapter" in selected
+                else definition.get("default_chapter")
+            )
         )
         need_generation = bool(
             selected.get("need_generation", chapter is not None)
@@ -180,8 +211,41 @@ class RequirementClassifier:
             importance=importance,
             confidence=confidence,
             knowledge_support_required=knowledge_required,
-            rationale="依据版本化分类规则完成方案章节映射。",
+            rationale=(
+                "依据项目上下文规则纠正孤立关键词分类。"
+                if context_override
+                else "依据版本化分类规则完成方案章节映射。"
+            ),
         )
+
+    @staticmethod
+    def _context_override(
+        requirement_type: str,
+        item_text: str,
+        project_context: str,
+        config: dict,
+    ) -> dict | None:
+        if not project_context:
+            return None
+        for profile in config.get("context_profiles", {}).values():
+            if not any(
+                keyword in project_context
+                for keyword in profile.get("project_keywords", [])
+            ):
+                continue
+            if any(
+                keyword in item_text
+                for keyword in profile.get(
+                    "software_explicit_keywords", []
+                )
+            ):
+                return None
+            override = profile.get("overrides", {}).get(
+                requirement_type
+            )
+            if override:
+                return dict(override)
+        return None
 
     @classmethod
     def _model_result(
@@ -272,18 +336,30 @@ class ClassificationReviewer:
         self,
         items: list[ClassifiedRequirement],
         rules: RuleDocument | None = None,
+        project_context: str = "",
     ) -> list[ClassifiedRequirement]:
         active = rules or RuleEngine().load("classification")
-        return [self.review_one(item, active) for item in items]
+        return [
+            self.review_one(
+                item,
+                active,
+                project_context=project_context,
+            )
+            for item in items
+        ]
 
     @staticmethod
     def review_one(
         item: ClassifiedRequirement,
         rules: RuleDocument | None = None,
+        *,
+        project_context: str = "",
     ) -> ClassifiedRequirement:
         active = rules or RuleEngine().load_default("classification")
         rule_result = RequirementClassifier.classify_by_rules(
-            item.item, active
+            item.item,
+            active,
+            project_context=project_context,
         )
         conflict = False
         final = item

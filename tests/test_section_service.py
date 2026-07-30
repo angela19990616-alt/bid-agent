@@ -84,6 +84,35 @@ def test_prompt_includes_tender_format_constraints():
     assert "实施计划章节应包括项目进度表" in messages[1]["content"]
 
 
+def test_large_chapter_prompt_is_bounded_without_dropping_all_items():
+    requirements = [
+        {
+            "id": f"requirement-{index}",
+            "normalized_text": f"第{index}项响应内容" + "要求" * 500,
+            "quote": f"第{index}项原文证据" + "证据" * 500,
+        }
+        for index in range(1, 31)
+    ]
+
+    messages = SectionService._messages(
+        "实施方案与质量保障",
+        requirements,
+        generation_instruction="突出重点工作。" * 500,
+        format_constraints=[
+            {
+                "normalized_text": "必须包含进度安排" * 100,
+                "quote": "采购文件要求包含进度安排" * 100,
+            }
+            for _ in range(20)
+        ],
+    )
+
+    assert sum(len(item["content"]) for item in messages) <= 24000
+    assert "响应事项 1" in messages[1]["content"]
+    assert "响应事项 30" in messages[1]["content"]
+    assert "突出重点工作" in messages[1]["content"]
+
+
 def test_generated_content_removes_internal_requirement_labels():
     content = SectionService.sanitize_generated_content(
         "一、实施安排（要求 123e4567-e89b-12d3-a456-426614174000）\n"

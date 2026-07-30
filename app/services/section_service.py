@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from psycopg.rows import dict_row
 
 from app.core.model_client import ModelClient
+from app.core.model_routing import ModelRoutingRules
 from app.database.db import connect
 from app.knowledge.engine import (
     EnterpriseKnowledgeEngine,
@@ -162,9 +163,10 @@ class SectionService:
             project_id,
             initial_stage="load_enterprise_knowledge",
         )
+        routing_rules = ModelRoutingRules.load()
         ModelBudgetService.configure_limits(
             workflow_run_id,
-            call_limit=3,
+            call_limit=routing_rules.max_attempts,
             token_limit=180000,
         )
         access_context = self.knowledge_engine.access_context(project_id)
@@ -619,32 +621,66 @@ class SectionService:
         active = rules or RuleEngine().load_default("writing")
         matched_items = matches or []
         memory_items = memory_matches or []
-        evidence = "\n\n".join(
-            f"[要求 {item['id']}]\n"
-            f"规范描述：{item['normalized_text']}\n"
-            f"原文证据：{item['quote']}"
-            for item in requirements
+        budget = active.content.get("prompt_budget", {})
+        minimum = int(budget.get("minimum_chars_per_item", 120))
+        evidence = SectionService._bounded_blocks(
+            [
+                f"[响应事项 {index}]\n"
+                f"规范描述：{item['normalized_text']}\n"
+                f"原文证据：{item['quote']}"
+                for index, item in enumerate(requirements, 1)
+            ],
+            int(budget.get("requirements_chars", 9000)),
+            minimum,
         )
-        knowledge = "\n\n".join(
-            f"[企业知识 {item.knowledge_id}｜{item.category}]\n"
-            f"标题：{item.title}\n元数据："
-            f"{json.dumps(item.metadata, ensure_ascii=False)}\n"
-            f"内容：{item.content}"
-            for item in matched_items
-        ) or "无匹配企业知识；涉及企业事实时必须使用规则中的待补充占位符。"
-        memory = "\n\n".join(
-            "章节模式："
-            + item.chapter_title
-            + "\n可参考结构："
-            + json.dumps(item.pattern, ensure_ascii=False)
-            + "\n限制：只能参考结构和分析维度，不得复制或推断任何历史事实。"
-            for item in memory_items
-        ) or "无匹配方案记忆；按当前响应事项和写作规则组织本章。"
-        instruction = (generation_instruction or "").strip()
-        format_evidence = "\n".join(
-            f"- {item['normalized_text']}（原文：{item['quote']}）"
-            for item in (format_constraints or [])
-        ) or "本章未识别到额外硬性格式要求。"
+        knowledge = (
+            SectionService._bounded_blocks(
+                [
+                    f"[企业知识 {index}｜{item.category}]\n"
+                    f"标题：{item.title}\n"
+                    "可核验企业事实："
+                    f"{bool(item.metadata.get('verified_enterprise_fact'))}\n"
+                    f"来源角色：{item.metadata.get('source_role', 'unspecified')}\n"
+                    f"内容：{item.content}"
+                    for index, item in enumerate(matched_items, 1)
+                ],
+                int(budget.get("knowledge_chars", 5500)),
+                minimum,
+            )
+            or "无匹配企业知识；涉及企业事实时不得补写。"
+        )
+        memory = (
+            SectionService._bounded_blocks(
+                [
+                    "章节模式："
+                    + item.chapter_title
+                    + "\n可参考结构："
+                    + json.dumps(item.pattern, ensure_ascii=False)
+                    + "\n限制：只能参考结构和分析维度，不得复制或推断任何历史事实。"
+                    for item in memory_items
+                ],
+                int(budget.get("proposal_memory_chars", 2200)),
+                minimum,
+            )
+            or "无匹配方案记忆；按当前响应事项和写作规则组织本章。"
+        )
+        instruction = SectionService._truncate_text(
+            (generation_instruction or "").strip(),
+            int(budget.get("generation_instruction_chars", 1000)),
+        )
+        format_evidence = (
+            SectionService._bounded_blocks(
+                [
+                    f"- {item['normalized_text']}（原文：{item['quote']}）"
+                    for item in (format_constraints or [])
+                ],
+                int(
+                    budget.get("format_constraints_chars", 2200)
+                ),
+                minimum,
+            )
+            or "本章未识别到额外硬性格式要求。"
+        )
         refinement = (
             "\n\n本章用户微调要求：\n"
             f"{instruction}\n"
@@ -653,29 +689,87 @@ class SectionService:
             if instruction
             else ""
         )
+        compact_rules = {
+            "policies": active.content.get("policies", {}),
+            "format_constraint_policy": active.content.get(
+                "format_constraint_policy", {}
+            ),
+            "chapter_style": active.content.get(
+                "chapter_styles", {}
+            ).get(title),
+        }
+        system_content = (
+            active.content["model_instruction"]
+            + "\n不得虚构任何采购事实或企业事实。"
+            + "\n本次已加载的版本化写作规则（本章适用部分）：\n"
+            + json.dumps(compact_rules, ensure_ascii=False)
+        )
+        user_content = (
+            active.content["user_template"].format(
+                section_title=title
+            )
+            + refinement
+            + f"\n\n响应事项证据：\n{evidence}"
+            + f"\n\n招标文件硬性格式与必写内容：\n{format_evidence}"
+            + f"\n\n匹配企业知识：\n{knowledge}"
+            + f"\n\n方案记忆结构：\n{memory}"
+        )
+        max_input_chars = int(
+            budget.get("max_input_chars", 24000)
+        )
+        user_limit = max(1000, max_input_chars - len(system_content))
+        user_content = SectionService._truncate_text(
+            user_content, user_limit
+        )
         return [
             {
                 "role": "system",
-                "content": (
-                    active.content["model_instruction"]
-                    + "\n本次已加载的版本化写作规则：\n"
-                    + json.dumps(active.content, ensure_ascii=False)
-                ),
+                "content": system_content,
             },
             {
                 "role": "user",
-                "content": (
-                    active.content["user_template"].format(
-                        section_title=title
-                    )
-                    + f"\n\nRequirements:\n{evidence}"
-                    + f"\n\n招标文件硬性格式与必写内容：\n{format_evidence}"
-                    + f"\n\nMatched Knowledge:\n{knowledge}"
-                    + f"\n\nProposal Memory Patterns:\n{memory}"
-                    + refinement
-                ),
+                "content": user_content,
             },
         ]
+
+    @staticmethod
+    def _truncate_text(value: str, limit: int) -> str:
+        if limit <= 0:
+            return ""
+        clean = str(value).strip()
+        if len(clean) <= limit:
+            return clean
+        if limit <= 12:
+            return clean[:limit]
+        return clean[: limit - 10].rstrip() + "…（已压缩）"
+
+    @staticmethod
+    def _bounded_blocks(
+        blocks: list[str],
+        limit: int,
+        minimum_chars: int = 120,
+    ) -> str:
+        if not blocks or limit <= 0:
+            return ""
+        remaining = limit
+        output: list[str] = []
+        for index, block in enumerate(blocks):
+            left = len(blocks) - index
+            fair_share = max(
+                minimum_chars,
+                remaining // max(1, left),
+            )
+            piece = SectionService._truncate_text(
+                block,
+                min(fair_share, remaining),
+            )
+            if not piece:
+                break
+            output.append(piece)
+            remaining -= len(piece)
+            if remaining <= 0:
+                break
+        return "\n\n".join(output)
 
     @staticmethod
     def sanitize_generated_content(content: str) -> str:

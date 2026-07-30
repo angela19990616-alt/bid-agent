@@ -65,7 +65,12 @@ class ModelClient:
             task,
             settings.model_for_task(task),
         )
+        if not models:
+            raise RuntimeError(
+                "当前任务的模型均处于临时冷却状态，请稍后重试。"
+            )
         last_error: Exception | None = None
+        billable_failures = 0
         for index, model in enumerate(models):
             reservation = None
             if workflow_run_id is not None:
@@ -82,7 +87,9 @@ class ModelClient:
                     model=model,
                     messages=messages,
                     temperature=temperature,
-                    max_tokens=max_tokens,
+                    max_tokens=routing.output_limit(
+                        model, max_tokens
+                    ),
                 )
             except Exception as exc:
                 last_error = exc
@@ -94,9 +101,17 @@ class ModelClient:
                         ),
                         error_type=type(exc).__name__,
                     )
+                zero_usage = routing.known_zero_usage(exc)
+                routing.mark_failure(model, exc)
+                if not zero_usage:
+                    billable_failures += 1
                 if (
                     index + 1 >= len(models)
                     or not routing.is_retryable(exc)
+                    or (
+                        billable_failures
+                        >= routing.max_billable_failures
+                    )
                 ):
                     raise
                 continue
@@ -109,6 +124,7 @@ class ModelClient:
             content = response.choices[0].message.content
             if not content:
                 raise RuntimeError("模型返回了空内容")
+            routing.mark_success(task, model)
             return content
         if last_error is not None:
             raise last_error
