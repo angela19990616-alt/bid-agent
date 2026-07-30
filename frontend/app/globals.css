@@ -186,13 +186,18 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .saved-sections span { color: var(--muted); font-size: 8px; }
 .editor-panel { min-height: 650px; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: var(--shadow); }
 .editor-bar { display: flex; min-height: 67px; align-items: center; justify-content: space-between; gap: 20px; padding: 13px 17px; border-bottom: 1px solid var(--line); background: #fafbf9; }
+.generation-instruction { position: relative; padding: 14px 17px; border-bottom: 1px solid var(--line); background: #f7faf8; }
+.generation-instruction label { display: block; margin-bottom: 7px; color: var(--green-900); font-size: 11px; font-weight: 700; }
+.generation-instruction textarea { width: 100%; min-height: 64px; padding: 10px 58px 10px 11px; border: 1px solid #cad7d0; border-radius: 8px; resize: vertical; background: white; color: var(--ink); font-family: var(--sans); font-size: 12px; line-height: 1.6; outline: none; }
+.generation-instruction textarea:focus { border-color: var(--green-700); box-shadow: 0 0 0 2px rgba(48, 104, 78, .08); }
+.generation-instruction span { position: absolute; right: 27px; bottom: 24px; color: var(--muted); font-size: 9px; }
 .editor-bar > div { display: flex; align-items: center; gap: 9px; }
 .editor-bar span { color: var(--muted); font-size: 9px; }
 .findings { padding: 11px 17px 0; }
 .findings p { margin: 0 0 7px; padding: 8px 10px; border-radius: 7px; color: #715a27; background: #fbf2df; font-size: 10px; }
 .findings p.blocking { color: #873f3a; background: #f8e8e6; }
 .findings b { margin-right: 7px; }
-.editor-panel textarea { width: 100%; min-height: 575px; padding: 34px 9%; border: 0; resize: vertical; color: #26322d; background: white; font-family: var(--serif); font-size: 15px; line-height: 2; outline: none; }
+.editor-panel > textarea { width: 100%; min-height: 575px; padding: 34px 9%; border: 0; resize: vertical; color: #26322d; background: white; font-family: var(--serif); font-size: 15px; line-height: 2; outline: none; }
 
 .export-layout { display: grid; max-width: 980px; grid-template-columns: 1.25fr .75fr; gap: 18px; }
 .delivery-card { display: grid; min-height: 220px; align-items: center; padding: 28px; border: 1px solid var(--line); border-radius: 15px; grid-template-columns: 68px 1fr; gap: 20px; background: white; box-shadow: var(--shadow); }

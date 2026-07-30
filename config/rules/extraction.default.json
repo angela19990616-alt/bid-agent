@@ -1,7 +1,7 @@
 {
   "key": "default-extraction",
   "rule_type": "extraction",
-  "version": 1,
+  "version": 2,
   "name": "招标文件要求提取规则",
   "description": "决定候选原文、Requirement 边界、分类、命名和技术方案相关性。",
   "document_validation": {
@@ -84,13 +84,13 @@
     }
   ],
   "proposal_mapping": [
-    {"keywords": ["评分", "得分", "加分"], "target_chapter": "技术评分点响应", "relevance": "high"},
-    {"keywords": ["人员", "团队", "项目经理", "专家"], "target_chapter": "项目组织与人员配置", "relevance": "high"},
-    {"keywords": ["培训"], "target_chapter": "培训方案", "relevance": "high"},
-    {"keywords": ["运维", "维护", "售后", "持续服务"], "target_chapter": "运维与持续服务", "relevance": "high"},
-    {"keywords": ["验收", "质量", "成果"], "target_chapter": "质量保障与验收方案", "relevance": "high"},
-    {"keywords": ["工期", "进度", "计划", "实施"], "target_chapter": "实施计划与进度安排", "relevance": "high"},
-    {"keywords": ["服务范围", "服务内容", "工作内容", "技术要求", "功能", "性能"], "target_chapter": "服务范围与工作内容", "relevance": "high"}
+    {"requirement_types": ["scoring"], "keywords": ["评分", "得分", "加分"], "target_chapter": "技术评分点响应", "relevance": "high"},
+    {"requirement_types": ["technical", "delivery"], "keywords": ["人员", "团队", "项目经理", "专家"], "target_chapter": "项目组织与人员配置", "relevance": "high"},
+    {"requirement_types": ["technical", "delivery"], "keywords": ["培训"], "target_chapter": "培训方案", "relevance": "high"},
+    {"requirement_types": ["technical", "delivery"], "keywords": ["运维", "维护", "售后", "持续服务"], "target_chapter": "运维与持续服务", "relevance": "high"},
+    {"requirement_types": ["technical", "delivery"], "keywords": ["验收", "质量", "成果"], "target_chapter": "质量保障与验收方案", "relevance": "high"},
+    {"requirement_types": ["technical", "delivery"], "keywords": ["工期", "进度", "计划", "实施"], "target_chapter": "实施计划与进度安排", "relevance": "high"},
+    {"requirement_types": ["technical"], "keywords": ["服务范围", "服务内容", "工作内容", "技术要求", "功能", "性能"], "target_chapter": "服务范围与工作内容", "relevance": "high"}
   ],
   "compliance_only_types": ["qualification", "compliance", "commercial"],
   "title_rule": "8至30字、动作型、方向准确，让业务人员一眼看懂",

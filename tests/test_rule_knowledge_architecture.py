@@ -18,7 +18,7 @@ def test_default_rules_are_external_versioned_and_valid():
     writing = engine.load_default("writing")
     compliance = engine.load_default("compliance")
 
-    assert extraction.version == 1
+    assert extraction.version == 2
     assert extraction.content["proposal_mapping"]
     assert (
         knowledge.content["matching"]["source_role_weights"][
@@ -28,8 +28,8 @@ def test_default_rules_are_external_versioned_and_valid():
             "qualification_file"
         ]
     )
-    assert writing.version == 2
-    assert compliance.version == 2
+    assert writing.version == 3
+    assert compliance.version == 3
     assert writing.content["policies"]["allow_invented_capability"] is False
     assert (
         writing.content["knowledge_category_policy"]["historical_bid"]
@@ -112,6 +112,55 @@ def test_specific_proposal_mapping_precedes_generic_implementation_word():
     reviewed = RequirementReviewer().review([requirement], extraction)[0]
 
     assert reviewed.target_chapter == "培训方案"
+
+
+def test_scoring_words_do_not_override_technical_requirement_type():
+    extraction = RuleEngine().load_default("extraction")
+    requirement = AgentRequirement(
+        source_id=uuid4(),
+        title="系统备份功能",
+        normalized_text="系统应具备每日备份功能。",
+        quote="技术评分表要求系统应具备每日备份功能。",
+        requirement_type="technical",
+        importance="high",
+        confidence=0.9,
+    )
+
+    reviewed = RequirementReviewer().review_one(requirement, extraction)
+
+    assert reviewed.target_chapter == "服务范围与工作内容"
+
+
+def test_requirement_type_controls_scoring_and_compliance_routing():
+    extraction = RuleEngine().load_default("extraction")
+    scoring = AgentRequirement(
+        source_id=uuid4(),
+        title="实施计划评分",
+        normalized_text="实施计划完整可行得分。",
+        quote="实施计划完整可行得分。",
+        requirement_type="scoring",
+        importance="high",
+        confidence=0.9,
+    )
+    qualification = AgentRequirement(
+        source_id=uuid4(),
+        title="项目经理资格证明",
+        normalized_text="项目经理须提供资格证明。",
+        quote="项目经理须提供资格证明。",
+        requirement_type="qualification",
+        importance="high",
+        confidence=0.9,
+    )
+
+    scored = RequirementReviewer().review_one(scoring, extraction)
+    qualified = RequirementReviewer().review_one(
+        qualification, extraction
+    )
+
+    assert scored.target_chapter == "技术评分点响应"
+    assert scored.need_generation is True
+    assert qualified.target_chapter is None
+    assert qualified.need_generation is False
 
 
 def test_writer_prompt_receives_rule_and_pre_matched_knowledge_boundary():

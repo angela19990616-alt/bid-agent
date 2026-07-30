@@ -43,3 +43,7 @@ class SectionResponse(BaseModel):
 class SectionContentUpdate(BaseModel):
     base_version_id: UUID
     content: str = Field(min_length=1, max_length=200000)
+
+
+class SectionGenerationRequest(BaseModel):
+    instruction: str | None = Field(default=None, max_length=1000)

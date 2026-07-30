@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -134,7 +135,12 @@ class SectionService:
                 section_ids = [row[0] for row in cursor.fetchall()]
         return [self.get(project_id, item) for item in section_ids]
 
-    def generate(self, project_id: UUID, section_id: UUID) -> dict:
+    def generate(
+        self,
+        project_id: UUID,
+        section_id: UUID,
+        generation_instruction: str | None = None,
+    ) -> dict:
         section, requirements = self._load_generation_input(
             project_id,
             section_id,
@@ -180,6 +186,11 @@ class SectionService:
             ],
             "writing_rule": writing_rules.snapshot(),
             "knowledge_matches": [item.snapshot() for item in matches],
+            "generation_instruction": (
+                generation_instruction.strip()
+                if generation_instruction
+                else None
+            ),
         }
         self._create_job(
             project_id, job_id, snapshot, workflow_run_id
@@ -193,10 +204,12 @@ class SectionService:
                     requirements,
                     matches,
                     writing_rules,
+                    generation_instruction,
                 ),
                 temperature=0.2,
                 max_tokens=5000,
             ).strip()
+            content = self.sanitize_generated_content(content)
             if not content:
                 raise RuntimeError("模型返回空内容")
         except Exception as exc:
@@ -526,6 +539,7 @@ class SectionService:
         requirements: list[dict],
         matches: list[KnowledgeMatch] | None = None,
         rules: RuleDocument | None = None,
+        generation_instruction: str | None = None,
     ) -> list[dict[str, str]]:
         active = rules or RuleEngine().load_default("writing")
         matched_items = matches or []
@@ -542,6 +556,15 @@ class SectionService:
             f"内容：{item.content}"
             for item in matched_items
         ) or "无匹配企业知识；涉及企业事实时必须使用规则中的待补充占位符。"
+        instruction = (generation_instruction or "").strip()
+        refinement = (
+            "\n\n本章用户微调要求：\n"
+            f"{instruction}\n"
+            "微调要求只能调整本章侧重点、结构、详略和表达，"
+            "不能覆盖事实边界、来源追溯、禁止虚构和隐私规则。"
+            if instruction
+            else ""
+        )
         return [
             {
                 "role": "system",
@@ -559,9 +582,44 @@ class SectionService:
                     )
                     + f"\n\nRequirements:\n{evidence}"
                     + f"\n\nMatched Knowledge:\n{knowledge}"
+                    + refinement
                 ),
             },
         ]
+
+    @staticmethod
+    def sanitize_generated_content(content: str) -> str:
+        uuid_pattern = (
+            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-"
+            r"[0-9a-fA-F]{12}"
+        )
+        value = re.sub(
+            rf"[\[【（(]\s*(?:要求|Requirement)\s*[:：#]?\s*"
+            rf"(?:{uuid_pattern}|[A-Za-z]?\d{{1,6}})\s*[\]】）)]",
+            "",
+            content,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(uuid_pattern, "", value)
+        value = re.sub(
+            r"(?im)^\s*(?:Requirements?|Matched Knowledge)\s*[:：]\s*",
+            "",
+            value,
+        )
+        value = re.sub(
+            r"(?m)^\s*(?:规范描述|原文证据|source_ref|requirement_id)"
+            r"\s*[:：]\s*",
+            "",
+            value,
+        )
+        value = re.sub(
+            r"[\[【（(]\s*要求\s*[:：#]?\s*[\]】）)]",
+            "",
+            value,
+        )
+        value = re.sub(r"[ \t]+\n", "\n", value)
+        value = re.sub(r"\n{3,}", "\n\n", value)
+        return value.strip()
 
     @staticmethod
     def _load_generation_input(project_id: UUID, section_id: UUID):

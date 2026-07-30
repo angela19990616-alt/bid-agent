@@ -17,7 +17,11 @@ from fastapi.responses import FileResponse
 from app.core.errors import AppError
 from app.models.exports import ExportResponse
 from app.models.requirements import RequirementResponse
-from app.models.sections import SectionContentUpdate, SectionResponse
+from app.models.sections import (
+    SectionContentUpdate,
+    SectionGenerationRequest,
+    SectionResponse,
+)
 from app.models.workspaces import OutlineUpdate, WorkspaceResponse
 from app.services.project_document_service import (
     DocumentParseFailedError,
@@ -250,10 +254,15 @@ def replace_outline(
 def generate_section(
     workspace_id: UUID,
     section_id: UUID,
+    payload: SectionGenerationRequest | None = None,
     _access: None = Depends(authorize_workspace),
 ):
     try:
-        return SectionService().generate(workspace_id, section_id)
+        return SectionService().generate(
+            workspace_id,
+            section_id,
+            payload.instruction if payload else None,
+        )
     except SectionNotFoundError as exc:
         raise AppError(404, "SECTION_NOT_FOUND", "未找到该章节。") from exc
     except SectionValidationError as exc:

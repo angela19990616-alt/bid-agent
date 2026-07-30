@@ -76,6 +76,12 @@ type ProposalReview = {
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
 const ACTIVE_WORKSPACE_KEY = "bid-agent-active-workspace";
+const READY_WORKSPACE_STATUSES = new Set([
+  "outline_ready",
+  "writing",
+  "ready_to_export",
+  "exported",
+]);
 const workspaceStatusLabels: Record<string, string> = {
   validating: "正在检查招标文件有效性",
   extracting: "正在提取技术要求与评分点",
@@ -136,6 +142,7 @@ export default function Home() {
   const [sections, setSections] = useState<SectionItem[]>([]);
   const [activeSectionId, setActiveSectionId] = useState("");
   const [editorContent, setEditorContent] = useState("");
+  const [generationInstruction, setGenerationInstruction] = useState("");
   const [exportItem, setExportItem] = useState<ExportItem | null>(null);
   const [proposalReview, setProposalReview] = useState<ProposalReview | null>(null);
   const [busy, setBusy] = useState("");
@@ -168,7 +175,7 @@ export default function Home() {
   async function waitForWorkspace(workspaceId: string, initial: Workspace) {
     let completed = initial;
     let consecutiveNetworkErrors = 0;
-    while (completed.status !== "outline_ready") {
+    while (!READY_WORKSPACE_STATUSES.has(completed.status)) {
       if (completed.status === "draft") {
         throw new Error("文件处理未成功，可点击“继续处理”从已保存位置重试。");
       }
@@ -213,7 +220,7 @@ export default function Home() {
         const saved = await request<Workspace>(`/workspaces/${workspaceId}`);
         if (!active) return;
         setWorkspace(saved);
-        if (saved.status === "outline_ready") {
+        if (READY_WORKSPACE_STATUSES.has(saved.status)) {
           openCompletedWorkspace(saved, "上次方案已经处理完成，已自动恢复。");
           return;
         }
@@ -314,6 +321,7 @@ export default function Home() {
   function selectSection(section: SectionItem) {
     setActiveSectionId(section.id);
     setEditorContent(section.current_version?.content ?? "");
+    setGenerationInstruction("");
   }
 
   async function generateSection(section: SectionItem) {
@@ -321,11 +329,18 @@ export default function Home() {
     await run(`正在生成《${section.title}》`, async () => {
       const generated = await request<SectionItem>(
         `/workspaces/${workspace.id}/sections/${section.id}/generate`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instruction: generationInstruction.trim() || null,
+          }),
+        },
       );
       setSections((items) => items.map((item) => item.id === generated.id ? generated : item));
       setActiveSectionId(generated.id);
       setEditorContent(generated.current_version?.content ?? "");
+      setGenerationInstruction("");
       setNotice("章节已生成，请人工检查并补充企业真实信息。");
     });
   }
@@ -534,10 +549,21 @@ export default function Home() {
                   <div className="editor-bar">
                     <div><strong>{activeSection.title}</strong><span>响应 {activeSection.requirement_ids.length} 条要求</span></div>
                     <div>
-                      {!activeSection.current_version && <button className="primary" onClick={() => generateSection(activeSection)}>生成本章</button>}
+                      <button className="primary" onClick={() => generateSection(activeSection)}>{activeSection.current_version ? "按要求重新生成" : "生成本章"}</button>
                       {activeSection.current_version && <button className="secondary" onClick={saveSection}>保存修改</button>}
                       {activeSection.current_version && <button className="primary" onClick={approveSection}>人工确认</button>}
                     </div>
+                  </div>
+                  <div className="generation-instruction">
+                    <label htmlFor="generation-instruction">本章微调要求（可选）</label>
+                    <textarea
+                      id="generation-instruction"
+                      value={generationInstruction}
+                      maxLength={1000}
+                      onChange={(event) => setGenerationInstruction(event.target.value)}
+                      placeholder="例如：更突出进度控制；语言简洁一些；按准备、实施、验收三个阶段展开。不能要求系统虚构企业事实。"
+                    />
+                    <span>{generationInstruction.length}/1000</span>
                   </div>
                   {activeSection.findings.length > 0 && <div className="findings">{activeSection.findings.map((item) => <p className={item.severity} key={item.id}>{item.message}</p>)}</div>}
                   <textarea

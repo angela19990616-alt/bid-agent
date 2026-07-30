@@ -46,6 +46,11 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   ]);
 
   assert.match(page, /upload.*requirements.*outline.*writer.*export/s);
+  assert.match(page, /本章微调要求/);
+  assert.match(page, /按要求重新生成/);
+  assert.match(page, /READY_WORKSPACE_STATUSES/);
+  assert.match(page, /ready_to_export/);
+  assert.match(page, /exported/);
   assert.match(page, /Requirement/);
   assert.match(page, /Section/);
   assert.match(page, /API_BASE/);
@@ -60,7 +65,10 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.doesNotMatch(page, /createProject|创建项目/);
   assert.doesNotMatch(page, /演示模式|sampleContent/);
   assert.match(page, /workspaces\/\$\{workspaceId\}/);
-  assert.match(page, /completed\.status !== "outline_ready"/);
+  assert.match(
+    page,
+    /!READY_WORKSPACE_STATUSES\.has\(completed\.status\)/,
+  );
   assert.match(page, /bid-agent-active-workspace/);
   assert.match(page, /完成后自动打开/);
   assert.match(page, /正在恢复上次方案进度/);

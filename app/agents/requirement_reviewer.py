@@ -33,21 +33,34 @@ class RequirementReviewer:
         active = rules or RuleEngine().load_default("extraction")
         config = active.content
         text = f"{item.title} {item.normalized_text} {item.quote}"
-        chapter = None
-        relevance = "medium"
-        for mapping in config["proposal_mapping"]:
-            if any(keyword in text for keyword in mapping["keywords"]):
-                chapter = mapping["target_chapter"]
-                relevance = mapping.get("relevance", "high")
-                break
-
         compliance_only = item.requirement_type in set(
             config["compliance_only_types"]
         )
         if compliance_only:
             return ReviewedRequirement(item, "low", None, False)
 
-        if item.requirement_type in {"technical", "scoring", "delivery"}:
+        if item.requirement_type == "scoring":
+            return ReviewedRequirement(
+                item, "high", "技术评分点响应", True
+            )
+
+        chapter = None
+        relevance = "medium"
+        for mapping in config["proposal_mapping"]:
+            allowed_types = set(
+                mapping.get(
+                    "requirement_types",
+                    ["technical", "delivery"],
+                )
+            )
+            if item.requirement_type not in allowed_types:
+                continue
+            if any(keyword in text for keyword in mapping["keywords"]):
+                chapter = mapping["target_chapter"]
+                relevance = mapping.get("relevance", "high")
+                break
+
+        if item.requirement_type in {"technical", "delivery"}:
             return ReviewedRequirement(
                 item,
                 relevance if chapter else "high",
