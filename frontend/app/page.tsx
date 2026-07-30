@@ -79,7 +79,6 @@ type AccessStatus = {
 };
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
-const ACTIVE_WORKSPACE_KEY = "bid-agent-active-workspace";
 const READY_WORKSPACE_STATUSES = new Set([
   "outline_ready",
   "writing",
@@ -236,7 +235,7 @@ export default function Home() {
       } catch (caught) {
         consecutiveNetworkErrors += 1;
         if (consecutiveNetworkErrors >= 5) {
-          throw new Error("网络连接暂时中断，刷新页面后系统会自动恢复当前方案进度。");
+          throw new Error("网络连接暂时中断，请保持当前页面并稍后重试。");
         }
       }
     }
@@ -256,42 +255,6 @@ export default function Home() {
     }
   }, []);
 
-  useEffect(() => {
-    if (accessState !== "authorized") return;
-    const workspaceId = window.sessionStorage.getItem(ACTIVE_WORKSPACE_KEY);
-    if (!workspaceId) return;
-    let active = true;
-    void (async () => {
-      setBusy("正在恢复上次方案进度");
-      setError("");
-      try {
-        const saved = await request<Workspace>(`/workspaces/${workspaceId}`);
-        if (!active) return;
-        setWorkspace(saved);
-        if (READY_WORKSPACE_STATUSES.has(saved.status)) {
-          openCompletedWorkspace(saved, "上次方案已经处理完成，已自动恢复。");
-          return;
-        }
-        if (saved.status === "draft") {
-          setError("上次方案处理未成功，可点击“继续处理”从已保存位置重试。");
-          return;
-        }
-        const completed = await waitForWorkspace(workspaceId, saved);
-        if (active) openCompletedWorkspace(completed);
-      } catch (caught) {
-        if (active) {
-          window.sessionStorage.removeItem(ACTIVE_WORKSPACE_KEY);
-          setError(caught instanceof Error ? caught.message : "恢复方案失败，请稍后重试。");
-        }
-      } finally {
-        if (active) setBusy("");
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [accessState]);
-
   async function upload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -301,7 +264,6 @@ export default function Home() {
       form.append("file", file);
       const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
       setWorkspace(created);
-      window.sessionStorage.setItem(ACTIVE_WORKSPACE_KEY, created.id);
       const completed = await waitForWorkspace(created.id, created);
       openCompletedWorkspace(
         completed,
@@ -318,7 +280,6 @@ export default function Home() {
         { method: "POST" },
       );
       setWorkspace(resumed);
-      window.sessionStorage.setItem(ACTIVE_WORKSPACE_KEY, resumed.id);
       const completed = await waitForWorkspace(workspace.id, resumed);
       openCompletedWorkspace(completed, "已从中断位置继续并完成目录规划。");
     });
@@ -527,7 +488,7 @@ export default function Home() {
           </nav>
           <div className="privacy-note">
             <strong>私有知识库边界</strong>
-            <p>方案仅限当前浏览器会话和当前网络来源访问。关闭标签页后前端不再保留入口，其他 IP 无法读取或下载。</p>
+            <p>页面刷新或重新打开后会回到上传入口，不显示历史方案或历史导出文件。其他 IP 无法读取或下载。</p>
           </div>
         </aside>
 
