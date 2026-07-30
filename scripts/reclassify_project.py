@@ -26,6 +26,20 @@ def proposal_relevance(
     return "medium"
 
 
+def model_call_count(run_id: UUID) -> int:
+    with connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*)
+                FROM model_usage_events
+                WHERE workflow_run_id = %s
+                """,
+                (run_id,),
+            )
+            return int(cursor.fetchone()[0])
+
+
 def reclassify_project(project_id: UUID) -> dict[str, int]:
     service = RequirementService()
     stored = service.list(project_id)
@@ -157,11 +171,10 @@ def reclassify_project(project_id: UUID) -> dict[str, int]:
         pipeline.fail(run_id, "reclassification_failed", str(exc))
         raise
 
-    summary = ModelBudgetService.summary(run_id)
     return {
         "total": len(eligible),
         "changed": changed,
-        "model_calls": int(summary["call_count"]),
+        "model_calls": model_call_count(run_id),
     }
 
 

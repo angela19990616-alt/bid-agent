@@ -381,6 +381,31 @@ class ClassificationReviewer:
                     "分类 Reviewer 检测到冲突，已按高优先级规则纠正。"
                 ),
             )
+        context_override = RequirementClassifier._context_override(
+            final.requirement_type,
+            (
+                f"{final.item.title} "
+                f"{final.item.normalized_text} "
+                f"{final.item.quote}"
+            ),
+            project_context,
+            active.content,
+        )
+        if context_override:
+            conflict = (
+                final.requirement_type != context_override["type"]
+                or final.proposal_chapter
+                != context_override.get("chapter")
+            ) or conflict
+            final = replace(
+                final,
+                requirement_type=context_override["type"],
+                proposal_chapter=context_override.get("chapter"),
+                confidence=max(final.confidence, 0.82),
+                rationale=(
+                    "分类 Reviewer 已按咨询项目上下文纠正软件类误判。"
+                ),
+            )
         if final.requirement_type in NON_PROPOSAL_TYPES:
             if final.proposal_chapter is not None:
                 conflict = True

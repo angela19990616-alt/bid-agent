@@ -74,6 +74,38 @@ def test_consulting_context_keeps_explicit_software_function_requirement():
     assert result.proposal_chapter == "系统功能设计"
 
 
+def test_reviewer_overrides_high_confidence_model_software_misclassification():
+    rules = RuleEngine().load_default("classification")
+    source = requirement("供应商应分析轨道交通行业政策与市场环境")
+    model_result = RequirementClassifier._model_result(
+        RequirementClassifier.classify_by_rules(
+            source,
+            rules,
+            project_context="轨道交通十五五规划咨询服务项目",
+        ),
+        {
+            "requirement_type": "functional_requirement",
+            "proposal_chapter": "系统功能设计",
+            "scoring_relation": "requirement_only",
+            "importance": "high",
+            "confidence": 0.9,
+            "knowledge_support_required": False,
+            "rationale": "模型误判为系统功能。",
+        },
+        rules,
+    )
+
+    result = ClassificationReviewer().review_one(
+        model_result,
+        rules,
+        project_context="轨道交通十五五规划咨询服务项目",
+    )
+
+    assert result.requirement_type == "technical_capability"
+    assert result.proposal_chapter == "服务范围与工作内容"
+    assert result.conflict is True
+
+
 def test_implementation_period_maps_to_implementation_plan():
     result = classify("项目实施周期180日历天")
     assert result.requirement_type == "implementation_requirement"
