@@ -13,8 +13,20 @@ class FakeRequirementService:
     def list(self, _workspace_id):
         self.calls += 1
         return [
-            {"id": uuid4(), "need_generation": True},
-            {"id": uuid4(), "need_generation": False},
+            {
+                "id": uuid4(),
+                "need_generation": True,
+                "response_action": "write_into_proposal",
+                "scoring_impact": "score_item",
+                "requirement_type": "scoring_requirement",
+            },
+            {
+                "id": uuid4(),
+                "need_generation": False,
+                "response_action": "compliance_commitment",
+                "scoring_impact": "penalty_risk",
+                "requirement_type": "compliance_requirement",
+            },
         ]
 
 
@@ -73,3 +85,10 @@ def test_workspace_summary_loads_requirements_once(monkeypatch):
     assert requirements.calls == 1
     assert len(result["technical_requirements"]) == 1
     assert result["compliance_reminder_count"] == 1
+    assert result["response_summary"] == {
+        "total": 2,
+        "proposal": 1,
+        "scoring": 1,
+        "compliance": 1,
+        "risk": 1,
+    }

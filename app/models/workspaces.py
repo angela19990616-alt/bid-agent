@@ -19,6 +19,14 @@ class OutlineUpdate(BaseModel):
     chapters: list[OutlineChapterUpdate] = Field(min_length=1, max_length=30)
 
 
+class ResponseSummary(BaseModel):
+    total: int = 0
+    proposal: int = 0
+    scoring: int = 0
+    compliance: int = 0
+    risk: int = 0
+
+
 class WorkspaceResponse(BaseModel):
     id: UUID
     name: str
@@ -30,6 +38,9 @@ class WorkspaceResponse(BaseModel):
         default_factory=list
     )
     compliance_reminder_count: int = 0
+    response_summary: ResponseSummary = Field(
+        default_factory=ResponseSummary
+    )
     outline: list[SectionResponse] = Field(default_factory=list)
     estimated_remaining_seconds_low: int | None = None
     estimated_remaining_seconds_high: int | None = None

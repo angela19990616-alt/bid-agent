@@ -30,7 +30,7 @@ from app.agents.requirement_reviewer import (
     ReviewedRequirement,
 )
 from app.database.db import connect
-from app.core.requirement_taxonomy import RequirementTaxonomy
+from app.core.response_strategy import ResponseStrategyAnalyzer
 from app.rules.engine import RuleDocument, RuleEngine
 from app.services.model_budget_service import ModelBudgetExceeded
 from app.workflows.controlled_pipeline import ControlledPipeline
@@ -115,6 +115,7 @@ class RequirementService:
         rules: RuleDocument | None = None,
         classification_rules: RuleDocument | None = None,
         workflow_run_id: UUID | None = None,
+        response_strategy_rules: RuleDocument | None = None,
     ) -> tuple[int, int]:
         sources = self._load_sources(project_id, document_ids)
         if not sources:
@@ -194,8 +195,22 @@ class RequirementService:
             project_context=project_context,
         )
         quality_checked = self.quality_pipeline.run(reviewed)
+        active_response_strategy_rules = (
+            response_strategy_rules
+            or self.rule_engine.load("response_strategy")
+        )
+        if workflow_run_id is not None:
+            ControlledPipeline().record(
+                workflow_run_id,
+                "response_strategy_analysis",
+                rule_snapshot=active_response_strategy_rules.snapshot(),
+                details={"execution": "single_bounded_pass"},
+            )
         candidates = self._exclude_known_source_mismatches(
-            self._deduplicate(quality_checked)
+            self._deduplicate(
+                quality_checked,
+                active_response_strategy_rules,
+            )
         )[:200]
 
         created = 0
@@ -465,15 +480,32 @@ class RequirementService:
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
+                    SELECT requirement_type, proposal_mapping,
+                           scoring_relation, importance,
+                           title, normalized_text, quote
+                    FROM requirements
+                    WHERE project_id = %s AND id = %s
+                    """,
+                    (project_id, requirement_id),
+                )
+                current = cursor.fetchone()
+                if current is None:
+                    raise RequirementNotFoundError(str(requirement_id))
+                restored = ResponseStrategyAnalyzer.analyze(
+                    legacy_type=current[0],
+                    proposal_chapter=current[1],
+                    scoring_relation=current[2],
+                    importance=current[3],
+                    text=f"{current[4]} {current[5]} {current[6]}",
+                    rules=self.rule_engine.load("response_strategy"),
+                )
+                cursor.execute(
+                    """
                     UPDATE requirements
                     SET status = %s,
                         response_action = CASE
                             WHEN %s = 'rejected' THEN 'ignore'
-                            WHEN proposal_mapping IS NOT NULL
-                                THEN 'write_into_proposal'
-                            WHEN response_action = 'ignore'
-                                THEN 'write_into_response_table'
-                            ELSE response_action
+                            ELSE %s
                         END,
                         classification_conflict = %s,
                         classification_notes = CASE
@@ -488,9 +520,73 @@ class RequirementService:
                     (
                         status,
                         status,
+                        restored.response_action,
                         conflict,
                         marker,
                         marker,
+                        project_id,
+                        requirement_id,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    raise RequirementNotFoundError(str(requirement_id))
+        return self.get(project_id, requirement_id)
+
+    def update_response_strategy(
+        self,
+        project_id: UUID,
+        requirement_id: UUID,
+        target: str,
+    ) -> dict:
+        if target not in {"proposal", "compliance"}:
+            raise RequirementValidationError("不支持的响应策略目标。")
+        current = self.get(project_id, requirement_id)
+        decision = ResponseStrategyAnalyzer.manual_override(
+            target=target,
+            text=(
+                f"{current['title']} {current['normalized_text']} "
+                f"{current['quote']}"
+            ),
+            importance=current["importance"],
+            rules=self.rule_engine.load("response_strategy"),
+        )
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE requirements
+                    SET requirement_type = %s,
+                        response_action = %s,
+                        proposal_mapping = %s,
+                        proposal_chapter = %s,
+                        target_chapter = %s,
+                        need_generation = %s,
+                        scoring_impact = %s,
+                        priority = %s,
+                        proposal_relevance = %s,
+                        classification_confidence = 1.0,
+                        classification_conflict = FALSE,
+                        classification_notes = %s,
+                        status = 'confirmed',
+                        updated_at = NOW()
+                    WHERE project_id = %s AND id = %s
+                    """,
+                    (
+                        decision.requirement_type,
+                        decision.response_action,
+                        decision.proposal_mapping,
+                        decision.proposal_mapping,
+                        decision.proposal_mapping,
+                        decision.response_action == "write_into_proposal",
+                        decision.scoring_impact,
+                        decision.priority,
+                        (
+                            "high"
+                            if decision.response_action
+                            == "write_into_proposal"
+                            else "low"
+                        ),
+                        f"human_strategy_override:{target}",
                         project_id,
                         requirement_id,
                     ),
@@ -540,6 +636,13 @@ class RequirementService:
         }
         if classification_notes in marker_to_feedback:
             return marker_to_feedback[classification_notes]
+        if (
+            classification_notes
+            and classification_notes.startswith(
+                "human_strategy_override:"
+            )
+        ):
+            return "confirmed"
         if status == "confirmed":
             return "confirmed"
         if status == "rejected":
@@ -593,6 +696,7 @@ class RequirementService:
         items: list[
             ClassifiedRequirement | ReviewedRequirement | AgentRequirement
         ],
+        response_strategy_rules: RuleDocument | None = None,
     ) -> list[Candidate]:
         merged: list[dict] = []
         for raw_item in items:
@@ -621,7 +725,7 @@ class RequirementService:
             canonical = RequirementService._canonical(
                 item.normalized_text
             )
-            taxonomy = RequirementTaxonomy.decide(
+            taxonomy = ResponseStrategyAnalyzer.analyze(
                 legacy_type=classified.requirement_type,
                 proposal_chapter=proposal_chapter,
                 scoring_relation=classified.scoring_relation,
@@ -629,6 +733,7 @@ class RequirementService:
                 text=(
                     f"{item.title} {item.normalized_text} {item.quote}"
                 ),
+                rules=response_strategy_rules,
             )
             proposal_chapter = taxonomy.proposal_mapping
             need_generation = (

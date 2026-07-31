@@ -3,6 +3,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type Step = "upload" | "requirements" | "outline" | "writer" | "export";
+type RequirementView = "all" | "proposal" | "scoring" | "compliance" | "risk";
 type Source = {
   id: string;
   filename: string;
@@ -15,7 +16,7 @@ type Source = {
 };
 type Requirement = {
   id: string;
-  type: "technical_requirement" | "scoring_requirement" | "commercial_requirement" | "qualification_requirement" | "delivery_requirement" | "compliance_requirement" | "format_requirement";
+  type: "technical_requirement" | "scoring_requirement" | "commercial_requirement" | "qualification_requirement" | "delivery_requirement" | "compliance_requirement" | "format_requirement" | "document_structure_requirement";
   title: string;
   normalized_text: string;
   quote: string;
@@ -72,6 +73,13 @@ type Workspace = {
   } | null;
   technical_requirements: Requirement[];
   compliance_reminder_count: number;
+  response_summary: {
+    total: number;
+    proposal: number;
+    scoring: number;
+    compliance: number;
+    risk: number;
+  };
   outline: SectionItem[];
   estimated_remaining_seconds_low: number | null;
   estimated_remaining_seconds_high: number | null;
@@ -140,7 +148,29 @@ const typeLabels: Record<Requirement["type"], string> = {
   delivery_requirement: "交付要求",
   compliance_requirement: "合规要求",
   format_requirement: "格式要求",
+  document_structure_requirement: "文档结构要求",
 };
+const responseActionLabels: Record<Requirement["response_action"], string> = {
+  write_into_proposal: "写入技术方案",
+  write_into_response_table: "加入响应表",
+  compliance_commitment: "商务/合规承诺",
+  provide_attachment: "提供附件材料",
+  risk_notice: "风险提醒",
+  ignore: "忽略",
+};
+const scoringImpactLabels: Record<Requirement["scoring_impact"], string> = {
+  score_item: "影响评分",
+  qualification_pass: "资格通过项",
+  penalty_risk: "不响应存在风险",
+  no_score: "不直接计分",
+};
+const requirementTabs: Array<{ id: RequirementView; label: string }> = [
+  { id: "all", label: "全部" },
+  { id: "proposal", label: "技术方案" },
+  { id: "scoring", label: "评分响应" },
+  { id: "compliance", label: "商务合规" },
+  { id: "risk", label: "风险提醒" },
+];
 const importanceLabels: Record<Requirement["importance"], string> = {
   critical: "关键",
   high: "重要",
@@ -152,6 +182,12 @@ const importanceRank: Record<Requirement["importance"], number> = {
   high: 1,
   medium: 2,
   low: 3,
+};
+const priorityRank: Record<Requirement["priority"], number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+  P3: 3,
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -194,7 +230,7 @@ export default function Home() {
   const [step, setStep] = useState<Step>("upload");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
-  const [requirementView, setRequirementView] = useState<"proposal" | "compliance">("proposal");
+  const [requirementView, setRequirementView] = useState<RequirementView>("all");
   const [ignoreMenuId, setIgnoreMenuId] = useState("");
   const [sections, setSections] = useState<SectionItem[]>([]);
   const [activeSectionId, setActiveSectionId] = useState("");
@@ -217,14 +253,16 @@ export default function Home() {
     const sorted = [...requirements].sort((left, right) => {
       const otherDelta = Number(left.type === "compliance_requirement") - Number(right.type === "compliance_requirement");
       if (otherDelta) return otherDelta;
+      const priorityDelta = priorityRank[left.priority] - priorityRank[right.priority];
+      if (priorityDelta) return priorityDelta;
       const importanceDelta = importanceRank[left.importance] - importanceRank[right.importance];
       if (importanceDelta) return importanceDelta;
       return Number(right.proposal_relevance === "high") - Number(left.proposal_relevance === "high");
     });
     const groups = sorted.reduce<Record<string, Requirement[]>>((result, item) => {
-      const chapter = requirementView === "compliance"
+      const chapter = requirementView !== "proposal"
         ? typeLabels[item.type]
-        : item.proposal_chapter ?? item.target_chapter ?? "其他技术要求";
+        : item.proposal_mapping ?? "其他技术要求";
       result[chapter] = [...(result[chapter] ?? []), item];
       return result;
     }, {});
@@ -278,17 +316,20 @@ export default function Home() {
     }
   }
 
-  function openCompletedWorkspace(completed: Workspace, message?: string) {
+  async function openCompletedWorkspace(completed: Workspace, message?: string) {
+    const allRequirements = await request<Requirement[]>(
+      `/workspaces/${completed.id}/requirements?view=all`,
+    );
     setWorkspace(completed);
-    setRequirements(completed.technical_requirements);
-    setRequirementView("proposal");
+    setRequirements(allRequirements);
+    setRequirementView("all");
     setSections(completed.outline);
     setActiveSectionId(completed.outline[0]?.id ?? "");
     setEditorContent(completed.outline[0]?.current_version?.content ?? "");
     setStep("requirements");
     setNotice(
       message
-      ?? `处理完成，已提取 ${completed.technical_requirements.length} 条技术写作要点。`,
+      ?? `处理完成，已分析 ${completed.response_summary.total} 条响应事项。`,
     );
   }
 
@@ -342,9 +383,9 @@ export default function Home() {
       const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
       setWorkspace(created);
       const completed = await waitForWorkspace(created.id, created);
-      openCompletedWorkspace(
+      await openCompletedWorkspace(
         completed,
-        `已识别《${completed.document?.filename}》，提取 ${completed.technical_requirements.length} 条技术写作要点。`,
+        `已识别《${completed.document?.filename}》，分析 ${completed.response_summary.total} 条响应事项。`,
       );
     });
   }
@@ -358,17 +399,17 @@ export default function Home() {
       );
       setWorkspace(resumed);
       const completed = await waitForWorkspace(workspace.id, resumed);
-      openCompletedWorkspace(completed, "已从中断位置继续并完成目录规划。");
+      await openCompletedWorkspace(completed, "已从中断位置继续并完成目录规划。");
     });
   }
 
-  async function showRequirements(view: "proposal" | "compliance") {
+  async function showRequirements(view: RequirementView) {
     if (!workspace) return;
-    await run(view === "proposal" ? "正在读取响应事项" : "正在读取合规提醒", async () => {
+    await run("正在读取响应事项", async () => {
       const items = await request<Requirement[]>(`/workspaces/${workspace.id}/requirements?view=${view}`);
       setRequirements(items);
       setRequirementView(view);
-      setNotice(view === "compliance" && items.length === 0 ? "没有发现额外合规提醒。" : "");
+      setNotice(items.length === 0 ? "当前分类下没有响应事项。" : "");
     });
   }
 
@@ -415,6 +456,42 @@ export default function Home() {
           : feedback === "incomplete"
           ? "已记录为信息不完整，后续需要重新核对原文。"
           : "人工确认结果已保存。",
+      );
+    });
+  }
+
+  async function updateRequirementStrategy(
+    item: Requirement,
+    target: "proposal" | "compliance",
+  ) {
+    if (!workspace) return;
+    await run("正在调整响应策略", async () => {
+      await request<Requirement>(
+        `/workspaces/${workspace.id}/requirements/${item.id}/strategy`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target }),
+        },
+      );
+      const [refreshed, visibleItems] = await Promise.all([
+        request<Workspace>(`/workspaces/${workspace.id}`),
+        request<Requirement[]>(
+          `/workspaces/${workspace.id}/requirements?view=${requirementView}`,
+        ),
+      ]);
+      setWorkspace(refreshed);
+      setRequirements(visibleItems);
+      setSections(refreshed.outline);
+      setActiveSectionId((current) => (
+        refreshed.outline.some((section) => section.id === current)
+          ? current
+          : refreshed.outline[0]?.id ?? ""
+      ));
+      setNotice(
+        target === "proposal"
+          ? "已转入技术方案，并同步到推荐目录。"
+          : "已转入商务合规，不再进入技术方案正文。",
       );
     });
   }
@@ -660,38 +737,33 @@ export default function Home() {
 
           {step === "requirements" && (
             <div className="requirement-layout">
-              <div className="section-toolbar">
-                <div><strong>{requirements.length}</strong><span>条技术写作要点</span></div>
-                <div><strong>{requirements.filter((item) => item.scoring_impact === "score_item").length}</strong><span>个评分事项</span></div>
-                <div><strong>{feedbackSummary.confirmed}</strong><span>条已确认需要</span></div>
+              <div className="section-toolbar response-summary">
+                <div><strong>{workspace?.response_summary?.total ?? 0}</strong><span>总响应事项</span></div>
+                <div><strong>{workspace?.response_summary?.proposal ?? 0}</strong><span>技术方案事项</span></div>
+                <div><strong>{workspace?.response_summary?.scoring ?? 0}</strong><span>评分响应事项</span></div>
+                <div><strong>{workspace?.response_summary?.compliance ?? 0}</strong><span>商务合规事项</span></div>
+                <div><strong>{workspace?.response_summary?.risk ?? 0}</strong><span>风险提醒事项</span></div>
                 <button className="primary" disabled={Boolean(busy)} onClick={() => setStep("outline")}>下一步：查看推荐目录</button>
               </div>
               <div className="requirement-tabs" role="tablist" aria-label="要求分类">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={requirementView === "proposal"}
-                  className={requirementView === "proposal" ? "active" : ""}
-                  disabled={Boolean(busy)}
-                  onClick={() => showRequirements("proposal")}
-                >
-                  技术方案要点 <span>{requirementView === "proposal" ? requirements.length : workspace?.technical_requirements.length ?? 0}</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={requirementView === "compliance"}
-                  className={requirementView === "compliance" ? "active" : ""}
-                  disabled={Boolean(busy)}
-                  onClick={() => showRequirements("compliance")}
-                >
-                  合规要求 <span>{workspace?.compliance_reminder_count ?? 0}</span>
-                </button>
+                {requirementTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={requirementView === tab.id}
+                    className={requirementView === tab.id ? "active" : ""}
+                    disabled={Boolean(busy)}
+                    onClick={() => showRequirements(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
               <div className="requirement-guidance">
                 <div>
-                  <strong>{requirementView === "proposal" ? "优先确认影响技术方案的要求" : "集中查看资格、商务及其他合规提醒"}</strong>
-                  <span>关键和重要内容优先展示，“其他”放在最后；无需逐条确认即可继续。</span>
+                  <strong>响应事项分析</strong>
+                  <span>这里回答“如何响应、写在哪里、有什么风险”；人工切换归类会同步更新推荐目录。</span>
                 </div>
                 <div className="feedback-summary" aria-label="人工确认进度">
                   <span><b>{feedbackSummary.pending}</b> 待判断</span>
@@ -710,10 +782,18 @@ export default function Home() {
                             <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
                             <span className={`importance-tag ${item.importance}`}>{importanceLabels[item.importance]}</span>
                           </div>
-                          <span className="confidence">{item.proposal_relevance === "high" ? "重点响应" : "建议响应"}</span>
+                          <span className="confidence">判断置信度 {Math.round(item.classification_confidence * 100)}%</span>
                         </div>
                         <h3>{item.title}</h3>
                         <p>{item.normalized_text}</p>
+                        <div className="strategy-grid">
+                          <div><span>类型</span><strong>{typeLabels[item.type]}</strong></div>
+                          <div><span>响应方式</span><strong>{responseActionLabels[item.response_action]}</strong></div>
+                          <div><span>影响</span><strong>{scoringImpactLabels[item.scoring_impact]}</strong></div>
+                          <div><span>优先级</span><strong>{item.priority}</strong></div>
+                          <div><span>是否进入技术正文</span><strong>{item.response_action === "write_into_proposal" ? "是" : "否"}</strong></div>
+                          {item.proposal_mapping && <div><span>章节</span><strong>{item.proposal_mapping}</strong></div>}
+                        </div>
                         <details><summary>查看原文依据</summary><blockquote>{item.quote}</blockquote>
                           <div className="source-row">{item.sources.map((source) => <span key={source.id}>{source.filename} · {sourceLabel(source)}</span>)}</div>
                         </details>
@@ -722,14 +802,27 @@ export default function Home() {
                             {item.feedback === "pending"
                               ? "请选择处理方式"
                               : item.feedback === "confirmed"
-                              ? "已写入方案"
+                              ? "已确认当前处理"
                               : `已忽略 · ${ignoreFeedbackLabels[item.feedback as IgnoreFeedback]}`}
                           </span>
                           <button
                             className={item.feedback === "confirmed" ? "selected" : ""}
                             disabled={Boolean(busy)}
                             onClick={() => recordRequirementFeedback(item, "confirmed")}
-                          >写入方案</button>
+                          >确认当前处理</button>
+                          <button
+                            disabled={Boolean(busy)}
+                            onClick={() => updateRequirementStrategy(
+                              item,
+                              item.response_action === "write_into_proposal"
+                                ? "compliance"
+                                : "proposal",
+                            )}
+                          >
+                            {item.response_action === "write_into_proposal"
+                              ? "转为商务合规"
+                              : "转为技术方案"}
+                          </button>
                           <button
                             className={item.feedback !== "pending" && item.feedback !== "confirmed" ? "selected warning" : ""}
                             disabled={Boolean(busy)}

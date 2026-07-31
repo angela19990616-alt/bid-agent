@@ -786,6 +786,11 @@ class SectionService:
         )
         value = re.sub(uuid_pattern, "", value)
         value = re.sub(
+            r"(?m)^\s*#{1,6}\s+",
+            "",
+            value,
+        )
+        value = re.sub(
             r"(?im)^\s*(?:Requirements?|Matched Knowledge)\s*[:：]\s*",
             "",
             value,

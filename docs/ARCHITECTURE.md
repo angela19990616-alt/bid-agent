@@ -31,7 +31,8 @@ flowchart TD
     E --> EN["Response Item Normalizer"]
     EN --> F["Proposal Classification"]
     F --> FR["Reviewer + Debug + Re-review"]
-    FR --> G["Load Enterprise Knowledge"]
+    FR --> RS["Response Strategy"]
+    RS --> G["Load Enterprise Knowledge"]
     G --> GP["Knowledge Permission Filter"]
     GP --> H["Knowledge Matching"]
     FR --> PM["Proposal Memory Matching"]
@@ -72,6 +73,7 @@ flowchart TD
 | --- | --- |
 | extraction | 文件有效性、候选证据、忽略项、Requirement 定义和命名 |
 | classification | Requirement 类型、评分关系、方案章节映射、行业分类约束 |
+| response_strategy | 响应动作、评分影响、风险优先级和技术正文映射 |
 | proposal_memory | 优秀方案结构模式的准入、用途和事实禁用边界 |
 | writing | 目录顺序、章节风格、事实边界、知识引用、篇幅、重复率和术语策略 |
 | compliance | 长度、禁用表述、占位符、Requirement/Knowledge 可追溯门禁 |
@@ -139,6 +141,7 @@ Memory 证明企业资质、能力、案例、人员或任何历史事实。
 - Response Item Normalizer：确定性拆分复合事项、标准化表达并保存审计记录。
 - Classification Agent：规则优先；只对低置信和未映射条目进行一次批量模型分类。
 - Classification Reviewer：纠正分类冲突，确保资格和商务条款不进入技术方案正文。
+- Response Strategy：回答如何响应、写在哪里和有什么风险，并接受人工双向归类。
 - Output Review / Debug：检查内部标识、无意义标签和缺失映射，只做安全机械修复并复检一次。
 - Knowledge Permission Filter：在查询知识内容前按机构和 scope 默认拒绝越权。
 - Knowledge Matching：加载当前机构私有知识并匹配，不写正文。
@@ -168,6 +171,7 @@ Memory 证明企业资质、能力、案例、人员或任何历史事实。
 | --- | --- | --- |
 | 有效招标文件判定、候选词、忽略项 | `extraction.document_validation`、`candidate_markers`、`ignore_*` | Document Validator、Requirement Extractor |
 | Requirement 类型、评分关系和章节路由 | `classification.requirement_types`、`classifiers`、`chapter_mapping` | Classification Agent、Classification Reviewer |
+| 响应动作、评分影响、优先级和人工归类 | `response_strategy.hard_rules`、`type_defaults`、`priority_policy` | Response Strategy、Proposal Planner |
 | 推荐目录与章节风格 | `writing.chapter_order`、`chapter_styles` | Proposal Planner、Chapter Writer |
 | 事实边界、篇幅和写作约束 | `writing.policies`、`knowledge_category_policy` | Chapter Writer |
 | 知识准入、匹配权重和数量 | `knowledge.eligibility`、`matching`、`fact_boundaries` | Knowledge Engine |

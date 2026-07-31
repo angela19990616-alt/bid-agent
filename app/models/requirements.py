@@ -11,7 +11,7 @@ RequirementType = Literal[
     "technical_requirement", "scoring_requirement",
     "commercial_requirement", "qualification_requirement",
     "delivery_requirement", "compliance_requirement",
-    "format_requirement",
+    "format_requirement", "document_structure_requirement",
     # Transitional API compatibility; migration 020 rewrites stored values.
     "technical_capability", "functional_requirement",
     "system_architecture", "security_requirement",
@@ -111,3 +111,7 @@ class RequirementUpdate(BaseModel):
 
 class RequirementFeedbackUpdate(BaseModel):
     feedback: RequirementFeedback
+
+
+class RequirementStrategyUpdate(BaseModel):
+    target: Literal["proposal", "compliance"]

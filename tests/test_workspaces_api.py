@@ -1,14 +1,17 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+import app.api.workspaces as workspace_api
 from app.api.workspaces import (
     get_workspace_access_service,
     get_workspace_job_service,
     get_workspace_service,
 )
 from app.main import app
+from app.models.requirements import RequirementStrategyUpdate
 from app.services.workspace_service import InvalidTenderDocumentError
 from app.services.workspace_access_service import (
     SessionAccess,
@@ -94,6 +97,94 @@ def setup_function():
 
 def teardown_function():
     app.dependency_overrides.clear()
+
+
+def test_response_views_filter_by_strategy_dimensions(monkeypatch):
+    items = [
+        {
+            "id": "proposal",
+            "response_action": "write_into_proposal",
+            "scoring_impact": "no_score",
+            "requirement_type": "technical_requirement",
+        },
+        {
+            "id": "score",
+            "response_action": "write_into_proposal",
+            "scoring_impact": "score_item",
+            "requirement_type": "scoring_requirement",
+        },
+        {
+            "id": "risk",
+            "response_action": "risk_notice",
+            "scoring_impact": "penalty_risk",
+            "requirement_type": "format_requirement",
+        },
+    ]
+    monkeypatch.setattr(
+        workspace_api,
+        "RequirementService",
+        lambda: SimpleNamespace(list=lambda _workspace_id: items),
+    )
+    workspace_id = uuid4()
+
+    assert {
+        item["id"] for item in workspace_api.list_workspace_requirements(
+            workspace_id, "proposal", None
+        )
+    } == {"proposal", "score"}
+    assert [
+        item["id"] for item in workspace_api.list_workspace_requirements(
+            workspace_id, "scoring", None
+        )
+    ] == ["score"]
+    assert [
+        item["id"] for item in workspace_api.list_workspace_requirements(
+            workspace_id, "risk", None
+        )
+    ] == ["risk"]
+
+
+def test_manual_strategy_switch_reconciles_draft_outline(monkeypatch):
+    calls = {}
+    requirement_id = uuid4()
+    workspace_id = uuid4()
+    updated = {"id": requirement_id}
+    monkeypatch.setattr(
+        workspace_api,
+        "RequirementService",
+        lambda: SimpleNamespace(
+            update_response_strategy=lambda project_id, item_id, target: (
+                calls.update(
+                    strategy=(project_id, item_id, target)
+                )
+                or updated
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        workspace_api,
+        "ProposalPlanService",
+        lambda: SimpleNamespace(
+            reconcile_requirement_feedback=lambda project_id, item_id: (
+                calls.update(outline=(project_id, item_id))
+            )
+        ),
+    )
+
+    result = workspace_api.update_workspace_requirement_strategy(
+        workspace_id,
+        requirement_id,
+        RequirementStrategyUpdate(target="compliance"),
+        None,
+    )
+
+    assert result == updated
+    assert calls["strategy"] == (
+        workspace_id,
+        requirement_id,
+        "compliance",
+    )
+    assert calls["outline"] == (workspace_id, requirement_id)
 
 
 def test_upload_creates_internal_workspace_without_project_step():

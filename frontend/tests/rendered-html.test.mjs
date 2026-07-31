@@ -55,7 +55,13 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /Section/);
   assert.match(page, /API_BASE/);
   assert.match(page, /无需先建项目/);
-  assert.match(page, /技术写作要点/);
+  assert.match(page, /响应事项分析/);
+  assert.match(page, /技术方案事项/);
+  assert.match(page, /评分响应/);
+  assert.match(page, /商务合规/);
+  assert.match(page, /风险提醒/);
+  assert.match(page, /转为技术方案/);
+  assert.match(page, /转为商务合规/);
   assert.match(page, /查看原文依据/);
   assert.match(page, /生成本章/);
   assert.match(page, /校核并生成 Word/);

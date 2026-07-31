@@ -130,12 +130,16 @@ class WorkspaceService:
                 details=budget,
             )
             classification_rules = self.rule_engine.load("classification")
+            response_strategy_rules = self.rule_engine.load(
+                "response_strategy"
+            )
             self.requirement_service.extract(
                 workspace_id,
                 [document_id],
                 extraction_rules,
                 classification_rules,
                 run_id,
+                response_strategy_rules,
             )
 
             writing_rules = self.rule_engine.load("writing")
@@ -192,6 +196,32 @@ class WorkspaceService:
         compliance = [
             item for item in requirements if not item["need_generation"]
         ]
+        response_summary = {
+            "total": len(requirements),
+            "proposal": sum(
+                item["response_action"] == "write_into_proposal"
+                for item in requirements
+            ),
+            "scoring": sum(
+                item["scoring_impact"] == "score_item"
+                for item in requirements
+            ),
+            "compliance": sum(
+                item["requirement_type"] in {
+                    "commercial_requirement",
+                    "qualification_requirement",
+                    "compliance_requirement",
+                    "format_requirement",
+                    "document_structure_requirement",
+                }
+                for item in requirements
+            ),
+            "risk": sum(
+                item["scoring_impact"] == "penalty_risk"
+                or item["response_action"] == "risk_notice"
+                for item in requirements
+            ),
+        }
         source_count = documents[0].source_count if documents else 0
         estimate = ProcessingEtaService.estimate(
             workspace_id,
@@ -210,6 +240,7 @@ class WorkspaceService:
             "document": documents[0] if documents else None,
             "technical_requirements": technical,
             "compliance_reminder_count": len(compliance),
+            "response_summary": response_summary,
             "outline": SectionService().list(workspace_id),
             "estimated_remaining_seconds_low": (
                 estimate.remaining_seconds_low

@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 
 
 RuleType = Literal[
-    "extraction", "classification", "knowledge", "writing", "compliance"
+    "extraction", "classification", "response_strategy", "knowledge",
+    "writing", "compliance"
 ]
 
 

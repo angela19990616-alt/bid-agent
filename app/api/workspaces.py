@@ -19,6 +19,7 @@ from app.models.exports import ExportResponse
 from app.models.requirements import (
     RequirementFeedbackUpdate,
     RequirementResponse,
+    RequirementStrategyUpdate,
 )
 from app.models.sections import (
     SectionContentUpdate,
@@ -225,13 +226,40 @@ def retry_workspace(
 )
 def list_workspace_requirements(
     workspace_id: UUID,
-    view: Literal["proposal", "compliance"] = "proposal",
+    view: Literal[
+        "all", "proposal", "scoring", "compliance", "risk"
+    ] = "all",
     _access: None = Depends(authorize_workspace),
 ):
-    return RequirementService().list(
-        workspace_id,
-        need_generation=view == "proposal",
-    )
+    items = RequirementService().list(workspace_id)
+    if view == "proposal":
+        return [
+            item for item in items
+            if item["response_action"] == "write_into_proposal"
+        ]
+    if view == "scoring":
+        return [
+            item for item in items
+            if item["scoring_impact"] == "score_item"
+        ]
+    if view == "compliance":
+        return [
+            item for item in items
+            if item["requirement_type"] in {
+                "commercial_requirement",
+                "qualification_requirement",
+                "compliance_requirement",
+                "format_requirement",
+                "document_structure_requirement",
+            }
+        ]
+    if view == "risk":
+        return [
+            item for item in items
+            if item["scoring_impact"] == "penalty_risk"
+            or item["response_action"] == "risk_notice"
+        ]
+    return items
 
 
 @router.patch(
@@ -259,6 +287,37 @@ def record_workspace_requirement_feedback(
         raise AppError(404, "REQUIREMENT_NOT_FOUND", "未找到该要求。") from exc
     except RequirementValidationError as exc:
         raise AppError(422, "REQUIREMENT_FEEDBACK_INVALID", str(exc)) from exc
+
+
+@router.patch(
+    "/{workspace_id}/requirements/{requirement_id}/strategy",
+    response_model=RequirementResponse,
+)
+def update_workspace_requirement_strategy(
+    workspace_id: UUID,
+    requirement_id: UUID,
+    payload: RequirementStrategyUpdate,
+    _access: None = Depends(authorize_workspace),
+):
+    try:
+        requirement = RequirementService().update_response_strategy(
+            workspace_id,
+            requirement_id,
+            payload.target,
+        )
+        ProposalPlanService().reconcile_requirement_feedback(
+            workspace_id,
+            requirement_id,
+        )
+        return requirement
+    except RequirementNotFoundError as exc:
+        raise AppError(404, "REQUIREMENT_NOT_FOUND", "未找到该要求。") from exc
+    except RequirementValidationError as exc:
+        raise AppError(
+            422,
+            "RESPONSE_STRATEGY_INVALID",
+            str(exc),
+        ) from exc
 
 
 @router.put(

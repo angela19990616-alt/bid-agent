@@ -26,7 +26,8 @@ Document Upload
   → Parser
   → Response Item Extractor
   → Response Item Normalizer
-  → Proposal-oriented Classification（分类、复核、自检修复）
+  → Proposal-oriented Classification（条款属性）
+  → Response Strategy（响应动作、风险、章节映射）
   → Load Enterprise Knowledge
   → Knowledge Matching
   → Proposal Memory Matching
@@ -101,8 +102,8 @@ organization_id 行级隔离和权限审计，不能仅依赖前端隐藏。
 POST /api/v1/workspaces
 GET  /api/v1/workspaces/{workspace_id}
 POST /api/v1/workspaces/{workspace_id}/retry
-GET  /api/v1/workspaces/{workspace_id}/requirements?view=proposal
-GET  /api/v1/workspaces/{workspace_id}/requirements?view=compliance
+GET  /api/v1/workspaces/{workspace_id}/requirements?view=all|proposal|scoring|compliance|risk
+PATCH /api/v1/workspaces/{workspace_id}/requirements/{requirement_id}/strategy
 PUT  /api/v1/workspaces/{workspace_id}/outline
 POST /api/v1/workspaces/{workspace_id}/sections/{section_id}/generate
 PUT  /api/v1/workspaces/{workspace_id}/sections/{section_id}/content
@@ -171,6 +172,7 @@ HttpOnly、SameSite=Strict 签名 Cookie；邀请码不会写入前端存储。�
   生成快照和整本方案导出。
 - `014_proposal_classification.sql`：方案导向分类字段、规则类型及历史分类迁移。
 - `015_model_usage_budget.sql`：工作流模型调用与 Token 预算审计。
+- `021_response_strategy.sql`：响应策略规则类型、文档结构事项及历史硬规则纠正。
 - `012_proposal_review.sql`：段落级来源、历史案例使用记录、双轮 Proposal
   Review、自动修复版本和导出审查关联。
 - `013_session_workspace_access.sql`：临时浏览器会话哈希、来源 IP 绑定和访问
@@ -310,8 +312,14 @@ Proposal Planner 优先使用 `proposal_chapter`，`target_chapter` 仅作为旧
 Review、安全机械修复和复检，不逐条调用模型，也不进行无限循环。Review 报告展示
 分类质量、高置信比例、低置信数量、未映射数量与冲突数量。
 
-技术要点页面按 `critical → high → medium → low` 排序，“其他”类型置后，并将
-技术方案要点与合规要求分为独立标签页。人工可将每条标记为“需要”“不需要”或
+分类之后加载独立的 `response_strategy` rule，决定 `response_action`、
+`proposal_mapping`、`scoring_impact` 和 `priority`。Proposal Planner 只消费
+`response_action=write_into_proposal` 的事项，商务合规、附件、响应表和风险提醒
+不会进入技术正文。
+
+响应事项页面按 `P0 → P1 → P2 → P3` 排序，并提供全部、技术方案、评分响应、
+商务合规和风险提醒标签页。人工可将误分事项在“技术方案”和“商务合规”之间切换，
+草稿目录随之双向同步；也可将每条标记为“需要”“不需要”或
 “与原文不符”；反馈只保存在机构私有数据库中。被标记为“与原文不符”的完全相同
 文本会在后续抽取中由本地规则过滤，不会上传外部服务，也不会触发额外模型调用。
 

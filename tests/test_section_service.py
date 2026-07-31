@@ -140,3 +140,14 @@ def test_generated_content_removes_human_unreadable_requirement_codes():
     assert "工作安排" in content
     assert "进度控制" in content
     assert "成果验收" in content
+
+
+def test_generated_content_removes_markdown_heading_markers():
+    content = SectionService.sanitize_generated_content(
+        "### 实施安排\n正文内容\n## 进度保障"
+    )
+
+    assert "###" not in content
+    assert "##" not in content
+    assert "实施安排" in content
+    assert "进度保障" in content
