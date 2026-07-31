@@ -4,7 +4,7 @@
 
 | id | feature | status | criticality | owner | production_target | repo_path | health_signals | success_criteria | runbook | check_frequency | last_check | next_check | check_result | evidence | known_risks |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| PF-001 | 招标文件理解与方案分类 | active | critical | bid-agent | http://101.200.154.141 | `app/agents/requirement_classifier.py`, `config/rules/classification.default.json` | 分类质量、冲突、无章节映射、人工反馈 | 咨询类要求不因孤立的软件词汇误入系统功能章节；方案事项均有合理章节或进入合规提醒 | `README.md` 生产验收章节 | release | 2026-07-31 | 下次发布 | healthy | 天津规划咨询项目 6 条软件误分类已归入服务范围；系统功能误分 0、无章节映射 0、内部标识 0 | 持续收集人工分类反馈 |
+| PF-001 | 招标文件理解与方案分类 | active | critical | bid-agent | http://101.200.154.141 | `app/agents/requirement_classifier.py`, `app/services/conflict_service.py`, `config/rules/classification.default.json` | 分类质量、冲突、无章节映射、人工反馈 | 咨询类要求不因孤立的软件词汇误入系统功能章节；真实冲突保留双来源并由人工决策；方案事项通过三重门禁 | `README.md` 生产验收章节 | release | 2026-07-31 | 下次发布 | healthy | ECS `f46aa736`、迁移 022、布尔相关性与冲突 API 正常；公网首页 200、邀请码保护开启 | 持续用真实文件回测冲突误报率 |
 | PF-002 | 章节生成与模型路由 | active | critical | bid-agent | http://101.200.154.141 | `app/core/model_client.py`, `app/core/model_routing.py`, `app/services/section_service.py` | 章节任务状态、模型使用审计、HTTP 5xx | 一个真实章节生成成功；不可用模型被冷却；输入保持在模型限制内；尝试次数和费用受控 | `README.md` 模型路由章节 | release | 2026-07-31 | 下次发布 | healthy | 天津项目真实失败章节由 qwen-max 成功生成 2,298 字，0 条章节校核问题，工作流成功 | 继续监控不同模型不可用时的有界降级 |
 
 Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `retired`.
@@ -33,3 +33,4 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 | 2026-07-31 | Response Strategy 最小增量修复 | degraded | PF-001, PF-002 | INC-004 fixing | 分类与响应动作解耦；Planner 只读写入方案事项；人工归类同步目录；保存前清除 Markdown 标题标记 | 4 个指定策略案例通过；后端 188 项、前端 2 项及完整发布门禁通过 | 尚未部署 ECS | 提交并在获授权后部署真实回测 |
 | 2026-07-31 | Response Strategy 测试公网发布 | healthy | PF-001, PF-002 | INC-004 monitoring | 部署 `f752ddd5` 并应用迁移 021 | 公网首页 200、健康接口正常、邀请码保护开启、容器无新增错误 | none | 等待用户真实文件试用 |
 | 2026-07-31 | 冲突检测与响应价值治理开发 | maintenance | PF-001, PF-002 | none | 新增来源分组、四类差异、版本化人工决策、风险/价值双排序和章节级暂停 | 后端全量测试、前端测试与构建通过 | 尚未应用生产迁移 022 | 完成发布门禁后提交，部署需生产授权 |
+| 2026-07-31 | 用户授权冲突检测与响应价值治理发布 | healthy | PF-001, PF-002 | none | 部署 `f46aa736` 并应用迁移 022 | 公网首页与健康接口正常；邀请码保护开启；冲突 API 注册；容器无新增错误 | none | 等待真实招标文件试用反馈 |
