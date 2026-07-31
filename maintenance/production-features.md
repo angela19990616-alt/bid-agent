@@ -5,7 +5,7 @@
 | id | feature | status | criticality | owner | production_target | repo_path | health_signals | success_criteria | runbook | check_frequency | last_check | next_check | check_result | evidence | known_risks |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | PF-001 | 招标文件理解与方案分类 | active | critical | bid-agent | http://101.200.154.141 | `app/agents/requirement_classifier.py`, `app/services/conflict_service.py`, `config/rules/classification.default.json` | 分类质量、冲突、无章节映射、人工反馈 | 咨询类要求不因孤立的软件词汇误入系统功能章节；真实冲突保留双来源并由人工决策；方案事项通过三重门禁 | `README.md` 生产验收章节 | release | 2026-07-31 | 下次发布 | healthy | ECS `b7a29f94`；真实样例抽取 83 条响应事项、形成 4 章，冲突误报 0 | 持续用真实文件回测冲突误报率 |
-| PF-002 | 章节生成与模型路由 | active | critical | bid-agent | http://101.200.154.141 | `app/core/model_client.py`, `app/core/model_routing.py`, `app/services/section_service.py` | 章节任务状态、模型使用审计、HTTP 5xx | 一个真实章节生成成功；不可用模型被冷却；输入保持在模型限制内；尝试次数和费用受控 | `README.md` 模型路由章节 | release | 2026-07-31 | 下次发布 | healthy | 真实样例 4/4 章通过章节校核，共 6,910 字；整本 Review 可交付、覆盖率 100%、阻断问题 0，Word 导出成功 | 继续监控不同模型不可用时的有界降级 |
+| PF-002 | 章节生成与模型路由 | active | critical | bid-agent | http://101.200.154.141 | `app/core/model_client.py`, `app/core/model_routing.py`, `app/services/section_service.py` | 章节任务状态、模型使用审计、HTTP 5xx | 一个真实章节生成成功；不可用模型被冷却；输入保持在模型限制内；尝试次数和费用受控 | `README.md` 模型路由章节 | release | 2026-07-31 | 下次发布 | healthy | ECS `e10c2637`；DeepSeek V4 Flash 抽取与 V4 Pro 写作生产真实调用成功，公网健康 | 继续监控实际全文件处理时延和有界降级 |
 
 Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `retired`.
 
@@ -36,3 +36,4 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 | 2026-07-31 | 冲突检测与响应价值治理开发 | maintenance | PF-001, PF-002 | none | 新增来源分组、四类差异、版本化人工决策、风险/价值双排序和章节级暂停 | 后端全量测试、前端测试与构建通过 | 尚未应用生产迁移 022 | 完成发布门禁后提交，部署需生产授权 |
 | 2026-07-31 | 用户授权冲突检测与响应价值治理发布 | healthy | PF-001, PF-002 | none | 部署 `f46aa736` 并应用迁移 022 | 公网首页与健康接口正常；邀请码保护开启；冲突 API 注册；容器无新增错误 | none | 等待真实招标文件试用反馈 |
 | 2026-07-31 | 用户授权真实样例全流程回归 | healthy | PF-001, PF-002 | INC-005 closed | 注册 Response Strategy 阶段；模型超时自动拆分小批次并从检查点续跑 | 196 项测试和完整发布门禁通过；83 条响应事项、4/4 章共 6,910 字、章节问题 0；整本 Review 可交付、覆盖率 100%、阻断问题 0；Word 导出成功 | none | 按发布周期持续监控真实文件成功率和时延 |
+| 2026-07-31 | DeepSeek V4 生产发布 | healthy | PF-002 | none | 抽取/分类优先 V4 Flash 且关闭思考；写作/终审优先 V4 Pro 且开启思考；百炼有界备用 | 196 项测试与完整门禁通过；生产两类真实 API 调用成功；5 容器健康，公网首页 200 | none | 用下一份真实招标文件观察端到端耗时 |
