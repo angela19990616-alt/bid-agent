@@ -254,7 +254,7 @@ def list_workspace_requirements(
     if view == "compliance":
         return [
             item for item in items
-            if item["requirement_type"] in {
+            if item["type"] in {
                 "commercial_requirement",
                 "qualification_requirement",
                 "compliance_requirement",

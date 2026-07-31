@@ -357,6 +357,7 @@ export default function Home() {
   async function waitForWorkspace(workspaceId: string, initial: Workspace) {
     let completed = initial;
     let consecutiveNetworkErrors = 0;
+    let lastPollingError = "";
     while (!READY_WORKSPACE_STATUSES.has(completed.status)) {
       if (completed.status === "draft") {
         throw new Error(
@@ -373,8 +374,13 @@ export default function Home() {
         setWorkspace(completed);
       } catch (caught) {
         consecutiveNetworkErrors += 1;
+        lastPollingError = caught instanceof Error
+          ? caught.message
+          : "无法读取处理进度";
         if (consecutiveNetworkErrors >= 5) {
-          throw new Error("网络连接暂时中断，请保持当前页面并稍后重试。");
+          throw new Error(
+            `处理进度读取失败：${lastPollingError}。后台任务可能仍在运行，请保持当前页面并稍后重试。`,
+          );
         }
       }
     }

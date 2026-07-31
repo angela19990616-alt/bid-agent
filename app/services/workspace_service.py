@@ -153,6 +153,7 @@ class WorkspaceService:
             self.plan_service.create_recommended_outline(
                 workspace_id, writing_rules
             )
+            pipeline.succeed(run_id, "proposal_planner")
         except Exception as exc:
             self._set_status(workspace_id, "draft")
             pipeline.fail(run_id, type(exc).__name__, str(exc))
@@ -214,7 +215,7 @@ class WorkspaceService:
                 for item in requirements
             ),
             "compliance": sum(
-                item["requirement_type"] in {
+                item["type"] in {
                     "commercial_requirement",
                     "qualification_requirement",
                     "compliance_requirement",

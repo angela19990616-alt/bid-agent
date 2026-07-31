@@ -87,6 +87,8 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.doesNotMatch(page, /workspaces\/recent\/latest/);
   assert.doesNotMatch(page, /attempt < 180/);
   assert.doesNotMatch(page, /处理时间较长，请稍后重新打开/);
+  assert.doesNotMatch(page, /网络连接暂时中断/);
+  assert.match(page, /处理进度读取失败/);
   assert.match(page, /workspaces\/\$\{workspace\.id\}\/retry/);
   assert.match(page, /继续处理/);
   assert.match(css, /@media \(max-width: 980px\)/);

@@ -18,14 +18,14 @@ class FakeRequirementService:
                 "need_generation": True,
                 "response_action": "write_into_proposal",
                 "scoring_impact": "score_item",
-                "requirement_type": "scoring_requirement",
+                "type": "scoring_requirement",
             },
             {
                 "id": uuid4(),
                 "need_generation": False,
                 "response_action": "compliance_commitment",
                 "scoring_impact": "penalty_risk",
-                "requirement_type": "compliance_requirement",
+                "type": "compliance_requirement",
             },
         ]
 
@@ -92,3 +92,38 @@ def test_workspace_summary_loads_requirements_once(monkeypatch):
         "compliance": 1,
         "risk": 1,
     }
+
+
+def test_completed_upload_marks_pipeline_succeeded(monkeypatch):
+    calls = []
+
+    class Pipeline:
+        def record(self, run_id, stage, **_kwargs):
+            calls.append(("record", run_id, stage))
+
+        def succeed(self, run_id, stage):
+            calls.append(("succeed", run_id, stage))
+
+        def fail(self, *_args):
+            raise AssertionError("successful processing must not fail")
+
+    rules = SimpleNamespace(snapshot=lambda: {})
+    service = WorkspaceService(
+        requirement_service=SimpleNamespace(extract=lambda *_args: None),
+        plan_service=SimpleNamespace(
+            create_recommended_outline=lambda *_args: []
+        ),
+        rule_engine=SimpleNamespace(load=lambda _kind: rules),
+    )
+    monkeypatch.setattr(workspace_module, "ControlledPipeline", Pipeline)
+    monkeypatch.setattr(
+        workspace_module.ModelBudgetService,
+        "configure_for_document",
+        lambda *_args: {},
+    )
+    monkeypatch.setattr(service, "_set_status", lambda *_args: None)
+    run_id = uuid4()
+
+    service.complete_prepared_upload(uuid4(), uuid4(), run_id)
+
+    assert calls[-1] == ("succeed", run_id, "proposal_planner")

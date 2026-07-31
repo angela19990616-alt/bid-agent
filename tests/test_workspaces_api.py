@@ -105,19 +105,19 @@ def test_response_views_filter_by_strategy_dimensions(monkeypatch):
             "id": "proposal",
             "response_action": "write_into_proposal",
             "scoring_impact": "no_score",
-            "requirement_type": "technical_requirement",
+            "type": "technical_requirement",
         },
         {
             "id": "score",
             "response_action": "write_into_proposal",
             "scoring_impact": "score_item",
-            "requirement_type": "scoring_requirement",
+            "type": "scoring_requirement",
         },
         {
             "id": "risk",
             "response_action": "risk_notice",
             "scoring_impact": "penalty_risk",
-            "requirement_type": "format_requirement",
+            "type": "format_requirement",
         },
     ]
     monkeypatch.setattr(
