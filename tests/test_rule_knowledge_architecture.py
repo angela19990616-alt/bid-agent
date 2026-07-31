@@ -52,8 +52,8 @@ def test_model_routing_rules_are_external_and_bounded():
     assert len(routing.model_pool) >= 10
     assert routing.max_billable_failures == 2
     assert routing.models_for_task("writing", "primary") == [
-        "deepseek-reasoner",
-        "deepseek-chat",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
         "qwen3.7-plus",
         "qwen-max",
         "glm-5",
@@ -64,8 +64,8 @@ def test_model_routing_rules_are_external_and_bounded():
         "qwen3.5-plus",
     ]
     assert routing.models_for_task("classification", "primary") == [
-        "deepseek-chat",
-        "deepseek-reasoner",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
         "qwen3.7-plus",
         "qwen-max",
         "glm-5",
@@ -76,7 +76,7 @@ def test_model_routing_rules_are_external_and_bounded():
         "deepseek-r1-distill-qwen-32b",
     ]
     assert routing.models_for_task("extraction", "primary")[:2] == [
-        "deepseek-chat",
+        "deepseek-v4-flash",
         "qwen3.7-plus",
     ]
     assert routing.is_retryable(RuntimeError("额度不足"))

@@ -24,23 +24,23 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv(
-        "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
+        "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
     )
     openai_base_url: str = os.getenv(
         "OPENAI_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
-    llm_model: str = os.getenv("LLM_MODEL", "deepseek-chat")
+    llm_model: str = os.getenv("LLM_MODEL", "deepseek-v4-flash")
     extraction_model: str = os.getenv(
-        "EXTRACTION_MODEL", "deepseek-chat"
+        "EXTRACTION_MODEL", "deepseek-v4-flash"
     )
     classification_model: str = os.getenv(
-        "CLASSIFICATION_MODEL", "deepseek-chat"
+        "CLASSIFICATION_MODEL", "deepseek-v4-flash"
     )
     writing_model: str = os.getenv(
-        "WRITING_MODEL", "deepseek-reasoner"
+        "WRITING_MODEL", "deepseek-v4-pro"
     )
-    review_model: str = os.getenv("REVIEW_MODEL", "deepseek-reasoner")
+    review_model: str = os.getenv("REVIEW_MODEL", "deepseek-v4-pro")
     max_model_calls_per_workflow: int = int(
         os.getenv("MAX_MODEL_CALLS_PER_WORKFLOW", "40")
     )

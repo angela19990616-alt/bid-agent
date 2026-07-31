@@ -1,7 +1,7 @@
 {
   "key": "default-model-routing",
   "rule_type": "model_routing",
-  "version": 5,
+  "version": 6,
   "name": "模型受控切换规则",
   "description": "优先调用最近发布的高级模型；按任务、健康状态、输入限制和费用边界进行有限降级。",
   "priority_policy": {
@@ -13,8 +13,8 @@
   "max_billable_failures": 2,
   "cooldown_seconds": 1800,
   "model_pool": [
-    {"id": "deepseek-chat", "provider": "deepseek", "tasks": ["extraction", "classification"], "quality_tier": "stable_advanced", "max_input_chars": 24000, "max_output_tokens": 5000},
-    {"id": "deepseek-reasoner", "provider": "deepseek", "tasks": ["writing", "review"], "quality_tier": "reasoning_advanced", "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "deepseek-v4-flash", "provider": "deepseek", "tasks": ["extraction", "classification"], "quality_tier": "latest_advanced", "max_input_chars": 24000, "max_output_tokens": 5000},
+    {"id": "deepseek-v4-pro", "provider": "deepseek", "tasks": ["writing", "review"], "quality_tier": "latest_reasoning_advanced", "max_input_chars": 24000, "max_output_tokens": 5000},
     {"id": "qwen3.7-plus", "tasks": ["extraction", "writing", "classification", "review"], "quality_tier": "latest_advanced", "max_input_chars": 24000, "max_output_tokens": 5000},
     {"id": "qwen-max", "tasks": ["extraction", "writing", "classification", "review"], "quality_tier": "advanced", "max_input_chars": 24000, "max_output_tokens": 5000},
     {"id": "glm-5", "tasks": ["extraction", "writing", "classification", "review"], "quality_tier": "advanced", "max_input_chars": 24000, "max_output_tokens": 5000},
@@ -28,11 +28,11 @@
     {"id": "deepseek-r1-distill-qwen-32b", "tasks": ["writing", "classification", "review"], "max_input_chars": 20000, "max_output_tokens": 4000}
   ],
   "task_fallbacks": {
-    "extraction": ["deepseek-chat", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3-235b-a22b-instruct-2507", "qwen3.5-plus", "qwen3.7-flash"],
-    "classification": ["deepseek-chat", "deepseek-reasoner", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
-    "writing": ["deepseek-reasoner", "deepseek-chat", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus"],
-    "review": ["deepseek-reasoner", "deepseek-chat", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
-    "default": ["deepseek-chat", "deepseek-reasoner", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus"]
+    "extraction": ["deepseek-v4-flash", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3-235b-a22b-instruct-2507", "qwen3.5-plus", "qwen3.7-flash"],
+    "classification": ["deepseek-v4-flash", "deepseek-v4-pro", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
+    "writing": ["deepseek-v4-pro", "deepseek-v4-flash", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus"],
+    "review": ["deepseek-v4-pro", "deepseek-v4-flash", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "deepseek-v3.2", "qwen3-235b-a22b-instruct-2507", "deepseek-r1-distill-qwen-32b"],
+    "default": ["deepseek-v4-flash", "deepseek-v4-pro", "qwen3.7-plus", "qwen-max", "glm-5", "deepseek-v3", "qwen3-max", "qwen-plus-latest", "qwen3.7-flash", "qwen3.5-plus"]
   },
   "retryable_status_codes": [403, 404, 408, 409, 429, 500, 502, 503, 504],
   "zero_usage_status_codes": [403, 404, 429],

@@ -119,13 +119,30 @@ class ModelClient:
                 provider_client = self._client_for_model(model, routing)
                 if provider_client is None:
                     continue
-                response = provider_client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=routing.output_limit(
+                request_options: dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": routing.output_limit(
                         model, max_tokens
                     ),
+                }
+                if (
+                    routing.provider_for(model) == "deepseek"
+                    and model.startswith("deepseek-v4-")
+                ):
+                    request_options["extra_body"] = {
+                        "thinking": {
+                            "type": (
+                                "enabled"
+                                if model == "deepseek-v4-pro"
+                                and task in {"writing", "review"}
+                                else "disabled"
+                            )
+                        }
+                    }
+                response = provider_client.chat.completions.create(
+                    **request_options,
                 )
             except Exception as exc:
                 last_error = exc

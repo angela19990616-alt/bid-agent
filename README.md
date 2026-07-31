@@ -188,8 +188,8 @@ HttpOnly、SameSite=Strict 签名 Cookie；邀请码不会写入前端存储。�
 私密文件中人工填写。
 
 模型调用统一经过兼容 OpenAI SDK 的客户端接口。默认使用 DeepSeek 官方接口：
-抽取与分类优先 `deepseek-chat`，方案写作与终审优先
-`deepseek-reasoner`；百炼保留为有界备用。分别在私密 `.env` 中填写
+抽取与分类优先 `deepseek-v4-flash`，方案写作与终审优先
+`deepseek-v4-pro`；百炼保留为有界备用。分别在私密 `.env` 中填写
 `DEEPSEEK_API_KEY` 和 `DASHSCOPE_API_KEY`，
 任务模型通过 `EXTRACTION_MODEL`、`CLASSIFICATION_MODEL`、
 `WRITING_MODEL` 和 `REVIEW_MODEL` 分开配置，通用回退使用 `LLM_MODEL`。
