@@ -115,6 +115,106 @@ class ProposalPlanService:
                 )
         return SectionService().list(project_id)
 
+    def reconcile_requirement_feedback(
+        self,
+        project_id: UUID,
+        requirement_id: UUID,
+    ) -> list[dict]:
+        """Keep an ungenerated outline in sync with human feedback."""
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT status, response_action, proposal_mapping
+                    FROM requirements
+                    WHERE project_id = %s AND id = %s
+                    """,
+                    (project_id, requirement_id),
+                )
+                requirement = cursor.fetchone()
+                if requirement is None:
+                    return SectionService().list(project_id)
+
+                cursor.execute(
+                    """
+                    DELETE FROM section_requirements
+                    USING sections
+                    WHERE section_requirements.section_id = sections.id
+                      AND section_requirements.requirement_id = %s
+                      AND sections.project_id = %s
+                      AND sections.current_version_id IS NULL
+                    """,
+                    (requirement_id, project_id),
+                )
+
+                eligible = (
+                    requirement["status"] != "rejected"
+                    and requirement["response_action"]
+                    == "write_into_proposal"
+                    and requirement["proposal_mapping"] is not None
+                )
+                if eligible:
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM sections
+                        WHERE project_id = %s
+                          AND title = %s
+                          AND current_version_id IS NULL
+                        ORDER BY created_at
+                        LIMIT 1
+                        """,
+                        (
+                            project_id,
+                            requirement["proposal_mapping"],
+                        ),
+                    )
+                    section = cursor.fetchone()
+                    if section is None:
+                        cursor.execute(
+                            """
+                            INSERT INTO sections (
+                                project_id, title, sort_order, is_recommended
+                            )
+                            SELECT %s, %s, COALESCE(MAX(sort_order), 0) + 1,
+                                   TRUE
+                            FROM sections
+                            WHERE project_id = %s
+                            RETURNING id
+                            """,
+                            (
+                                project_id,
+                                requirement["proposal_mapping"],
+                                project_id,
+                            ),
+                        )
+                        section = cursor.fetchone()
+                    cursor.execute(
+                        """
+                        INSERT INTO section_requirements (
+                            section_id, requirement_id
+                        )
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (section["id"], requirement_id),
+                    )
+
+                cursor.execute(
+                    """
+                    DELETE FROM sections
+                    WHERE project_id = %s
+                      AND current_version_id IS NULL
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM section_requirements
+                          WHERE section_requirements.section_id = sections.id
+                      )
+                    """,
+                    (project_id,),
+                )
+        return SectionService().list(project_id)
+
     def replace_outline(
         self,
         project_id: UUID,

@@ -245,11 +245,16 @@ def record_workspace_requirement_feedback(
     _access: None = Depends(authorize_workspace),
 ):
     try:
-        return RequirementService().record_feedback(
+        requirement = RequirementService().record_feedback(
             workspace_id,
             requirement_id,
             payload.feedback,
         )
+        ProposalPlanService().reconcile_requirement_feedback(
+            workspace_id,
+            requirement_id,
+        )
+        return requirement
     except RequirementNotFoundError as exc:
         raise AppError(404, "REQUIREMENT_NOT_FOUND", "未找到该要求。") from exc
     except RequirementValidationError as exc:

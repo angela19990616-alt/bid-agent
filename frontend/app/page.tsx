@@ -386,15 +386,24 @@ export default function Home() {
           body: JSON.stringify({ feedback }),
         },
       );
+      const refreshed = await request<Workspace>(
+        `/workspaces/${workspace.id}`,
+      );
       setRequirements((items) => items.map((current) => current.id === updated.id ? updated : current));
-      setWorkspace((current) => current ? {
-        ...current,
-        technical_requirements: current.technical_requirements.map(
+      setWorkspace({
+        ...refreshed,
+        technical_requirements: refreshed.technical_requirements.map(
           (requirement) => requirement.id === updated.id
             ? updated
             : requirement,
         ),
-      } : current);
+      });
+      setSections(refreshed.outline);
+      setActiveSectionId((current) => (
+        refreshed.outline.some((section) => section.id === current)
+          ? current
+          : refreshed.outline[0]?.id ?? ""
+      ));
       setIgnoreMenuId("");
       setNotice(
         feedback === "source_mismatch"
