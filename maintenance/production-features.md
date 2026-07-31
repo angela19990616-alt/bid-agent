@@ -17,6 +17,7 @@ Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `ret
 | INC-002 | 2026-07-31 03:53 CST | PF-001 | 用户反馈与分类汇总 | sev3 | 规划咨询项目分类不符合方案编写逻辑 | 最新天津轨道交通项目 | 查看响应事项分类汇总 | closed | 分类器缺少项目上下文，且 Reviewer 未强制纠正高置信模型的软件类误判 | 已增加咨询项目上下文覆盖和 Reviewer 确定性纠正；原位重分类同步未生成目录 | 83 条真实响应事项重分类；6 条误分全部纠正，系统功能误分 0、无章节映射 0；10 章整本生成导出成功 | codex | 按发布周期持续监控 | 2026-07-31 |
 | INC-003 | 2026-07-31 | PF-001 | 用户反馈 | sev3 | 已忽略事项恢复“写入方案”后未回到推荐目录 | 人工确认与目录同步 | 先忽略一条方案事项，再恢复写入 | closed | 人工反馈只恢复 Requirement 状态，未重建草稿章节关联，前端也未刷新目录 | 增加草稿目录双向同步；忽略时移除关联，恢复时按方案章节重新关联并刷新前端 | 后端 179 项测试、前端构建及 2 项页面测试通过 | codex | 随下一次生产发布回测 | 2026-07-31 |
 | INC-004 | 2026-07-31 | PF-001, PF-002 | 用户反馈 | sev3 | 最新输出再次出现 `###` 且 Requirement 分类错误 | 最新生产方案 | 查看最新生成章节及响应事项 | monitoring | 分类器与响应动作直接耦合，缺少独立 Response Strategy；写作规则禁止 Markdown 但保存前未强制清除标题标记 | 新增规则驱动的 Response Strategy、五类响应视图、人工双向归类和 `###` 保存门禁 | 后端 188 项、前端与发布门禁通过；ECS `f752ddd5`、迁移 021、公网健康和邀请码保护正常 | codex | 等待用户真实文件试用反馈 | 2026-07-31 |
+| INC-005 | 2026-07-31 17:20 CST | PF-001 | 用户公网实测 | sev2 | 上传处理失败：未知工作流阶段 `response_strategy_analysis` | 新上传招标文件的 Requirement 分析 | 公网上传并等待后台处理 | fixing | 新增 Response Strategy 记录点未同步加入 `ControlledPipeline.STAGES` 白名单 | 将阶段加入分类与知识加载之间的固定顺序，并添加阶段契约回归测试 | 待全量测试和真实上传回测 | codex | 运行发布门禁后部署并重试失败项目 | 2026-07-31 |
 
 Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring`, `blocked`, `deferred`, `closed`.
 

@@ -19,6 +19,7 @@ STAGES = (
     "requirement_extractor",
     "response_item_normalizer",
     "proposal_classification",
+    "response_strategy_analysis",
     "load_enterprise_knowledge",
     "knowledge_matching",
     "load_proposal_memory",
