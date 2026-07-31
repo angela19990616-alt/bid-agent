@@ -185,7 +185,7 @@ class RequirementAgent:
             return self._extract_batch_once(
                 batch, rules, workflow_run_id=workflow_run_id
             )
-        except RequirementResponseFormatError:
+        except (RequirementResponseFormatError, RequirementAgentError):
             logger.warning(
                 "Model returned malformed requirement JSON; "
                 "retrying in %s-item recovery batches",
@@ -205,7 +205,7 @@ class RequirementAgent:
                         workflow_run_id=workflow_run_id,
                     )
                 )
-            except RequirementResponseFormatError:
+            except (RequirementResponseFormatError, RequirementAgentError):
                 logger.error(
                     "Model returned malformed JSON for a recovery "
                     "batch; applying deterministic fallbacks"

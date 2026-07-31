@@ -212,6 +212,25 @@ def test_malformed_large_batch_is_retried_in_smaller_batches():
     assert "上一次响应不是合法 JSON" in client.calls[1][1]["content"]
 
 
+def test_timeout_is_retried_in_smaller_recovery_batch():
+    class TimeoutThenSuccess:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, _messages, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("provider timeout")
+            return '{"requirements": []}'
+
+    client = TimeoutThenSuccess()
+    agent = RequirementAgent(client, recovery_batch_size=8)
+
+    agent.extract([source("供应商须提交项目实施计划。")])
+
+    assert client.calls == 2
+
+
 def test_malformed_recovery_batch_keeps_scoring_fallback():
     client = SequencedModelClient(
         ['{"requirements":[', '{"requirements":[']
