@@ -5,6 +5,7 @@ from openai import OpenAI
 
 from app.config.settings import settings
 from app.core.model_routing import ModelRoutingRules
+from app.core.privacy_sanitizer import PrivacySanitizer
 from app.services.model_budget_service import ModelBudgetService
 
 
@@ -66,12 +67,14 @@ class ModelClient:
             raise ModelConfigurationError(
                 "向量检索需要配置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY"
             )
+        sanitizer = PrivacySanitizer.load()
+        safe_texts = [sanitizer.sanitize_text(text)[0] for text in texts]
         embeddings: list[list[float]] = []
         batch_size = settings.embedding_batch_size
         for start in range(0, len(texts), batch_size):
             response = self.client.embeddings.create(
                 model=settings.embedding_model,
-                input=texts[start : start + batch_size],
+                input=safe_texts[start : start + batch_size],
                 dimensions=settings.embedding_dimensions,
                 encoding_format="float",
             )
@@ -89,6 +92,8 @@ class ModelClient:
         workflow_run_id: UUID | None = None,
     ) -> str:
         routing = ModelRoutingRules.load()
+        sanitizer = PrivacySanitizer.load()
+        safe_messages, privacy_mapping = sanitizer.sanitize_messages(messages)
         models = routing.models_for_task(
             task,
             settings.model_for_task(task),
@@ -112,7 +117,7 @@ class ModelClient:
                     task=task,
                     model=model,
                     estimated_tokens=ModelBudgetService.estimate(
-                        messages, max_tokens
+                        safe_messages, max_tokens
                     ),
                 )
             try:
@@ -121,7 +126,7 @@ class ModelClient:
                     continue
                 request_options: dict[str, Any] = {
                     "model": model,
-                    "messages": messages,
+                    "messages": safe_messages,
                     "temperature": temperature,
                     "max_tokens": routing.output_limit(
                         model, max_tokens
@@ -178,7 +183,7 @@ class ModelClient:
             if not content:
                 raise RuntimeError("模型返回了空内容")
             routing.mark_success(task, model)
-            return content
+            return sanitizer.restore(content, privacy_mapping)
         if last_error is not None:
             raise last_error
         raise RuntimeError("没有可用的模型路由。")
