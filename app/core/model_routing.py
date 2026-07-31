@@ -108,6 +108,12 @@ class ModelRoutingRules:
                 )
         return requested
 
+    def provider_for(self, model: str) -> str:
+        for item in self.model_pool:
+            if item.get("id") == model:
+                return str(item.get("provider", "bailian"))
+        return "bailian"
+
     def mark_failure(self, model: str, exc: Exception) -> None:
         if not self.known_zero_usage(exc):
             return

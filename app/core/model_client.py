@@ -19,25 +19,53 @@ class ModelClient:
         base_url: str | None = None,
         client: Any | None = None,
     ):
+        self._injected_client = client
         if client is not None:
             self.client = client
             return
         resolved_key = api_key or settings.model_api_key
-        if not resolved_key:
+        if not resolved_key and not settings.deepseek_api_key:
             raise ModelConfigurationError(
-                "未配置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY"
+                "未配置 DEEPSEEK_API_KEY、DASHSCOPE_API_KEY 或 OPENAI_API_KEY"
             )
-        self.client = OpenAI(
-            api_key=resolved_key,
-            base_url=base_url or settings.openai_base_url,
-            timeout=settings.model_request_timeout_seconds,
-            # Retry and model switching are controlled by ModelRoutingRules.
-            max_retries=0,
+        self.client = (
+            OpenAI(
+                api_key=resolved_key,
+                base_url=base_url or settings.openai_base_url,
+                timeout=settings.model_request_timeout_seconds,
+                # Retry and switching are controlled by ModelRoutingRules.
+                max_retries=0,
+            )
+            if resolved_key
+            else None
         )
+        self.deepseek_client = (
+            OpenAI(
+                api_key=settings.deepseek_api_key,
+                base_url=settings.deepseek_base_url,
+                timeout=settings.model_request_timeout_seconds,
+                max_retries=0,
+            )
+            if settings.deepseek_api_key
+            else None
+        )
+
+    def _client_for_model(
+        self, model: str, routing: ModelRoutingRules
+    ) -> Any | None:
+        if self._injected_client is not None:
+            return self._injected_client
+        if routing.provider_for(model) == "deepseek":
+            return self.deepseek_client
+        return self.client
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        if self.client is None:
+            raise ModelConfigurationError(
+                "向量检索需要配置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY"
+            )
         embeddings: list[list[float]] = []
         batch_size = settings.embedding_batch_size
         for start in range(0, len(texts), batch_size):
@@ -65,6 +93,11 @@ class ModelClient:
             task,
             settings.model_for_task(task),
         )
+        models = [
+            model
+            for model in models
+            if self._client_for_model(model, routing) is not None
+        ]
         if not models:
             raise RuntimeError(
                 "当前任务的模型均处于临时冷却状态，请稍后重试。"
@@ -83,7 +116,10 @@ class ModelClient:
                     ),
                 )
             try:
-                response = self.client.chat.completions.create(
+                provider_client = self._client_for_model(model, routing)
+                if provider_client is None:
+                    continue
+                response = provider_client.chat.completions.create(
                     model=model,
                     messages=messages,
                     temperature=temperature,

@@ -22,21 +22,25 @@ class Settings:
     redis_db: int = int(os.getenv("REDIS_DB", "0"))
     dashscope_api_key: str = os.getenv("DASHSCOPE_API_KEY", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+    deepseek_base_url: str = os.getenv(
+        "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
+    )
     openai_base_url: str = os.getenv(
         "OPENAI_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
-    llm_model: str = os.getenv("LLM_MODEL", "qwen3.7-plus")
+    llm_model: str = os.getenv("LLM_MODEL", "deepseek-chat")
     extraction_model: str = os.getenv(
-        "EXTRACTION_MODEL", "qwen3.7-plus"
+        "EXTRACTION_MODEL", "deepseek-chat"
     )
     classification_model: str = os.getenv(
-        "CLASSIFICATION_MODEL", "qwen3.7-plus"
+        "CLASSIFICATION_MODEL", "deepseek-chat"
     )
     writing_model: str = os.getenv(
-        "WRITING_MODEL", "qwen3.7-plus"
+        "WRITING_MODEL", "deepseek-reasoner"
     )
-    review_model: str = os.getenv("REVIEW_MODEL", "qwen3.7-plus")
+    review_model: str = os.getenv("REVIEW_MODEL", "deepseek-reasoner")
     max_model_calls_per_workflow: int = int(
         os.getenv("MAX_MODEL_CALLS_PER_WORKFLOW", "40")
     )

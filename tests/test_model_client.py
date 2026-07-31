@@ -121,11 +121,11 @@ def test_chat_rejects_empty_model_output():
 @pytest.mark.parametrize(
     ("task", "expected"),
     [
-        ("extraction", "qwen3.7-plus"),
-        ("classification", "qwen3.7-plus"),
-        ("writing", "qwen3.7-plus"),
-        ("review", "qwen3.7-plus"),
-        ("unknown", "qwen3.7-plus"),
+        ("extraction", "deepseek-chat"),
+        ("classification", "deepseek-chat"),
+        ("writing", "deepseek-reasoner"),
+        ("review", "deepseek-reasoner"),
+        ("unknown", "deepseek-chat"),
     ],
 )
 def test_chat_routes_model_by_bounded_task(task, expected):
@@ -165,7 +165,7 @@ def test_budget_is_reserved_and_finished_around_model_call(monkeypatch):
 
     assert result == "完成"
     assert events[0][0:2] == ("reserve", run_id)
-    assert events[0][2]["model"] == "qwen3.7-plus"
+    assert events[0][2]["model"] == "deepseek-reasoner"
     assert events[1] == (
         "finish",
         7,
@@ -262,8 +262,8 @@ def test_retryable_provider_error_switches_to_rule_fallback():
 
     assert result == "备用模型完成"
     assert len(completions.calls) == 2
-    assert completions.calls[0]["model"] == "qwen3.7-plus"
-    assert completions.calls[1]["model"] == "qwen-max"
+    assert completions.calls[0]["model"] == "deepseek-reasoner"
+    assert completions.calls[1]["model"] == "deepseek-chat"
 
 
 def test_forbidden_model_switches_to_rule_fallback():
@@ -281,8 +281,8 @@ def test_forbidden_model_switches_to_rule_fallback():
 
     assert result == "备用模型完成"
     assert len(completions.calls) == 2
-    assert completions.calls[0]["model"] == "qwen3.7-plus"
-    assert completions.calls[1]["model"] == "qwen-max"
+    assert completions.calls[0]["model"] == "deepseek-reasoner"
+    assert completions.calls[1]["model"] == "deepseek-chat"
 
 
 def test_zero_usage_failures_can_scan_ten_model_pool():
@@ -350,7 +350,7 @@ def test_permission_failure_cools_model_for_next_request():
         task="writing",
     )
 
-    assert second.chat.completions.calls[0]["model"] == "qwen-max"
+    assert second.chat.completions.calls[0]["model"] == "deepseek-chat"
 
 
 def test_non_retryable_provider_error_does_not_switch_model():

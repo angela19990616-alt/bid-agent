@@ -187,12 +187,13 @@ HttpOnly、SameSite=Strict 签名 Cookie；邀请码不会写入前端存储。�
 不要把真实密码或模型密钥提交到 Git。复制 `.env.example` 为 `.env`，在本机
 私密文件中人工填写。
 
-模型调用统一经过兼容 OpenAI SDK 的客户端接口，当前国内部署默认连接阿里云百炼：
-在私密 `.env` 中填写 `DASHSCOPE_API_KEY`，并使用百炼兼容端点、
+模型调用统一经过兼容 OpenAI SDK 的客户端接口。默认使用 DeepSeek 官方接口：
+抽取与分类优先 `deepseek-chat`，方案写作与终审优先
+`deepseek-reasoner`；百炼保留为有界备用。分别在私密 `.env` 中填写
+`DEEPSEEK_API_KEY` 和 `DASHSCOPE_API_KEY`，
 任务模型通过 `EXTRACTION_MODEL`、`CLASSIFICATION_MODEL`、
 `WRITING_MODEL` 和 `REVIEW_MODEL` 分开配置，通用回退使用 `LLM_MODEL`。
-默认分别使用 `qwen-plus-2025-07-28`、`qwen3.7-plus`、`qwen3.7-plus`、
-`glm-5` 和 `qwen-max`；向量模型使用 `text-embedding-v4`。
+向量模型仍使用百炼 `text-embedding-v4`。
 `OPENAI_BASE_URL`、各模型变量、
 `EMBEDDING_MODEL` 和 `EMBEDDING_DIMENSIONS` 均可配置，切换供应商不需要修改
 Agent 或业务服务。真实 Key 只能写入本机或服务器 `.env`，禁止发到聊天或提交
