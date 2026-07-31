@@ -15,15 +15,8 @@ def proposal_relevance(
     importance: str,
     scoring_relation: str,
     need_generation: bool,
-) -> str:
-    if not need_generation:
-        return "low"
-    if (
-        importance in {"critical", "high"}
-        or scoring_relation == "high_score_item"
-    ):
-        return "high"
-    return "medium"
+) -> bool:
+    return need_generation
 
 
 def model_call_count(run_id: UUID) -> int:

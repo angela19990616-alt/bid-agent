@@ -191,7 +191,14 @@ class WorkspaceService:
         documents = self.document_service.list(workspace_id)
         requirements = self.requirement_service.list(workspace_id)
         technical = [
-            item for item in requirements if item["need_generation"]
+            item for item in requirements
+            if item["response_action"] == "write_into_proposal"
+            and item.get("proposal_relevance", True)
+            and (
+                item.get("target_chapter", item.get("proposal_mapping"))
+                is not None
+                or item.get("need_generation", False)
+            )
         ]
         compliance = [
             item for item in requirements if not item["need_generation"]
@@ -217,8 +224,11 @@ class WorkspaceService:
                 for item in requirements
             ),
             "risk": sum(
-                item["scoring_impact"] == "penalty_risk"
-                or item["response_action"] == "risk_notice"
+                (
+                    item["priority"] == "P0"
+                    if "priority" in item
+                    else item["scoring_impact"] == "penalty_risk"
+                )
                 for item in requirements
             ),
         }

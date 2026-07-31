@@ -32,3 +32,4 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 | 2026-07-31 | 用户报告最新输出格式与分类异常 | incident | PF-001, PF-002 | INC-004 opened | none | 待查询最新模型使用事件、章节内容和分类结果 | none | 只读取证并定位根因 |
 | 2026-07-31 | Response Strategy 最小增量修复 | degraded | PF-001, PF-002 | INC-004 fixing | 分类与响应动作解耦；Planner 只读写入方案事项；人工归类同步目录；保存前清除 Markdown 标题标记 | 4 个指定策略案例通过；后端 188 项、前端 2 项及完整发布门禁通过 | 尚未部署 ECS | 提交并在获授权后部署真实回测 |
 | 2026-07-31 | Response Strategy 测试公网发布 | healthy | PF-001, PF-002 | INC-004 monitoring | 部署 `f752ddd5` 并应用迁移 021 | 公网首页 200、健康接口正常、邀请码保护开启、容器无新增错误 | none | 等待用户真实文件试用 |
+| 2026-07-31 | 冲突检测与响应价值治理开发 | maintenance | PF-001, PF-002 | none | 新增来源分组、四类差异、版本化人工决策、风险/价值双排序和章节级暂停 | 后端全量测试、前端测试与构建通过 | 尚未应用生产迁移 022 | 完成发布门禁后提交，部署需生产授权 |

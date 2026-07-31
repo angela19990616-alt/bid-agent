@@ -9,13 +9,13 @@ from scripts.reclassify_project import (
 
 
 def test_reclassification_keeps_compliance_out_of_proposal():
-    assert proposal_relevance("critical", "high_score_item", False) == "low"
+    assert proposal_relevance("critical", "high_score_item", False) is False
 
 
 def test_reclassification_prioritizes_important_proposal_items():
-    assert proposal_relevance("high", "requirement_only", True) == "high"
-    assert proposal_relevance("medium", "high_score_item", True) == "high"
-    assert proposal_relevance("medium", "requirement_only", True) == "medium"
+    assert proposal_relevance("high", "requirement_only", True) is True
+    assert proposal_relevance("medium", "high_score_item", True) is True
+    assert proposal_relevance("medium", "requirement_only", True) is True
 
 
 def test_model_call_count_uses_current_workflow(monkeypatch):

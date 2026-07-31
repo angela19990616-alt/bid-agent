@@ -15,7 +15,8 @@ from app.database.db import connect
 
 RULE_TYPES = {
     "extraction", "classification", "response_strategy", "knowledge",
-    "proposal_memory", "writing", "compliance"
+    "proposal_memory", "writing", "compliance",
+    "conflict_detection", "response_prioritization",
 }
 
 
@@ -53,6 +54,8 @@ class RuleEngine:
         "extraction": "extraction.default.json",
         "classification": "classification.default.json",
         "response_strategy": "response_strategy.default.json",
+        "conflict_detection": "conflict_detection.default.json",
+        "response_prioritization": "response_prioritization.default.json",
         "knowledge": "knowledge.default.json",
         "proposal_memory": "proposal_memory.default.json",
         "writing": "writing.default.json",
@@ -254,6 +257,13 @@ class RuleEngine:
                 "actions", "hard_rules", "type_defaults",
                 "manual_proposal_chapters", "priority_policy"
             )
+        elif rule_type == "conflict_detection":
+            required = (
+                "difference_types", "source_authority", "topic_keywords",
+                "conflict_priority", "confidence_thresholds",
+            )
+        elif rule_type == "response_prioritization":
+            required = ("proposal_value", "hard_rules", "p0_evidence_keywords")
         elif rule_type == "knowledge":
             required = ("eligibility", "matching", "fact_boundaries")
         elif rule_type == "proposal_memory":

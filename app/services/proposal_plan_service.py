@@ -40,7 +40,8 @@ class ProposalPlanService:
                     WHERE project_id = %s
                       AND status <> 'rejected'
                       AND response_action = 'write_into_proposal'
-                      AND proposal_mapping IS NOT NULL
+                      AND proposal_relevance = TRUE
+                      AND target_chapter IS NOT NULL
                     ORDER BY created_at, id
                     """,
                     (project_id,),
@@ -125,7 +126,8 @@ class ProposalPlanService:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
                     """
-                    SELECT status, response_action, proposal_mapping
+                    SELECT status, response_action, proposal_mapping,
+                           proposal_relevance
                     FROM requirements
                     WHERE project_id = %s AND id = %s
                     """,
@@ -151,6 +153,7 @@ class ProposalPlanService:
                     requirement["status"] != "rejected"
                     and requirement["response_action"]
                     == "write_into_proposal"
+                    and requirement.get("proposal_relevance", True)
                     and requirement["proposal_mapping"] is not None
                 )
                 if eligible:
@@ -248,6 +251,7 @@ class ProposalPlanService:
                       AND id = ANY(%s)
                       AND status <> 'rejected'
                       AND response_action = 'write_into_proposal'
+                      AND proposal_relevance = TRUE
                       AND proposal_mapping IS NOT NULL
                     """,
                     (project_id, list(dict.fromkeys(requirement_ids))),

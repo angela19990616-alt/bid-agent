@@ -30,9 +30,11 @@ from app.agents.requirement_reviewer import (
     ReviewedRequirement,
 )
 from app.database.db import connect
+from app.core.response_prioritization import ResponsePrioritizationEngine
 from app.core.response_strategy import ResponseStrategyAnalyzer
 from app.rules.engine import RuleDocument, RuleEngine
 from app.services.model_budget_service import ModelBudgetExceeded
+from app.services.conflict_service import ConflictService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -50,7 +52,7 @@ class Candidate:
     classification_conflict: bool
     classification_notes: str
     knowledge_support_required: bool
-    proposal_relevance: str
+    proposal_relevance: bool
     proposal_chapter: str | None
     target_chapter: str | None
     need_generation: bool
@@ -58,6 +60,8 @@ class Candidate:
     proposal_mapping: str | None
     scoring_impact: str
     priority: str
+    proposal_value: int
+    risk_type: str | None
     fingerprint: str
 
 
@@ -234,12 +238,12 @@ class RequirementService:
                             proposal_chapter, target_chapter,
                             need_generation, response_action,
                             proposal_mapping, scoring_impact, priority,
-                            fingerprint
+                            proposal_value, risk_type, fingerprint
                         )
                         VALUES (
                             %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                         )
                         ON CONFLICT (project_id, fingerprint) DO NOTHING
                         RETURNING id
@@ -265,6 +269,8 @@ class RequirementService:
                             candidate.proposal_mapping,
                             candidate.scoring_impact,
                             candidate.priority,
+                            candidate.proposal_value,
+                            candidate.risk_type,
                             candidate.fingerprint,
                         ),
                     )
@@ -292,6 +298,7 @@ class RequirementService:
                     """,
                     (project_id,),
                 )
+        ConflictService().analyze_project(project_id)
         return created, skipped
 
     @staticmethod
@@ -372,7 +379,7 @@ class RequirementService:
         if document_id:
             filters.append("documents.public_id = %s")
             params.append(document_id)
-        if proposal_relevance:
+        if proposal_relevance is not None:
             filters.append("requirements.proposal_relevance = %s")
             params.append(proposal_relevance)
         if need_generation is not None:
@@ -550,6 +557,17 @@ class RequirementService:
             importance=current["importance"],
             rules=self.rule_engine.load("response_strategy"),
         )
+        prioritization = ResponsePrioritizationEngine.evaluate(
+            text=(
+                f"{current['title']} {current['normalized_text']} "
+                f"{current['quote']}"
+            ),
+            response_action=decision.response_action,
+            scoring_impact=decision.scoring_impact,
+            importance=current["importance"],
+            requirement_type=decision.requirement_type,
+            scoring_relation=current["scoring_relation"],
+        )
         with connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -563,6 +581,8 @@ class RequirementService:
                         need_generation = %s,
                         scoring_impact = %s,
                         priority = %s,
+                        proposal_value = %s,
+                        risk_type = %s,
                         proposal_relevance = %s,
                         classification_confidence = 1.0,
                         classification_conflict = FALSE,
@@ -579,13 +599,10 @@ class RequirementService:
                         decision.proposal_mapping,
                         decision.response_action == "write_into_proposal",
                         decision.scoring_impact,
-                        decision.priority,
-                        (
-                            "high"
-                            if decision.response_action
-                            == "write_into_proposal"
-                            else "low"
-                        ),
+                        prioritization.risk_priority,
+                        prioritization.proposal_value,
+                        prioritization.risk_type,
+                        decision.response_action == "write_into_proposal",
                         f"human_strategy_override:{target}",
                         project_id,
                         requirement_id,
@@ -705,12 +722,7 @@ class RequirementService:
                 item = classified.item
                 proposal_chapter = classified.proposal_chapter
                 need_generation = proposal_chapter is not None
-                relevance = (
-                    "high"
-                    if classified.importance in {"critical", "high"}
-                    or classified.scoring_relation == "high_score_item"
-                    else "medium" if need_generation else "low"
-                )
+                relevance = need_generation
             else:
                 reviewed = (
                     raw_item
@@ -721,7 +733,7 @@ class RequirementService:
                 classified = RequirementClassifier.classify_by_rules(item)
                 proposal_chapter = reviewed.target_chapter
                 need_generation = reviewed.need_generation
-                relevance = reviewed.proposal_relevance
+                relevance = reviewed.proposal_relevance != "low"
             canonical = RequirementService._canonical(
                 item.normalized_text
             )
@@ -739,6 +751,15 @@ class RequirementService:
             need_generation = (
                 taxonomy.response_action == "write_into_proposal"
                 and proposal_chapter is not None
+            )
+            relevance = need_generation
+            prioritization = ResponsePrioritizationEngine.evaluate(
+                text=f"{item.title} {item.normalized_text} {item.quote}",
+                response_action=taxonomy.response_action,
+                scoring_impact=taxonomy.scoring_impact,
+                importance=classified.importance,
+                requirement_type=taxonomy.requirement_type,
+                scoring_relation=classified.scoring_relation,
             )
             duplicate = next(
                 (
@@ -779,6 +800,8 @@ class RequirementService:
                         "proposal_mapping": taxonomy.proposal_mapping,
                         "scoring_impact": taxonomy.scoring_impact,
                         "priority": taxonomy.priority,
+                        "proposal_value": prioritization.proposal_value,
+                        "risk_type": prioritization.risk_type,
                     }
                 )
                 continue
@@ -809,6 +832,8 @@ class RequirementService:
                         "proposal_mapping": taxonomy.proposal_mapping,
                         "scoring_impact": taxonomy.scoring_impact,
                         "priority": taxonomy.priority,
+                        "proposal_value": prioritization.proposal_value,
+                        "risk_type": prioritization.risk_type,
                     }
                 )
         return [
@@ -837,6 +862,8 @@ class RequirementService:
                 proposal_mapping=item["proposal_mapping"],
                 scoring_impact=item["scoring_impact"],
                 priority=item["priority"],
+                proposal_value=item["proposal_value"],
+                risk_type=item["risk_type"],
                 fingerprint=hashlib.sha256(
                     item["canonical"].encode()
                 ).hexdigest(),
@@ -921,6 +948,8 @@ class RequirementService:
                 requirements.proposal_mapping,
                 requirements.scoring_impact,
                 requirements.priority,
+                requirements.proposal_value,
+                requirements.risk_type,
                 requirements.target_chapter,
                 requirements.need_generation,
                 requirements.created_at,
@@ -983,6 +1012,8 @@ class RequirementService:
                     "proposal_mapping": row["proposal_mapping"],
                     "scoring_impact": row["scoring_impact"],
                     "priority": row["priority"],
+                    "proposal_value": row["proposal_value"],
+                    "risk_type": row["risk_type"],
                     "target_chapter": row["target_chapter"],
                     "need_generation": row["need_generation"],
                     "created_at": row["created_at"],

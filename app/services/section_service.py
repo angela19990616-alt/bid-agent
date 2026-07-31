@@ -86,6 +86,9 @@ class SectionService:
                     WHERE project_id = %s
                       AND id = ANY(%s)
                       AND status <> 'rejected'
+                      AND response_action = 'write_into_proposal'
+                      AND proposal_relevance = TRUE
+                      AND target_chapter IS NOT NULL
                       AND need_generation = TRUE
                     """,
                     (project_id, unique_ids),

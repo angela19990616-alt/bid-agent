@@ -16,6 +16,10 @@ from fastapi.responses import FileResponse
 
 from app.core.errors import AppError
 from app.models.exports import ExportResponse
+from app.models.conflicts import (
+    ConflictResolutionRequest,
+    ConflictResponse,
+)
 from app.models.requirements import (
     RequirementFeedbackUpdate,
     RequirementResponse,
@@ -35,6 +39,11 @@ from app.services.export_service import (
     ExportNotFoundError,
     ExportService,
     ExportValidationError,
+)
+from app.services.conflict_service import (
+    ConflictNotFoundError,
+    ConflictResolutionError,
+    ConflictService,
 )
 from app.services.project_service import ProjectNotFoundError
 from app.services.proposal_plan_service import (
@@ -262,6 +271,39 @@ def list_workspace_requirements(
     return items
 
 
+@router.get(
+    "/{workspace_id}/conflicts",
+    response_model=list[ConflictResponse],
+)
+def list_workspace_conflicts(
+    workspace_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
+    return ConflictService().list(workspace_id)
+
+
+@router.patch(
+    "/{workspace_id}/conflicts/{conflict_id}",
+    response_model=ConflictResponse,
+)
+def resolve_workspace_conflict(
+    workspace_id: UUID,
+    conflict_id: UUID,
+    payload: ConflictResolutionRequest,
+    _access: None = Depends(authorize_workspace),
+):
+    try:
+        return ConflictService().resolve(
+            workspace_id,
+            conflict_id,
+            choice=payload.choice,
+            resolved_by=payload.resolved_by,
+            note=payload.note,
+        )
+    except ConflictNotFoundError as exc:
+        raise AppError(404, "CONFLICT_NOT_FOUND", "未找到该冲突事项。") from exc
+
+
 @router.patch(
     "/{workspace_id}/requirements/{requirement_id}/feedback",
     response_model=RequirementResponse,
@@ -349,6 +391,7 @@ def generate_section(
     _access: None = Depends(authorize_workspace),
 ):
     try:
+        ConflictService.assert_section_unblocked(workspace_id, section_id)
         return SectionService().generate(
             workspace_id,
             section_id,
@@ -358,6 +401,8 @@ def generate_section(
         raise AppError(404, "SECTION_NOT_FOUND", "未找到该章节。") from exc
     except SectionValidationError as exc:
         raise AppError(422, "SECTION_INVALID", str(exc)) from exc
+    except ConflictResolutionError as exc:
+        raise AppError(409, "SECTION_CONFLICT_PENDING", str(exc)) from exc
     except SectionGenerationError as exc:
         raise AppError(
             502,
@@ -419,9 +464,12 @@ def export_full_proposal(
     _access: None = Depends(authorize_workspace),
 ):
     try:
+        ConflictService.assert_export_ready(workspace_id)
         return ExportService().create_full(workspace_id)
     except ExportValidationError as exc:
         raise AppError(422, "EXPORT_NOT_ALLOWED", str(exc)) from exc
+    except ConflictResolutionError as exc:
+        raise AppError(409, "CONFLICT_PENDING", str(exc)) from exc
 
 
 @router.get("/{workspace_id}/review")

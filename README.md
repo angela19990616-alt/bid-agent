@@ -28,6 +28,8 @@ Document Upload
   → Response Item Normalizer
   → Proposal-oriented Classification（条款属性）
   → Response Strategy（响应动作、风险、章节映射）
+  → Source Grouping + Conflict Detection（差异与真实冲突）
+  → Response Prioritization（风险与方案价值双排序）
   → Load Enterprise Knowledge
   → Knowledge Matching
   → Proposal Memory Matching
@@ -314,11 +316,19 @@ Review、安全机械修复和复检，不逐条调用模型，也不进行无�
 
 分类之后加载独立的 `response_strategy` rule，决定 `response_action`、
 `proposal_mapping`、`scoring_impact` 和 `priority`。Proposal Planner 只消费
-`response_action=write_into_proposal` 的事项，商务合规、附件、响应表和风险提醒
-不会进入技术正文。
+同时满足 `response_action=write_into_proposal`、`proposal_relevance=true` 和
+`target_chapter!=null` 的事项，商务合规、附件、响应表和风险提醒不会进入技术正文。
+
+冲突检测采用本地规则优先，只比较同一对象、同一指标。结果区分评分增强、
+兼容差异、待复核差异和真实冲突；权威等级只用于解释，不自动覆盖来源。真实冲突
+保留两处原文及位置，由人工选择采用 A、采用 B、分别响应或提交澄清。提交澄清只
+暂停关联章节，未解决的真实冲突阻止正式整本导出。
+
+响应排序把风险 `P0-P3` 与方案价值 `★★★★★-★` 分开。★★★★★必须有明确评分
+依据；不进入技术方案的事项价值为 `none`，但仍可作为 P0 风险置顶提醒。
 
 响应事项页面按 `P0 → P1 → P2 → P3` 排序，并提供全部、技术方案、评分响应、
-商务合规和风险提醒标签页。人工可将误分事项在“技术方案”和“商务合规”之间切换，
+商务合规、风险提醒和冲突事项标签页。人工可将误分事项在“技术方案”和“商务合规”之间切换，
 草稿目录随之双向同步；也可将每条标记为“需要”“不需要”或
 “与原文不符”；反馈只保存在机构私有数据库中。被标记为“与原文不符”的完全相同
 文本会在后续抽取中由本地规则过滤，不会上传外部服务，也不会触发额外模型调用。

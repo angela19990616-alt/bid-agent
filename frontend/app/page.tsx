@@ -3,7 +3,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type Step = "upload" | "requirements" | "outline" | "writer" | "export";
-type RequirementView = "all" | "proposal" | "scoring" | "compliance" | "risk";
+type RequirementView = "all" | "proposal" | "scoring" | "compliance" | "risk" | "conflicts";
 type Source = {
   id: string;
   filename: string;
@@ -21,7 +21,9 @@ type Requirement = {
   normalized_text: string;
   quote: string;
   importance: "critical" | "high" | "medium" | "low";
-  proposal_relevance: "high" | "medium" | "low";
+  proposal_relevance: boolean;
+  proposal_value: number;
+  risk_type: "disqualification" | "qualification" | "contract" | "delivery" | null;
   proposal_chapter: string | null;
   response_action: "write_into_proposal" | "write_into_response_table" | "compliance_commitment" | "provide_attachment" | "risk_notice" | "ignore";
   proposal_mapping: string | null;
@@ -37,6 +39,23 @@ type Requirement = {
   sources: Source[];
 };
 type IgnoreFeedback = Exclude<Requirement["feedback"], "pending" | "confirmed">;
+type Conflict = {
+  conflict_id: string;
+  topic: string;
+  conflict_type: "positive_difference" | "compatible_difference" | "potential_conflict" | "true_conflict";
+  source_a: { document: string; text: string; role: string };
+  source_b: { document: string; text: string; role: string };
+  source_a_location: Record<string, number | string | null>;
+  source_b_location: Record<string, number | string | null>;
+  source_a_authority_level: number;
+  source_b_authority_level: number;
+  description: string;
+  risk_priority: "P0" | "P1" | "P2" | "P3";
+  resolution_status: "pending" | "resolved" | "ignored";
+  resolution_choice: "choose_a" | "choose_b" | "keep_both" | "request_clarification" | null;
+  resolved_by: string | null;
+  affected_sections: string[];
+};
 
 const ignoreFeedbackLabels: Record<IgnoreFeedback, string> = {
   not_needed: "本次不需要",
@@ -170,6 +189,7 @@ const requirementTabs: Array<{ id: RequirementView; label: string }> = [
   { id: "scoring", label: "评分响应" },
   { id: "compliance", label: "商务合规" },
   { id: "risk", label: "风险提醒" },
+  { id: "conflicts", label: "冲突事项" },
 ];
 const importanceLabels: Record<Requirement["importance"], string> = {
   critical: "关键",
@@ -230,6 +250,7 @@ export default function Home() {
   const [step, setStep] = useState<Step>("upload");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [requirementView, setRequirementView] = useState<RequirementView>("all");
   const [ignoreMenuId, setIgnoreMenuId] = useState("");
   const [sections, setSections] = useState<SectionItem[]>([]);
@@ -257,7 +278,7 @@ export default function Home() {
       if (priorityDelta) return priorityDelta;
       const importanceDelta = importanceRank[left.importance] - importanceRank[right.importance];
       if (importanceDelta) return importanceDelta;
-      return Number(right.proposal_relevance === "high") - Number(left.proposal_relevance === "high");
+      return right.proposal_value - left.proposal_value;
     });
     const groups = sorted.reduce<Record<string, Requirement[]>>((result, item) => {
       const chapter = requirementView !== "proposal"
@@ -318,11 +339,11 @@ export default function Home() {
 
   async function openCompletedWorkspace(completed: Workspace, message?: string) {
     const allRequirements = await request<Requirement[]>(
-      `/workspaces/${completed.id}/requirements?view=all`,
+      `/workspaces/${completed.id}/requirements?view=proposal`,
     );
     setWorkspace(completed);
     setRequirements(allRequirements);
-    setRequirementView("all");
+    setRequirementView("proposal");
     setSections(completed.outline);
     setActiveSectionId(completed.outline[0]?.id ?? "");
     setEditorContent(completed.outline[0]?.current_version?.content ?? "");
@@ -406,10 +427,44 @@ export default function Home() {
   async function showRequirements(view: RequirementView) {
     if (!workspace) return;
     await run("正在读取响应事项", async () => {
+      if (view === "conflicts") {
+        const items = await request<Conflict[]>(`/workspaces/${workspace.id}/conflicts`);
+        setConflicts(items);
+        setRequirementView(view);
+        setNotice(items.length === 0 ? "未发现需要关注的文件差异。" : "");
+        return;
+      }
       const items = await request<Requirement[]>(`/workspaces/${workspace.id}/requirements?view=${view}`);
       setRequirements(items);
       setRequirementView(view);
       setNotice(items.length === 0 ? "当前分类下没有响应事项。" : "");
+    });
+  }
+
+  async function resolveConflict(
+    item: Conflict,
+    choice: "choose_a" | "choose_b" | "keep_both" | "request_clarification",
+  ) {
+    if (!workspace) return;
+    await run("正在保存冲突处理口径", async () => {
+      await request<Conflict>(
+        `/workspaces/${workspace.id}/conflicts/${item.conflict_id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            choice,
+            resolved_by: "当前最终确认人",
+          }),
+        },
+      );
+      const items = await request<Conflict[]>(`/workspaces/${workspace.id}/conflicts`);
+      setConflicts(items);
+      setNotice(
+        choice === "request_clarification"
+          ? "已提交澄清；只暂停受影响章节。"
+          : "最终响应口径已保存。",
+      );
     });
   }
 
@@ -742,7 +797,7 @@ export default function Home() {
                 <div><strong>{workspace?.response_summary?.proposal ?? 0}</strong><span>技术方案事项</span></div>
                 <div><strong>{workspace?.response_summary?.scoring ?? 0}</strong><span>评分响应事项</span></div>
                 <div><strong>{workspace?.response_summary?.compliance ?? 0}</strong><span>商务合规事项</span></div>
-                <div><strong>{workspace?.response_summary?.risk ?? 0}</strong><span>风险提醒事项</span></div>
+                <div><strong>{workspace?.response_summary?.risk ?? 0}</strong><span>P0 风险事项</span></div>
                 <button className="primary" disabled={Boolean(busy)} onClick={() => setStep("outline")}>下一步：查看推荐目录</button>
               </div>
               <div className="requirement-tabs" role="tablist" aria-label="要求分类">
@@ -771,7 +826,40 @@ export default function Home() {
                   {feedbackSummary.issues > 0 && <span className="warning"><b>{feedbackSummary.issues}</b> 条问题反馈</span>}
                 </div>
               </div>
-              {Object.entries(grouped).map(([chapter, items]) => (
+              {requirementView === "conflicts" && conflicts.map((item) => (
+                <article className={`requirement-card ${item.risk_priority === "P0" ? "scoring-card" : ""}`} key={item.conflict_id}>
+                  <div className="requirement-top">
+                    <div className="requirement-tags">
+                      <span className="type-tag compliance_requirement">
+                        {item.conflict_type === "true_conflict" ? "真实冲突" : item.conflict_type === "positive_difference" ? "评分增强项" : item.conflict_type === "potential_conflict" ? "待复核差异" : "兼容差异"}
+                      </span>
+                      <span className="importance-tag high">{item.risk_priority}</span>
+                    </div>
+                    <span className="confidence">{item.resolution_status === "resolved" ? "已解决" : "待处理"}</span>
+                  </div>
+                  <h3>{item.topic}</h3>
+                  <p>{item.description}</p>
+                  <div className="strategy-grid">
+                    <div><span>来源 A · 权威等级 {item.source_a_authority_level}</span><strong>{item.source_a.document}</strong></div>
+                    <div><span>来源 B · 权威等级 {item.source_b_authority_level}</span><strong>{item.source_b.document}</strong></div>
+                    <div><span>影响章节</span><strong>{item.affected_sections.join("、") || "不影响技术章节"}</strong></div>
+                  </div>
+                  <details>
+                    <summary>查看两处原文</summary>
+                    <blockquote>{item.source_a.text}</blockquote>
+                    <blockquote>{item.source_b.text}</blockquote>
+                  </details>
+                  {item.conflict_type === "true_conflict" && (
+                    <div className="card-actions feedback-actions">
+                      <button disabled={Boolean(busy)} onClick={() => resolveConflict(item, "choose_a")}>采用 A</button>
+                      <button disabled={Boolean(busy)} onClick={() => resolveConflict(item, "choose_b")}>采用 B</button>
+                      <button disabled={Boolean(busy)} onClick={() => resolveConflict(item, "keep_both")}>分别响应</button>
+                      <button disabled={Boolean(busy)} onClick={() => resolveConflict(item, "request_clarification")}>提交澄清</button>
+                    </div>
+                  )}
+                </article>
+              ))}
+              {requirementView !== "conflicts" && Object.entries(grouped).map(([chapter, items]) => (
                 <section className="requirement-group" key={chapter}>
                   <h3>{chapter}<small>{items.length} 条</small></h3>
                   <div className="requirement-list">
@@ -791,6 +879,7 @@ export default function Home() {
                           <div><span>响应方式</span><strong>{responseActionLabels[item.response_action]}</strong></div>
                           <div><span>影响</span><strong>{scoringImpactLabels[item.scoring_impact]}</strong></div>
                           <div><span>优先级</span><strong>{item.priority}</strong></div>
+                          <div><span>方案价值</span><strong>{item.proposal_value > 0 ? "★".repeat(item.proposal_value) : "不进入正文"}</strong></div>
                           <div><span>是否进入技术正文</span><strong>{item.response_action === "write_into_proposal" ? "是" : "否"}</strong></div>
                           {item.proposal_mapping && <div><span>章节</span><strong>{item.proposal_mapping}</strong></div>}
                         </div>

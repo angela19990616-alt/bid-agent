@@ -80,7 +80,7 @@ def list_requirements(
         "compliance", "commercial",
     ] | None = Query(default=None, alias="type"),
     document_id: UUID | None = None,
-    proposal_relevance: Literal["high", "medium", "low"] | None = None,
+    proposal_relevance: bool | None = None,
     need_generation: bool | None = None,
     service: RequirementService = Depends(get_requirement_service),
 ):

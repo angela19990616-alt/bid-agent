@@ -18,6 +18,7 @@ from app.services.provenance_service import (
     content_paragraphs,
     terms,
 )
+from app.services.conflict_service import ConflictService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -65,6 +66,13 @@ class ProposalReviewService:
         final_input = self._load_review_input(project_id)
         pipeline.record(run_id, "final_review")
         final = self.review(final_input, rules, phase="final")
+        pending_conflicts = ConflictService.pending_true_conflict_count(
+            project_id
+        )
+        final["overall"]["conflict_pending_count"] = pending_conflicts
+        final["overall"]["conflict_pending"] = pending_conflicts > 0
+        if pending_conflicts:
+            final["overall"]["recommended_for_delivery"] = False
         self._persist_review(project_id, final)
         pipeline.record(
             run_id,

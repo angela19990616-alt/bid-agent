@@ -1,0 +1,55 @@
+{
+  "rule_type": "conflict_detection",
+  "key": "default-conflict-detection",
+  "name": "招标文件冲突检测规则",
+  "version": 1,
+  "description": "只识别同一对象、同一指标的差异；不得自动选择或覆盖采购原文。",
+  "difference_types": [
+    "positive_difference",
+    "compatible_difference",
+    "potential_conflict",
+    "true_conflict"
+  ],
+  "source_authority": {
+    "amendment": 1,
+    "clarification": 1,
+    "change_notice": 1,
+    "scoring_method": 2,
+    "qualification_review": 2,
+    "compliance_review": 2,
+    "procurement_requirement": 3,
+    "contract": 3,
+    "unknown": 9
+  },
+  "true_conflict_topics_between_procurement_and_contract": [
+    "服务期限",
+    "成果数量",
+    "验收标准",
+    "服务范围",
+    "付款条件",
+    "违约责任"
+  ],
+  "topic_keywords": {
+    "服务期限": ["服务期限", "服务周期", "履约期限", "合同期限", "日历天", "个月内"],
+    "成果数量": ["成果数量", "提交份数", "纸质版", "电子版", "套"],
+    "验收标准": ["验收标准", "验收条件", "验收合格", "验收依据"],
+    "服务范围": ["服务范围", "工作范围", "服务内容", "工作内容"],
+    "付款条件": ["付款", "支付", "预付款", "进度款"],
+    "违约责任": ["违约", "违约金", "赔偿责任"],
+    "技术指标": ["性能", "并发", "响应时间", "精度", "技术指标"]
+  },
+  "enhancement_keywords": ["加分", "得分", "优于", "提前完成", "增强", "额外"],
+  "conflict_priority": {
+    "服务期限": "P0",
+    "成果数量": "P1",
+    "验收标准": "P0",
+    "服务范围": "P1",
+    "付款条件": "P0",
+    "违约责任": "P0",
+    "技术指标": "P1"
+  },
+  "confidence_thresholds": {
+    "auto_accept": 0.85,
+    "suggest_review": 0.60
+  }
+}

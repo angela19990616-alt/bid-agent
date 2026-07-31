@@ -32,7 +32,10 @@ flowchart TD
     EN --> F["Proposal Classification"]
     F --> FR["Reviewer + Debug + Re-review"]
     FR --> RS["Response Strategy"]
-    RS --> G["Load Enterprise Knowledge"]
+    RS --> SG["Source Grouping"]
+    SG --> CD["Conflict Detection"]
+    CD --> RP["Response Prioritization"]
+    RP --> G["Load Enterprise Knowledge"]
     G --> GP["Knowledge Permission Filter"]
     GP --> H["Knowledge Matching"]
     FR --> PM["Proposal Memory Matching"]
@@ -74,6 +77,8 @@ flowchart TD
 | extraction | 文件有效性、候选证据、忽略项、Requirement 定义和命名 |
 | classification | Requirement 类型、评分关系、方案章节映射、行业分类约束 |
 | response_strategy | 响应动作、评分影响、风险优先级和技术正文映射 |
+| conflict_detection | 来源权威矩阵、差异类型、真实冲突主题与置信阈值 |
+| response_prioritization | P0-P3 风险证据和独立五星方案价值 |
 | proposal_memory | 优秀方案结构模式的准入、用途和事实禁用边界 |
 | writing | 目录顺序、章节风格、事实边界、知识引用、篇幅、重复率和术语策略 |
 | compliance | 长度、禁用表述、占位符、Requirement/Knowledge 可追溯门禁 |
@@ -119,8 +124,11 @@ Memory 证明企业资质、能力、案例、人员或任何历史事实。
 | --- | --- |
 | projects | 内部 workspace；新前端不向用户暴露“项目”概念 |
 | documents / source_chunks | 文件、有效性、私有知识资格和页码/段落证据 |
-| requirements | 规范化要求及 proposal_relevance、target_chapter、need_generation |
+| requirements | 规范化要求、布尔方案相关性、风险优先级和独立方案价值 |
 | requirement_sources | Requirement 到原文证据的多对多映射 |
+| requirement_conflicts | 双来源原文、位置、权威等级、冲突类型和当前解决状态 |
+| conflict_decisions | 人工响应口径的不可覆盖版本历史 |
+| conflict_sections | 冲突到受影响章节的显式关系 |
 | requirement_normalization_events | 响应事项标准化、拆分和合并审计轨迹 |
 | sections / section_requirements | 推荐目录及 Requirement 到章节的映射 |
 | section_versions | 生成/人工版本、规则快照、知识快照和输入快照 |
@@ -142,11 +150,13 @@ Memory 证明企业资质、能力、案例、人员或任何历史事实。
 - Classification Agent：规则优先；只对低置信和未映射条目进行一次批量模型分类。
 - Classification Reviewer：纠正分类冲突，确保资格和商务条款不进入技术方案正文。
 - Response Strategy：回答如何响应、写在哪里和有什么风险，并接受人工双向归类。
+- Conflict Detection：保守识别评分增强、兼容差异、待复核差异和真实冲突，不自动选择口径。
+- Response Prioritization：独立计算风险优先级和技术方案价值。
 - Output Review / Debug：检查内部标识、无意义标签和缺失映射，只做安全机械修复并复检一次。
 - Knowledge Permission Filter：在查询知识内容前按机构和 scope 默认拒绝越权。
 - Knowledge Matching：加载当前机构私有知识并匹配，不写正文。
 - Proposal Memory：只提供审核后的结构和写法模式，禁止作为事实来源。
-- Proposal Planner：按 writing rule 和映射生成有序目录。
+- Proposal Planner：只消费通过响应动作、布尔相关性和目标章节三重门禁的事项。
 - Chapter Writer：只用 Requirement 证据、Matched Knowledge 和 writing rule。
 - Chapter Review：每章生成后立即检查覆盖、来源、幻觉、格式和内部标识。
 - Delivery Gate：整本 Review 后检查真实性、可追溯、评分覆盖和交付风险。

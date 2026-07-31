@@ -44,7 +44,7 @@ Importance = Literal["low", "medium", "high", "critical"]
 ScoringRelation = Literal[
     "high_score_item", "medium_score_item", "requirement_only", "unknown"
 ]
-ProposalRelevance = Literal["high", "medium", "low"]
+ProposalRelevance = bool
 
 
 class RequirementSourceResponse(BaseModel):
@@ -68,7 +68,11 @@ class RequirementResponse(BaseModel):
     classification_notes: str | None = None
     scoring_relation: ScoringRelation = "unknown"
     knowledge_support_required: bool = False
-    proposal_relevance: ProposalRelevance = "low"
+    proposal_relevance: ProposalRelevance = False
+    proposal_value: int = Field(default=0, ge=0, le=5)
+    risk_type: Literal[
+        "disqualification", "qualification", "contract", "delivery"
+    ] | None = None
     proposal_chapter: str | None = None
     response_action: ResponseAction = "write_into_response_table"
     proposal_mapping: str | None = None
