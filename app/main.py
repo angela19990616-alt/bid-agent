@@ -23,7 +23,7 @@ from app.database.db import check_postgres, check_redis
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
+    version="3.0.0",
     description="企业级 AI 标书 Agent 后端服务",
 )
 app.add_middleware(
@@ -149,7 +149,7 @@ def root():
     return {
         "message": "AI标书Agent已经启动",
         "environment": settings.app_env,
-        "version": "0.1.0",
+        "version": "3.0.0",
     }
 
 

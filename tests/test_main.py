@@ -15,7 +15,7 @@ def test_root():
     assert response.status_code == 200
     payload = response.json()
     assert payload["message"] == "AI标书Agent已经启动"
-    assert payload["version"] == "0.1.0"
+    assert payload["version"] == "3.0.0"
 
 
 def test_health_when_dependencies_are_healthy(monkeypatch):
