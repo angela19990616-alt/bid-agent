@@ -6,6 +6,7 @@
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | PF-001 | 招标文件理解与方案分类 | active | critical | bid-agent | http://101.200.154.141 | `app/agents/requirement_classifier.py`, `app/services/conflict_service.py`, `config/rules/classification.default.json` | 分类质量、冲突、无章节映射、人工反馈 | 咨询类要求不因孤立的软件词汇误入系统功能章节；真实冲突保留双来源并由人工决策；方案事项通过三重门禁 | `README.md` 生产验收章节 | release | 2026-07-31 | 下次发布 | healthy | ECS `b7a29f94`；真实样例抽取 83 条响应事项、形成 4 章，冲突误报 0 | 持续用真实文件回测冲突误报率 |
 | PF-002 | 章节生成与模型路由 | active | critical | bid-agent | http://101.200.154.141 | `app/core/model_client.py`, `app/core/model_routing.py`, `app/services/section_service.py` | 章节任务状态、模型使用审计、HTTP 5xx | 一个真实章节生成成功；不可用模型被冷却；输入保持在模型限制内；尝试次数和费用受控 | `README.md` 模型路由章节 | release | 2026-07-31 | 下次发布 | healthy | ECS `e10c2637`；DeepSeek V4 Flash 抽取与 V4 Pro 写作生产真实调用成功，公网健康 | 继续监控实际全文件处理时延和有界降级 |
+| PF-003 | 私有使用统计后台 | discovery | medium | bid-agent | SSH 隧道至 `127.0.0.1:8000/internal/usage` | `app/api/internal_dashboard.py`, `app/services/usage_dashboard_service.py` | 页面可访问、聚合查询成功、仅回环端口、前端无入口 | 仅管理员通过 SSH 隧道访问；展示使用量、成功率和模型消耗；不展示文件名、项目名、用户标识、UUID、原文或密钥 | `README.md` 后台使用统计章节 | release | 2026-08-03 | 部署后 | healthy | 202 项后端测试、前端构建及完整发布门禁通过 | 生产部署前需确认宿主机 8000 端口未占用 |
 
 Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `retired`.
 
@@ -39,3 +40,4 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 | 2026-07-31 | DeepSeek V4 生产发布 | healthy | PF-002 | none | 抽取/分类优先 V4 Flash 且关闭思考；写作/终审优先 V4 Pro 且开启思考；百炼有界备用 | 196 项测试与完整门禁通过；生产两类真实 API 调用成功；5 容器健康，公网首页 200 | none | 用下一份真实招标文件观察端到端耗时 |
 | 2026-07-31 | Workspace 500 修复与全新整本回归 | healthy | PF-001, PF-002 | INC-005 closed | 修复字段契约、工作流收尾和误导性网络提示；增加模型边界本地隐私脱敏 | 全新样例 241 秒完成 113 条与 5 章目录；5/5 章共 8,246 字，整本 Review 覆盖率 100%、阻断 0、内部标识 0；Word 导出成功；199 项测试通过；ECS `60da6037` 脱敏与本地恢复真实调用成功 | none | 持续监控分类质量、时延和隐私规则误报 |
 | 2026-07-31 | V3.0.0 正式发布 | healthy | PF-001, PF-002 | none | 固化 Git 标签 `v3.0.0`，统一前后端版本并部署 `676b6f0c` | 199 项测试与发布门禁通过；生产应用报告 3.0.0；5 容器健康；公网首页 200、邀请码保护开启 | none | 仅按用户反馈进行最小前端体验优化 |
+| 2026-08-03 | 私有使用统计后台开发 | maintenance | PF-003 | none | 增加只读聚合统计页、SSH 隧道访问和回环端口约束 | 202 项后端测试、前端生产构建、Docker 配置与完整发布门禁通过 | 尚未部署生产 | 提交 Git；部署需生产授权 |

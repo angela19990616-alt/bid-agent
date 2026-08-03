@@ -17,6 +17,7 @@ from app.api.rag import router as rag_router
 from app.api.requirements import router as requirements_router
 from app.api.sections import router as sections_router
 from app.api.workspaces import router as workspaces_router
+from app.api.internal_dashboard import router as internal_dashboard_router
 from app.config.settings import settings
 from app.core.errors import AppError
 from app.database.db import check_postgres, check_redis
@@ -53,6 +54,7 @@ if settings.enable_legacy_api:
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(configuration_router, prefix="/api/v1")
 app.include_router(access_router, prefix="/api/v1")
+app.include_router(internal_dashboard_router)
 
 
 @app.middleware("http")
