@@ -75,6 +75,7 @@ from app.services.workspace_access_service import (
     WorkspaceAccessService,
 )
 from app.services.workspace_job_service import WorkspaceJobService
+from app.services.response_support_service import ResponseSupportService
 
 
 router = APIRouter(prefix="/workspaces", tags=["proposal-workspaces"])
@@ -271,6 +272,14 @@ def list_workspace_requirements(
     return items
 
 
+@router.get("/{workspace_id}/response-support")
+def get_workspace_response_support(
+    workspace_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
+    return ResponseSupportService().overview(workspace_id)
+
+
 @router.get(
     "/{workspace_id}/conflicts",
     response_model=list[ConflictResponse],
@@ -396,6 +405,7 @@ def generate_section(
             workspace_id,
             section_id,
             payload.instruction if payload else None,
+            payload.case_reference_mode if payload else "balanced",
         )
     except SectionNotFoundError as exc:
         raise AppError(404, "SECTION_NOT_FOUND", "未找到该章节。") from exc

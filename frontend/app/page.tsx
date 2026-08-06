@@ -135,6 +135,64 @@ type ProposalReview = {
     conflict_count: number;
   };
 };
+type ResponseSupport = {
+  response_groups: Array<{
+    group_key: string;
+    item_count: number;
+    titles: string[];
+    response_action: Requirement["response_action"];
+    target_chapter: string | null;
+  }>;
+  format_requirements: Array<{
+    requirement_id: string;
+    title: string;
+    instruction: string;
+    fidelity: "exact_template" | "structure_preserved";
+    manual_check_required: boolean;
+    source_text: string;
+    sources: Source[];
+  }>;
+  qualification_responses: Array<{
+    requirement_id: string;
+    requirement: string;
+    status: "matched_verified" | "manual_material_required";
+    matches: Array<{
+      knowledge_id: string;
+      title: string;
+      score: number;
+      verified: boolean;
+      holder: string | null;
+      valid_until: string | null;
+      asset_reference: string | null;
+      rationale: string;
+    }>;
+  }>;
+  traceability: {
+    requirements: Array<{
+      requirement_id: string;
+      title: string;
+      source_text: string;
+      sources: Source[];
+      response_action: Requirement["response_action"];
+      generated_sections: string[];
+    }>;
+    generated_paragraphs: Array<{
+      section_id: string;
+      section_title: string;
+      paragraph_index: number;
+      generated_text: string;
+      origin: "generated" | "edited" | "auto_fixed";
+      sources: Array<{
+        source_type: string;
+        source_title: string;
+        source_location: string | null;
+        source_excerpt: string | null;
+        usage_description: string;
+        verification_status: string;
+      }>;
+    }>;
+  };
+};
 type AccessStatus = {
   required: boolean;
   authorized: boolean;
@@ -259,6 +317,8 @@ export default function Home() {
   const [generationInstruction, setGenerationInstruction] = useState("");
   const [exportItem, setExportItem] = useState<ExportItem | null>(null);
   const [proposalReview, setProposalReview] = useState<ProposalReview | null>(null);
+  const [responseSupport, setResponseSupport] = useState<ResponseSupport | null>(null);
+  const [caseReferenceMode, setCaseReferenceMode] = useState<"balanced" | "closest_case" | "structure_only" | "current_only">("balanced");
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -338,11 +398,13 @@ export default function Home() {
   }
 
   async function openCompletedWorkspace(completed: Workspace, message?: string) {
-    const allRequirements = await request<Requirement[]>(
-      `/workspaces/${completed.id}/requirements?view=proposal`,
-    );
+    const [allRequirements, support] = await Promise.all([
+      request<Requirement[]>(`/workspaces/${completed.id}/requirements?view=proposal`),
+      request<ResponseSupport>(`/workspaces/${completed.id}/response-support`),
+    ]);
     setWorkspace(completed);
     setRequirements(allRequirements);
+    setResponseSupport(support);
     setRequirementView("proposal");
     setSections(completed.outline);
     setActiveSectionId(completed.outline[0]?.id ?? "");
@@ -618,6 +680,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             instruction: generationInstruction.trim() || null,
+            case_reference_mode: caseReferenceMode,
           }),
         },
       );
@@ -670,8 +733,12 @@ export default function Home() {
       const review = await request<ProposalReview>(
         `/workspaces/${workspace.id}/review`,
       );
+      const support = await request<ResponseSupport>(
+        `/workspaces/${workspace.id}/response-support`,
+      );
       setExportItem(created);
       setProposalReview(review);
+      setResponseSupport(support);
       setNotice(
         review.overall.recommended_for_delivery
           ? "校核完成，Word 文件已经生成。"
@@ -832,6 +899,33 @@ export default function Home() {
                   {feedbackSummary.issues > 0 && <span className="warning"><b>{feedbackSummary.issues}</b> 条问题反馈</span>}
                 </div>
               </div>
+              {responseSupport && (responseSupport.format_requirements.length > 0 || responseSupport.qualification_responses.length > 0) && (
+                <div className="support-overview">
+                  <details open={responseSupport.format_requirements.some((item) => item.fidelity === "exact_template")}>
+                    <summary>交付格式清单 <b>{responseSupport.format_requirements.length}</b></summary>
+                    {responseSupport.format_requirements.length === 0 ? <p>未识别到独立格式约束。</p> : responseSupport.format_requirements.map((item) => (
+                      <article key={item.requirement_id}>
+                        <strong>{item.title}</strong>
+                        <span>{item.fidelity === "exact_template" ? "必须按原模板填写，导出后人工复核" : "保持字段和结构一致"}</span>
+                        <p>{item.instruction}</p>
+                        <details><summary>查看招标原文</summary><blockquote>{item.source_text}</blockquote></details>
+                      </article>
+                    ))}
+                  </details>
+                  <details>
+                    <summary>资格材料响应 <b>{responseSupport.qualification_responses.length}</b></summary>
+                    {responseSupport.qualification_responses.length === 0 ? <p>当前未识别到资格附件事项。</p> : responseSupport.qualification_responses.map((item) => (
+                      <article key={item.requirement_id}>
+                        <strong>{item.requirement}</strong>
+                        <span>{item.status === "matched_verified" ? "已匹配核验材料" : "未找到已核验材料，需人工补充"}</span>
+                        {item.matches.map((match) => (
+                          <p key={match.knowledge_id}>{match.title} · 匹配 {Math.round(match.score * 100)}% · {match.verified ? "已核验" : "待核验"}</p>
+                        ))}
+                      </article>
+                    ))}
+                  </details>
+                </div>
+              )}
               {requirementView === "conflicts" && conflicts.map((item) => (
                 <article className={`requirement-card ${item.risk_priority === "P0" ? "scoring-card" : ""}`} key={item.conflict_id}>
                   <div className="requirement-top">
@@ -866,8 +960,8 @@ export default function Home() {
                 </article>
               ))}
               {requirementView !== "conflicts" && Object.entries(grouped).map(([chapter, items]) => (
-                <section className="requirement-group" key={chapter}>
-                  <h3>{chapter}<small>{items.length} 条</small></h3>
+                <details className="requirement-group" key={chapter} open={Object.keys(grouped).length <= 3}>
+                  <summary><h3>{chapter}<small>{items.length} 条同类响应事项</small></h3><span>{responseActionLabels[items[0].response_action]} · 一起归类和写入</span></summary>
                   <div className="requirement-list">
                     {items.map((item) => (
                       <article className={`requirement-card feedback-${item.feedback} ${item.scoring_impact === "score_item" ? "scoring-card" : ""}`} key={item.id}>
@@ -940,7 +1034,7 @@ export default function Home() {
                       </article>
                     ))}
                   </div>
-                </section>
+                </details>
               ))}
             </div>
           )}
@@ -991,6 +1085,12 @@ export default function Home() {
                   </div>
                   <div className="generation-instruction">
                     <label htmlFor="generation-instruction">本章微调要求（可选）</label>
+                    <select value={caseReferenceMode} onChange={(event) => setCaseReferenceMode(event.target.value as typeof caseReferenceMode)} aria-label="历史案例参考方式">
+                      <option value="balanced">综合参考多个相似案例</option>
+                      <option value="closest_case">尽量贴近最相似案例</option>
+                      <option value="structure_only">仅参考案例结构</option>
+                      <option value="current_only">不参考历史案例</option>
+                    </select>
                     <textarea
                       id="generation-instruction"
                       value={generationInstruction}
@@ -1036,6 +1136,38 @@ export default function Home() {
                     <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=md`}>下载可读 Review</a>
                     <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=json`}>下载 JSON</a>
                   </div>
+                )}
+                {responseSupport && responseSupport.traceability.requirements.length > 0 && (
+                  <details className="traceability-map">
+                    <summary>查看 AI 响应与原文定位</summary>
+                    {responseSupport.traceability.requirements.map((item) => (
+                      <article key={item.requirement_id}>
+                        <strong>{item.title}</strong>
+                        <span>{item.generated_sections.length > 0 ? `AI 已响应：${item.generated_sections.join("、")}` : "未进入技术方案正文"}</span>
+                        <details>
+                          <summary>打开采购原文</summary>
+                          <blockquote>{item.source_text}</blockquote>
+                          <div className="source-row">{item.sources.map((source) => <span key={source.id}>{source.filename} · {sourceLabel(source)}</span>)}</div>
+                        </details>
+                      </article>
+                    ))}
+                    <details className="generated-trace-list">
+                      <summary>查看 AI 正文逐段来源</summary>
+                      {responseSupport.traceability.generated_paragraphs.map((item) => (
+                        <article key={`${item.section_id}-${item.paragraph_index}`}>
+                          <strong>{item.section_title} · 第 {item.paragraph_index + 1} 段</strong>
+                          <p>{item.generated_text}</p>
+                          {item.sources.length === 0 ? <span>未直接匹配输入证据，需人工复核</span> : item.sources.map((source, index) => (
+                            <details key={`${source.source_title}-${index}`}>
+                              <summary>{source.source_title} · {source.verification_status === "verified" ? "已核验" : "待核验"}</summary>
+                              {source.source_excerpt && <blockquote>{source.source_excerpt}</blockquote>}
+                              {source.source_location && <span>{source.source_location}</span>}
+                            </details>
+                          ))}
+                        </article>
+                      ))}
+                    </details>
+                  </details>
                 )}
                 <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>
                 {exportItem?.status === "succeeded" && workspace && (

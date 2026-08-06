@@ -7,6 +7,7 @@
 | PF-001 | 招标文件理解与方案分类 | active | critical | bid-agent | http://101.200.154.141 | `app/agents/requirement_classifier.py`, `app/services/conflict_service.py`, `config/rules/classification.default.json` | 分类质量、冲突、无章节映射、人工反馈 | 咨询类要求不因孤立的软件词汇误入系统功能章节；真实冲突保留双来源并由人工决策；方案事项通过三重门禁 | `README.md` 生产验收章节 | release | 2026-07-31 | 下次发布 | healthy | ECS `b7a29f94`；真实样例抽取 83 条响应事项、形成 4 章，冲突误报 0 | 持续用真实文件回测冲突误报率 |
 | PF-002 | 章节生成与模型路由 | active | critical | bid-agent | http://101.200.154.141 | `app/core/model_client.py`, `app/core/model_routing.py`, `app/services/section_service.py` | 章节任务状态、模型使用审计、HTTP 5xx | 一个真实章节生成成功；不可用模型被冷却；输入保持在模型限制内；尝试次数和费用受控 | `README.md` 模型路由章节 | release | 2026-07-31 | 下次发布 | healthy | ECS `e10c2637`；DeepSeek V4 Flash 抽取与 V4 Pro 写作生产真实调用成功，公网健康 | 继续监控实际全文件处理时延和有界降级 |
 | PF-003 | 私有使用统计后台 | active | medium | bid-agent | SSH 隧道至 `127.0.0.1:8000/internal/usage` | `app/api/internal_dashboard.py`, `app/services/usage_dashboard_service.py` | 页面可访问、聚合查询成功、仅回环端口、前端无入口 | 仅管理员通过 SSH 隧道访问；展示使用量、成功率和模型消耗；不展示文件名、项目名、用户标识、UUID、原文或密钥 | `README.md` 后台使用统计章节 | release | 2026-08-03 | 下次发布 | healthy | ECS `180f1b23`；后台查询 200，公网 8000 超时不可达，官网 200，5 容器健康 | SSH 隧道依赖管理员本机连接保持在线 |
+| PF-004 | 聚合响应、格式资格与溯源审核 | discovery | high | bid-agent | 本地 `http://127.0.0.1/` | `app/services/response_support_service.py`, `app/services/section_service.py`, `frontend/app/page.tsx` | 同类分组、格式清单、资格匹配、案例模式、审核地图 | 底层细粒度不丢失；业务界面同类聚合；未核验资格不进入响应；可从响应定位采购原文；历史案例不复制事实 | `README.md` 本地响应支持升级 | local acceptance | 2026-08-06 | 用户确认后 | healthy | 205 项后端测试、2 项前端测试、完整门禁、本地 5 容器健康 | 二进制模板原样回填和证书图片编排尚未实现，不得提前宣称完成 |
 
 Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `retired`.
 
@@ -42,3 +43,4 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 | 2026-07-31 | V3.0.0 正式发布 | healthy | PF-001, PF-002 | none | 固化 Git 标签 `v3.0.0`，统一前后端版本并部署 `676b6f0c` | 199 项测试与发布门禁通过；生产应用报告 3.0.0；5 容器健康；公网首页 200、邀请码保护开启 | none | 仅按用户反馈进行最小前端体验优化 |
 | 2026-08-03 | 私有使用统计后台开发 | maintenance | PF-003 | none | 增加只读聚合统计页、SSH 隧道访问和回环端口约束 | 202 项后端测试、前端生产构建、Docker 配置与完整发布门禁通过 | 尚未部署生产 | 提交 Git；部署需生产授权 |
 | 2026-08-03 | 私有使用统计后台发布 | healthy | PF-003 | none | 部署 `180f1b23`，后端仅绑定 `127.0.0.1:8000`，建立管理员 SSH 隧道 | 私有页 200；公网 8000 不可达；公网首页 200；5 容器健康；数据库备份 `postgres-20260803T030854Z.sql` | none | 随发布周期复查聚合查询与访问边界 |
+| 2026-08-06 | 下一阶段响应支持本地验收版 | healthy | PF-004 | none | 同类事项折叠聚合、格式清单、资格材料匹配、四种案例参考模式和采购原文审核地图 | 205 项后端、2 项前端、完整门禁通过；本地 5 容器健康 | 二进制模板回填与证书图片编排待下一增量 | 用户本地确认后再决定是否继续和部署 |

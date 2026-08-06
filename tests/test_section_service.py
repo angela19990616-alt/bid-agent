@@ -84,6 +84,23 @@ def test_prompt_includes_tender_format_constraints():
     assert "实施计划章节应包括项目进度表" in messages[1]["content"]
 
 
+def test_prompt_can_prioritize_closest_case_without_copying_facts():
+    messages = SectionService._messages(
+        "实施计划",
+        [
+            {
+                "id": "requirement-1",
+                "normalized_text": "提交实施计划",
+                "quote": "供应商须提交实施计划。",
+            }
+        ],
+        case_reference_mode="closest_case",
+    )
+
+    assert "优先贴近最相似历史案例" in messages[0]["content"]
+    assert "必须改写为当前项目" in messages[0]["content"]
+
+
 def test_large_chapter_prompt_is_bounded_without_dropping_all_items():
     requirements = [
         {

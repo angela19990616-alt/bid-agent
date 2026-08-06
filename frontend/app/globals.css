@@ -208,9 +208,20 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .feedback-summary { display: flex; flex-shrink: 0; gap: 13px; }
 .feedback-summary b { color: var(--green-800); }
 .feedback-summary .warning, .feedback-summary .warning b { color: var(--red); }
-.requirement-group { margin: 0 0 28px; }
-.requirement-group > h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 11px; font-family: var(--serif); font-size: 18px; }
-.requirement-group > h3 small { color: var(--muted); font-family: var(--sans); font-size: 9px; }
+.requirement-group { margin: 0 0 15px; border: 1px solid var(--line); border-radius: 12px; background: #f8faf8; }
+.requirement-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px 17px; cursor: pointer; list-style: none; }
+.requirement-group > summary::-webkit-details-marker { display: none; }
+.requirement-group > summary h3 { display: flex; align-items: baseline; gap: 8px; margin: 0; font-family: var(--serif); font-size: 18px; }
+.requirement-group > summary small, .requirement-group > summary > span { color: var(--muted); font-family: var(--sans); font-size: 9px; }
+.requirement-group > .requirement-list { padding: 0 12px 12px; }
+.support-overview { display: grid; margin: 0 0 18px; grid-template-columns: 1fr 1fr; gap: 12px; }
+.support-overview > details { padding: 13px 15px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+.support-overview > details > summary { color: var(--green-800); font-weight: 700; cursor: pointer; }
+.support-overview summary b { margin-left: 5px; color: var(--gold); }
+.support-overview article { margin-top: 11px; padding: 11px; border-radius: 8px; background: #f7f9f7; }
+.support-overview article > strong, .support-overview article > span { display: block; }
+.support-overview article > span { margin-top: 4px; color: #7b5d27; font-size: 10px; }
+.support-overview article p { margin: 7px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .requirement-card { padding: 19px 20px; border: 1px solid var(--line); border-left: 4px solid #9ab0a5; border-radius: 11px; background: white; }
 .requirement-card.scoring-card { border-left-color: var(--gold); }
 .requirement-card > p { margin: 0; line-height: 1.75; }
@@ -284,6 +295,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .editor-bar { display: flex; min-height: 67px; align-items: center; justify-content: space-between; gap: 20px; padding: 13px 17px; border-bottom: 1px solid var(--line); background: #fafbf9; }
 .generation-instruction { position: relative; padding: 14px 17px; border-bottom: 1px solid var(--line); background: #f7faf8; }
 .generation-instruction label { display: block; margin-bottom: 7px; color: var(--green-900); font-size: 11px; font-weight: 700; }
+.generation-instruction select { width: 100%; margin-bottom: 8px; padding: 9px 10px; border: 1px solid #cad7d0; border-radius: 8px; color: var(--green-900); background: white; }
 .generation-instruction textarea { width: 100%; min-height: 64px; padding: 10px 58px 10px 11px; border: 1px solid #cad7d0; border-radius: 8px; resize: vertical; background: white; color: var(--ink); font-family: var(--sans); font-size: 12px; line-height: 1.6; outline: none; }
 .generation-instruction textarea:focus { border-color: var(--green-700); box-shadow: 0 0 0 2px rgba(48, 104, 78, .08); }
 .generation-instruction span { position: absolute; right: 27px; bottom: 24px; color: var(--muted); font-size: 9px; }
@@ -303,6 +315,14 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .approval { width: fit-content; padding: 5px 9px; border-radius: 99px; grid-column: 2; color: #7a6033; background: #f5ebd8; font-size: 9px; }
 .approval.ready { color: #21583f; background: #e4f1ea; }
 .export-actions p { color: var(--muted); line-height: 1.7; }
+.traceability-map { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #f8faf8; }
+.traceability-map > summary { color: var(--green-800); font-weight: 700; cursor: pointer; }
+.traceability-map article { margin-top: 10px; padding: 10px; border-radius: 7px; background: white; }
+.traceability-map article > strong, .traceability-map article > span { display: block; }
+.traceability-map article > span { margin-top: 4px; color: var(--muted); font-size: 9px; }
+.generated-trace-list { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.generated-trace-list > summary { color: var(--green-700); cursor: pointer; }
+.generated-trace-list p { margin: 7px 0; color: var(--ink); font-size: 10px; line-height: 1.65; }
 .export-actions .primary { width: 100%; margin: 8px 0 11px; }
 .download-button { width: 100%; border: 1px solid #95b3a5; color: #20543e; background: #e6f2eb; }
 .empty-state { padding: 50px; border: 1px dashed #cad6cf; border-radius: 12px; color: var(--muted); text-align: center; background: white; }
@@ -330,6 +350,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .requirement-tabs { position: sticky; top: 0; z-index: 8; width: 100%; }
   .requirement-tabs button { flex: 1; }
   .requirement-guidance { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .support-overview { grid-template-columns: 1fr; }
   .feedback-summary { width: 100%; flex-wrap: wrap; justify-content: space-between; }
   .requirement-card { padding: 16px 14px; }
   .requirement-top { align-items: flex-start; gap: 8px; }

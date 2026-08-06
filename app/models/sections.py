@@ -47,3 +47,6 @@ class SectionContentUpdate(BaseModel):
 
 class SectionGenerationRequest(BaseModel):
     instruction: str | None = Field(default=None, max_length=1000)
+    case_reference_mode: Literal[
+        "balanced", "closest_case", "structure_only", "current_only"
+    ] = "balanced"

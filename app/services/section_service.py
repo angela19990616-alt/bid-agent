@@ -156,6 +156,7 @@ class SectionService:
         project_id: UUID,
         section_id: UUID,
         generation_instruction: str | None = None,
+        case_reference_mode: str = "balanced",
     ) -> dict:
         section, requirements = self._load_generation_input(
             project_id,
@@ -180,6 +181,24 @@ class SectionService:
             exclude_project_id=project_id,
             access_context=access_context,
         )
+        if case_reference_mode == "current_only":
+            matches = [
+                item for item in matches
+                if item.category not in {"historical_bid", "case_study"}
+            ]
+        elif case_reference_mode == "structure_only":
+            matches = [
+                item for item in matches
+                if item.category not in {"historical_bid", "case_study"}
+            ]
+        elif case_reference_mode == "closest_case":
+            matches = sorted(
+                matches,
+                key=lambda item: (
+                    item.category not in {"historical_bid", "case_study"},
+                    -item.score,
+                ),
+            )
         KnowledgeMatchRepository.save(
             workflow_run_id, section_id, requirements, matches
         )
@@ -203,6 +222,8 @@ class SectionService:
                 memory_rules.content["usage"]["max_matches"]
             ),
         )
+        if case_reference_mode == "current_only":
+            memory_matches = []
         pipeline.record(
             workflow_run_id,
             "proposal_memory_matching",
@@ -239,6 +260,7 @@ class SectionService:
                 if generation_instruction
                 else None
             ),
+            "case_reference_mode": case_reference_mode,
             "format_constraints": section["format_constraints"],
         }
         self._create_job(
@@ -256,6 +278,7 @@ class SectionService:
                     generation_instruction,
                     section["format_constraints"],
                     memory_matches=memory_matches,
+                    case_reference_mode=case_reference_mode,
                 ),
                 temperature=0.2,
                 max_tokens=5000,
@@ -620,6 +643,7 @@ class SectionService:
         generation_instruction: str | None = None,
         format_constraints: list[dict] | None = None,
         memory_matches: list[ProposalMemoryMatch] | None = None,
+        case_reference_mode: str = "balanced",
     ) -> list[dict[str, str]]:
         active = rules or RuleEngine().load_default("writing")
         matched_items = matches or []
@@ -692,6 +716,10 @@ class SectionService:
             if instruction
             else ""
         )
+        case_policy = active.content.get("historical_case_modes", {}).get(
+            case_reference_mode,
+            "综合参考相似案例，但不得复制旧项目事实。",
+        )
         compact_rules = {
             "policies": active.content.get("policies", {}),
             "format_constraint_policy": active.content.get(
@@ -704,6 +732,7 @@ class SectionService:
         system_content = (
             active.content["model_instruction"]
             + "\n不得虚构任何采购事实或企业事实。"
+            + "\n历史案例使用策略：" + case_policy
             + "\n本次已加载的版本化写作规则（本章适用部分）：\n"
             + json.dumps(compact_rules, ensure_ascii=False)
         )

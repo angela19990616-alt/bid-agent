@@ -1,7 +1,7 @@
 {
   "key": "default-writing",
   "rule_type": "writing",
-  "version": 6,
+  "version": 7,
   "name": "技术方案写作规则",
   "description": "控制目录、章节写作、企业知识引用和事实边界。",
   "chapter_order": [
@@ -48,6 +48,12 @@
     "never_invent_missing_format_values": true,
     "manual_only_items": ["签章", "盖章", "装订", "密封"],
     "instruction": "逐项遵守输入中的招标文件硬性格式与必写内容。仅应用原文明示的约束；没有明确数值时不得猜测字体、字号、页数或字数。"
+  },
+  "historical_case_modes": {
+    "balanced": "综合参考多个相似案例的结构和表达，不复制旧项目事实。",
+    "closest_case": "优先贴近最相似历史案例的结构、颗粒度和论证方式，但必须改写为当前项目。",
+    "structure_only": "历史案例仅用于章节结构和分析维度，不参考正文措辞。",
+    "current_only": "不使用历史案例，只依据当前采购文件和已核验企业知识生成。"
   },
   "knowledge_category_policy": {
     "company_profile": "仅可陈述知识正文中明确记录的事实",

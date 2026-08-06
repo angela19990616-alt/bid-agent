@@ -34,7 +34,10 @@ def test_default_rules_are_external_versioned_and_valid():
     )
     assert proposal_memory.content["usage"]["prohibited"]
     assert response_strategy.content["hard_rules"]
-    assert writing.version == 6
+    assert writing.version == 7
+    assert set(writing.content["historical_case_modes"]) == {
+        "balanced", "closest_case", "structure_only", "current_only"
+    }
     assert compliance.version == 4
     assert writing.content["policies"]["allow_invented_capability"] is False
     assert (
