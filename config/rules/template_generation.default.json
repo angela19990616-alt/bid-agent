@@ -1,0 +1,25 @@
+{
+  "key": "default-template-generation",
+  "rule_type": "template_generation",
+  "version": 1,
+  "name": "投标响应模板优先规则",
+  "priority": [
+    "strict_template",
+    "tender_structure",
+    "closest_approved_case"
+  ],
+  "policies": {
+    "preserve_original_package": true,
+    "preserve_block_order": true,
+    "preserve_tables": true,
+    "preserve_styles": true,
+    "fill_verified_values_only": true,
+    "never_guess_missing_fields": true,
+    "historical_cases_are_structure_only": true,
+    "historical_case_facts_are_prohibited": true
+  },
+  "pdf_policy": {
+    "non_fillable_pdf": "manual_exact_fill_required",
+    "do_not_claim_exact_fill_without_coordinates": true
+  }
+}

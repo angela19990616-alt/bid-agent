@@ -7,6 +7,8 @@
 # Python
 .venv/
 .venv-*/
+.testdeps/
+.recovery-source/
 .git-corrupt-backup/
 venv/
 __pycache__/
@@ -35,6 +37,7 @@ build/
 !frontend/build/
 !frontend/build/sites-vite-plugin.ts
 dist/
+*.tsbuildinfo
 
 # Editors and operating systems
 .DS_Store

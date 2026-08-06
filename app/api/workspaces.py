@@ -31,6 +31,7 @@ from app.models.sections import (
     SectionResponse,
 )
 from app.models.workspaces import OutlineUpdate, WorkspaceResponse
+from app.models.generation_profiles import TemplateFieldsUpdate
 from app.services.project_document_service import (
     DocumentParseFailedError,
     DuplicateDocumentError,
@@ -76,6 +77,7 @@ from app.services.workspace_access_service import (
 )
 from app.services.workspace_job_service import WorkspaceJobService
 from app.services.response_support_service import ResponseSupportService
+from app.services.generation_profile_service import GenerationProfileService
 
 
 router = APIRouter(prefix="/workspaces", tags=["proposal-workspaces"])
@@ -195,6 +197,29 @@ def get_workspace(
         return service.get(workspace_id)
     except ProjectNotFoundError as exc:
         raise AppError(404, "WORKSPACE_NOT_FOUND", "未找到该方案。") from exc
+
+
+@router.put(
+    "/{workspace_id}/template-fields",
+    response_model=WorkspaceResponse,
+)
+def update_workspace_template_fields(
+    workspace_id: UUID,
+    payload: TemplateFieldsUpdate,
+    _access: None = Depends(authorize_workspace),
+    service: WorkspaceService = Depends(get_workspace_service),
+):
+    try:
+        GenerationProfileService.update_template_fields(
+            workspace_id, payload.values
+        )
+        return service.get(workspace_id)
+    except ValueError as exc:
+        raise AppError(
+            422,
+            "TEMPLATE_FIELDS_INVALID",
+            str(exc),
+        ) from exc
 
 
 @router.post(

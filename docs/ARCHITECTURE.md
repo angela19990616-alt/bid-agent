@@ -137,6 +137,7 @@ Memory 证明企业资质、能力、案例、人员或任何历史事实。
 | enterprise_knowledge | 机构私有企业知识 |
 | knowledge_matches | 写作前知识匹配证据 |
 | proposal_memory | 审核通过的优秀方案结构模式，不保存可复用企业事实 |
+| proposal_generation_profiles | 模板来源、生成模式、案例参考模式和最近回填审计 |
 | workflow_runs | 有限工作流轨迹和失败位置 |
 | export_records | 单章节兼容导出与整本方案导出 |
 
@@ -145,6 +146,8 @@ Memory 证明企业资质、能力、案例、人员或任何历史事实。
 - Document Validator：只判断输入是否值得进入后续流程。
 - Parser：只把 PDF/DOCX 转为可定位 SourceSegment。
 - Document Ingestion：持久化原文、页码、段落、表格位置和来源坐标。
+- Response Template Detection：区分目录引用与真实响应格式章节，输出可审计模板描述。
+- Generation Mode Decision：有 DOCX 模板时强制保真回填；无模板才进入常规目录规划。
 - Requirement Extractor：依据加载的 extraction rule 调用模型。
 - Response Item Normalizer：确定性拆分复合事项、标准化表达并保存审计记录。
 - Classification Agent：规则优先；只对低置信和未映射条目进行一次批量模型分类。
@@ -160,7 +163,7 @@ Memory 证明企业资质、能力、案例、人员或任何历史事实。
 - Chapter Writer：只用 Requirement 证据、Matched Knowledge 和 writing rule。
 - Chapter Review：每章生成后立即检查覆盖、来源、幻觉、格式和内部标识。
 - Delivery Gate：整本 Review 后检查真实性、可追溯、评分覆盖和交付风险。
-- Export：按确认版本顺序生成完整 DOCX 和来源总表。
+- Export：严格模板模式复制原 DOCX 包并在明确位置回填；无模板模式才生成标准 DOCX。
 
 ## 8. 安全与演进
 
@@ -186,6 +189,7 @@ Memory 证明企业资质、能力、案例、人员或任何历史事实。
 | 事实边界、篇幅和写作约束 | `writing.policies`、`knowledge_category_policy` | Chapter Writer |
 | 知识准入、匹配权重和数量 | `knowledge.eligibility`、`matching`、`fact_boundaries` | Knowledge Engine |
 | 优秀结构模式和事实禁用边界 | `proposal_memory.eligibility`、`usage` | Proposal Memory Engine |
+| 模板优先级、保真和 PDF 降级边界 | `template_generation.priority`、`policies`、`pdf_policy` | Template Detector、Export Gate |
 | 校核项、严重级别和可追溯要求 | `compliance.checks`、`required_traceability` | Compliance Checker |
 | 模型、端点、批次和切分参数 | 私密 `.env`；字段模板见 `.env.example` | Model Gateway、Ingestion |
 

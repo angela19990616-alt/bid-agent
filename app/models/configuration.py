@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 
 RuleType = Literal[
     "extraction", "classification", "response_strategy", "knowledge",
-    "writing", "compliance"
+    "proposal_memory", "writing", "compliance", "conflict_detection",
+    "response_prioritization", "template_generation"
 ]
 
 

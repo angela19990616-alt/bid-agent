@@ -73,6 +73,13 @@ class ProposalMemoryEngine:
                         quality_score, checksum
                     )
                     VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                    ON CONFLICT (organization_key, checksum) DO UPDATE SET
+                        quality_score = GREATEST(
+                            proposal_memory.quality_score,
+                            EXCLUDED.quality_score
+                        ),
+                        review_status = 'approved',
+                        updated_at = NOW()
                     RETURNING id
                     """,
                     (

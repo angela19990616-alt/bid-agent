@@ -324,6 +324,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .generated-trace-list > summary { color: var(--green-700); cursor: pointer; }
 .generated-trace-list p { margin: 7px 0; color: var(--ink); font-size: 10px; line-height: 1.65; }
 .export-actions .primary { width: 100%; margin: 8px 0 11px; }
+.template-fields { margin: 16px 0; padding: 14px; border: 1px solid #d6ded8; border-radius: 10px; background: #f8faf8; }
+.template-fields > strong, .template-fields > span { display: block; }
+.template-fields > span { margin-top: 4px; color: var(--muted); font-size: 12px; word-break: break-all; }
+.template-fields .field { margin: 10px 0; }
+.template-fields .secondary { width: 100%; }
 .download-button { width: 100%; border: 1px solid #95b3a5; color: #20543e; background: #e6f2eb; }
 .empty-state { padding: 50px; border: 1px dashed #cad6cf; border-radius: 12px; color: var(--muted); text-align: center; background: white; }
 

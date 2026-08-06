@@ -16,6 +16,8 @@ from app.services.docx_builder import (
 from app.services.proposal_review_service import (
     ProposalReviewService,
 )
+from app.services.generation_profile_service import GenerationProfileService
+from app.services.response_template_service import ResponseTemplateService
 from app.services.section_service import SectionService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
@@ -32,6 +34,8 @@ class ExportService:
     def create_full(self, project_id: UUID) -> dict:
         ProposalReviewService().prepare_for_export(project_id)
         data = self._load_full_export_input(project_id)
+        profile_service = GenerationProfileService()
+        profile = profile_service.get(project_id)
         export_id = uuid4()
         safe_project = re.sub(
             r'[\\/:*?"<>|\s]+', "_", data["project_name"]
@@ -60,13 +64,50 @@ class ExportService:
                     (export_id, project_id, storage_key, filename),
                 )
         try:
-            build_full_proposal_docx(
-                temporary,
-                project_name=data["project_name"],
-                sections=data["sections"],
-                requirements=data["requirements"],
-            )
+            if profile.generation_mode == "strict_template":
+                template_path = profile_service.template_path(profile)
+                if template_path is None or not template_path.is_file():
+                    raise ExportValidationError("响应模板原文件不存在。")
+                report = ResponseTemplateService().fill_docx(
+                    template_content=template_path.read_bytes(),
+                    output_path=temporary,
+                    descriptor=profile.template_descriptor,
+                    field_values={
+                        **profile.template_field_values,
+                        "project_name": data["project_name"],
+                    },
+                    sections=data["sections"],
+                )
+                profile_service.record_fill_report(
+                    project_id, report.snapshot()
+                )
+                if report.unresolved_fields or report.unresolved_sections:
+                    details = []
+                    if report.unresolved_fields:
+                        details.append(
+                            "未填写已识别字段："
+                            + "、".join(report.unresolved_fields)
+                        )
+                    if report.unresolved_sections:
+                        details.append(
+                            "无明确回填位置的章节："
+                            + "、".join(report.unresolved_sections)
+                        )
+                    raise ExportValidationError(
+                        "响应模板尚未完成已核验回填；" + "；".join(details)
+                    )
+            else:
+                build_full_proposal_docx(
+                    temporary,
+                    project_name=data["project_name"],
+                    sections=data["sections"],
+                    requirements=data["requirements"],
+                )
             temporary.replace(destination)
+        except ExportValidationError:
+            temporary.unlink(missing_ok=True)
+            self._mark_failed(export_id, "TEMPLATE_FILL_INCOMPLETE")
+            raise
         except Exception as exc:
             temporary.unlink(missing_ok=True)
             self._mark_failed(export_id, type(exc).__name__)

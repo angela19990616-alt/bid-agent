@@ -79,6 +79,7 @@ POST /api/v1/configuration/rules/{definition_id}/activate
 GET  /api/v1/configuration/knowledge
 POST /api/v1/configuration/knowledge
 POST /api/v1/configuration/knowledge/documents
+POST /api/v1/configuration/proposal-memory/case-pairs
 ```
 
 历史投标 PDF/DOCX 可通过 `knowledge/documents` 导入。系统只返回摘要，不通过
@@ -94,6 +95,27 @@ Chapter Writer 调用模型前，Knowledge Engine 会先读取全部可用的机
 通过有效性、解析质量、重复性和权限检查的历史招标文件，以
 `organization_private` 范围进入私有知识库，供后续 RAG 检索。它不是“模型训练”，
 不会未经授权进入任何公共训练集。
+
+成对导入“招标文件 + 中标响应 DOCX”时，系统只提取章节层级、论证维度、
+段落密度和表格字段角色，历史正文、客户、金额、人员、资质和项目参数不会进入
+Proposal Memory。当前仓库只包含一组自贡项目样例（两个响应分册）；其余四组需在
+文件提供后通过同一私有接口逐组导入，系统不会虚构缺失案例。
+
+## 模板优先生成
+
+上传 DOCX 后，系统在 Requirement 提取前加载独立的
+`template_generation.default.json`，识别招标文件末尾或单独附件中的“响应文件格式”。
+生成优先级固定为：原响应模板保真回填 → 招标文件明确结构 → 相似中标案例写法。
+
+- DOCX 模板保留原文件包中的样式、表格、区块顺序、页眉页脚和节设置，仅裁去模板
+  章节之前的采购正文，并在明确字段或章节位置回填已核验内容。
+- 缺失字段保持原占位符并阻止最终导出；用户通过已核验模板字段
+  接口补齐，系统不猜测企业事实。
+- 非可填写 PDF 只标记为严格人工回填参照，不谎称已实现坐标级自动回填。
+- 严格模板找不到章节落点时，导出门禁阻止生成错误版式并返回明确缺项。
+
+工作区响应返回 `generation_mode`、`template_filename` 和 `template_fidelity`；兼容
+接口可通过 `GET /api/v1/projects/{project_id}/generation-profile` 查看完整决策。
 
 当前 MVP 的租户边界是单机构部署边界；多租户上线前必须增加真实身份认证、
 organization_id 行级隔离和权限审计，不能仅依赖前端隐藏。
@@ -247,9 +269,9 @@ bash scripts/verify_release.sh
 四种历史案例参考方式。历史案例只能提供结构、颗粒度和表达方法；企业事实仍必须来自
 已核验的机构私有知识。
 
-当前版本完成格式要求识别、严格程度判断和人工复核门禁。PDF/Word/表格附件的二进制
-原模板回填，以及资格证书图片的版面编排属于下一增量；在完成模板坐标和图片资产管理
-前，系统不得声称已经像素级还原原附件。
+当前版本已完成 DOCX 原模板的二进制保真回填、严格程度判断和人工复核门禁。
+PDF 坐标级自动回填、Excel 附件和资格证书图片版面编排属于下一增量；
+在完成模板坐标和图片资产管理前，系统不得声称已经像素级还原这些格式。
 
 该命令是每次更新的统一交付门禁：检查 Python 漏导入/未定义名称、外部规则、
 受控工作流无重复阶段、模型最多三次尝试、后端全量测试、前端生产构建、

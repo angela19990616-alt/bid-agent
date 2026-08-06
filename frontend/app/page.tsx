@@ -111,6 +111,12 @@ type Workspace = {
   model_calls_limit: number;
   model_tokens_used: number;
   model_tokens_limit: number;
+  generation_mode: "strict_template" | "planned" | "pdf_template_manual_fill";
+  historical_case_mode: "balanced" | "closest_case" | "structure_only" | "current_only";
+  template_filename: string | null;
+  template_fidelity: string | null;
+  template_required_fields: string[];
+  template_field_values: Record<string, string>;
 };
 type ExportItem = { id: string; status: string; filename?: string | null };
 type ProposalReview = {
@@ -261,6 +267,13 @@ const importanceRank: Record<Requirement["importance"], number> = {
   medium: 2,
   low: 3,
 };
+const templateFieldLabels: Record<string, string> = {
+  project_number: "项目编号",
+  bidder_name: "供应商名称",
+  legal_representative: "法定代表人",
+  authorized_representative: "授权代表",
+  date: "日期",
+};
 const priorityRank: Record<Requirement["priority"], number> = {
   P0: 0,
   P1: 1,
@@ -318,6 +331,7 @@ export default function Home() {
   const [exportItem, setExportItem] = useState<ExportItem | null>(null);
   const [proposalReview, setProposalReview] = useState<ProposalReview | null>(null);
   const [responseSupport, setResponseSupport] = useState<ResponseSupport | null>(null);
+  const [templateFieldValues, setTemplateFieldValues] = useState<Record<string, string>>({});
   const [caseReferenceMode, setCaseReferenceMode] = useState<"balanced" | "closest_case" | "structure_only" | "current_only">("balanced");
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
@@ -357,6 +371,12 @@ export default function Home() {
     );
   }, [requirements, requirementView]);
   const progress = workspace ? Math.max(20, (steps.findIndex((item) => item.id === step) + 1) * 20) : 0;
+  const editableTemplateFields = (workspace?.template_required_fields ?? []).filter(
+    (field) => field !== "project_name",
+  );
+  const templateFieldsComplete = editableTemplateFields.every(
+    (field) => Boolean(templateFieldValues[field]?.trim()),
+  );
 
   useEffect(() => {
     let active = true;
@@ -375,6 +395,10 @@ export default function Home() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    setTemplateFieldValues(workspace?.template_field_values ?? {});
+  }, [workspace?.id]);
 
   async function authorizeInvite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -744,6 +768,23 @@ export default function Home() {
           ? "校核完成，Word 文件已经生成。"
           : `Word 已生成，有 ${review.overall.blocking_risk_count} 项建议人工留意。`,
       );
+    });
+  }
+
+  async function saveTemplateFields() {
+    if (!workspace) return;
+    await run("正在保存已核验模板信息", async () => {
+      const updated = await request<Workspace>(
+        `/workspaces/${workspace.id}/template-fields`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ values: templateFieldValues }),
+        },
+      );
+      setWorkspace(updated);
+      setTemplateFieldValues(updated.template_field_values ?? {});
+      setNotice("模板字段已保存，导出时只会回填这些已核验信息。");
     });
   }
 
@@ -1122,6 +1163,35 @@ export default function Home() {
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
                 <p>一次完成来源校核、真实性检查、自动清理和 Word 生成；检查结果仅作提醒，不会阻断导出。</p>
+                {workspace?.generation_mode === "strict_template" && (
+                  <div className="template-fields">
+                    <strong>原响应模板保真回填</strong>
+                    <span>{workspace.template_filename}</span>
+                    <p>请只填写已核验信息；缺失字段不会由 AI 猜测。</p>
+                    {editableTemplateFields.map((field) => (
+                      <label className="field" key={field}>
+                        <span>{templateFieldLabels[field] ?? field}</span>
+                        <input
+                          value={templateFieldValues[field] ?? ""}
+                          onChange={(event) => setTemplateFieldValues((values) => ({
+                            ...values,
+                            [field]: event.target.value,
+                          }))}
+                          maxLength={500}
+                        />
+                      </label>
+                    ))}
+                    {editableTemplateFields.length > 0 && (
+                      <button
+                        className="secondary"
+                        disabled={!templateFieldsComplete || Boolean(busy)}
+                        onClick={saveTemplateFields}
+                      >
+                        保存已核验模板信息
+                      </button>
+                    )}
+                  </div>
+                )}
                 {proposalReview && (
                   <div className="review-summary ready">
                     <strong>{proposalReview.overall.recommended_for_delivery ? "校核完成" : "校核完成，请留意建议"}</strong>
@@ -1169,7 +1239,7 @@ export default function Home() {
                     </details>
                   </details>
                 )}
-                <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>
+                <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved") || (workspace?.generation_mode === "strict_template" && !templateFieldsComplete)} onClick={createExport}>校核并生成 Word</button>
                 {exportItem?.status === "succeeded" && workspace && (
                   <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
                 )}

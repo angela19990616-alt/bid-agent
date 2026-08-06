@@ -12,6 +12,7 @@ from app.api.workspaces import (
 )
 from app.main import app
 from app.models.requirements import RequirementStrategyUpdate
+from app.models.generation_profiles import TemplateFieldsUpdate
 from app.services.workspace_service import InvalidTenderDocumentError
 from app.services.workspace_access_service import (
     SessionAccess,
@@ -142,6 +143,37 @@ def test_response_views_filter_by_strategy_dimensions(monkeypatch):
             workspace_id, "risk", None
         )
     ] == ["risk"]
+
+
+def test_verified_template_fields_are_saved_through_workspace_flow(monkeypatch):
+    workspace_id = uuid4()
+    calls = {}
+    service = FakeWorkspaceService()
+    monkeypatch.setattr(
+        workspace_api,
+        "GenerationProfileService",
+        SimpleNamespace(
+            update_template_fields=lambda item_id, values: calls.update(
+                workspace_id=item_id,
+                values=values,
+            )
+        ),
+    )
+
+    result = workspace_api.update_workspace_template_fields(
+        workspace_id,
+        TemplateFieldsUpdate(
+            values={"bidder_name": "已核验供应商"}
+        ),
+        None,
+        service,
+    )
+
+    assert calls == {
+        "workspace_id": workspace_id,
+        "values": {"bidder_name": "已核验供应商"},
+    }
+    assert result["id"] == service.id
 
 
 def test_manual_strategy_switch_reconciles_draft_outline(monkeypatch):

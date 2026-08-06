@@ -41,6 +41,15 @@ def test_workspace_summary_loads_requirements_once(monkeypatch):
         ),
         requirement_service=requirements,
         plan_service=SimpleNamespace(),
+        generation_profile_service=SimpleNamespace(
+            get=lambda workspace_id: SimpleNamespace(
+                generation_mode="planned",
+                historical_case_mode="closest_case",
+                template_filename=None,
+                template_descriptor={},
+                template_field_values={},
+            )
+        ),
     )
     workspace = SimpleNamespace(
         id=workspace_id,

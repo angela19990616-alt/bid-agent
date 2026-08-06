@@ -49,6 +49,12 @@ class WorkspaceResponse(BaseModel):
     processing_error_code: str | None = None
     processing_error_message: str | None = None
     processing_retryable: bool = False
+    generation_mode: str = "planned"
+    historical_case_mode: str = "closest_case"
+    template_filename: str | None = None
+    template_fidelity: str | None = None
+    template_required_fields: list[str] = Field(default_factory=list)
+    template_field_values: dict[str, str] = Field(default_factory=dict)
     model_calls_used: int = 0
     model_calls_limit: int = 40
     model_tokens_used: int = 0

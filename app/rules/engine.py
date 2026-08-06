@@ -17,6 +17,7 @@ RULE_TYPES = {
     "extraction", "classification", "response_strategy", "knowledge",
     "proposal_memory", "writing", "compliance",
     "conflict_detection", "response_prioritization",
+    "template_generation",
 }
 
 
@@ -60,6 +61,7 @@ class RuleEngine:
         "proposal_memory": "proposal_memory.default.json",
         "writing": "writing.default.json",
         "compliance": "compliance.default.json",
+        "template_generation": "template_generation.default.json",
     }
 
     def load(self, rule_type: str) -> RuleDocument:
@@ -274,6 +276,8 @@ class RuleEngine:
                 "knowledge_category_policy", "model_instruction",
                 "user_template"
             )
+        elif rule_type == "template_generation":
+            required = ("priority", "policies", "pdf_policy")
         else:
             required = ("checks", "required_traceability")
         missing = [field for field in required if field not in content]

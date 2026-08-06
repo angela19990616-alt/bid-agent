@@ -188,6 +188,35 @@ DOCX 的 `locator.kind` 为 `paragraph`，并返回起止段落序号。
 
 ## 7. 导出
 
+### `GET /projects/{project_id}/generation-profile`
+
+返回 `strict_template`、`planned` 或 `pdf_template_manual_fill`，以及模板来源、
+保真等级和历史案例参考模式。该接口不返回模板正文或内部存储路径。
+
+### `PUT /projects/{project_id}/generation-profile/template-fields`
+
+保存人工核验的模板字段，例如项目编号、供应商名称和日期。严格模板
+仍存在未填占位符或缺少章节落点时，导出门禁会返回明确缺项而不是猜填。
+
+```json
+{
+  "values": {
+    "project_number": "已核验项目编号",
+    "bidder_name": "已核验供应商名称"
+  }
+}
+```
+
+主产品流程不要求用户理解 Project；前端应使用等价的
+`PUT /workspaces/{workspace_id}/template-fields`，并从工作区响应中读取
+`template_required_fields` 和 `template_field_values`。
+
+### `POST /configuration/proposal-memory/case-pairs`
+
+以 multipart 方式上传一份招标文件和对应中标响应 DOCX，并提交 `project_type`、
+`industry` 与 `quality_score`。只保存机构私有结构模式，响应只返回学习到的模式数量，
+不暴露内部 ID 或案例正文。
+
 ### `POST /projects/{project_id}/exports`
 
 创建 DOCX 导出。
@@ -259,4 +288,3 @@ DOCX 的 `locator.kind` 为 `paragraph`，并返回起止段落序号。
 | `413` | 上传文件过大 |
 | `422` | 业务校验失败 |
 | `503` | 必要依赖暂不可用 |
-

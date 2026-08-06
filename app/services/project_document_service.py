@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,10 @@ from app.config.settings import settings
 from app.database.db import connect
 from app.services.document_service import SourceSegment, parse_document
 from app.rules.engine import RuleDocument, RuleEngine
+from app.services.generation_profile_service import GenerationProfileService
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -123,7 +128,7 @@ class ProjectDocumentService:
             validation = DocumentValidator().validate(
                 filename, segments, active_rules
             )
-            return self._persist_parsed(
+            result = self._persist_parsed(
                 project_id=project_id,
                 public_id=public_id,
                 job_id=job_id,
@@ -135,6 +140,23 @@ class ProjectDocumentService:
                 segments=segments,
                 validation=validation,
             )
+            try:
+                GenerationProfileService().inspect_document(
+                    project_id=project_id,
+                    document_id=result.id,
+                    filename=result.filename,
+                    content=content,
+                )
+            except Exception:
+                # Parsing and persistence have already committed. Do not turn
+                # a generation-profile problem into a false upload failure or
+                # delete the source file. The workspace falls back to planned
+                # generation and the profile can be rebuilt deterministically.
+                logger.exception(
+                    "generation profile inspection failed for document %s",
+                    result.id,
+                )
+            return result
         except DocumentParseFailedError:
             raise
         except Exception:

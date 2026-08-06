@@ -16,6 +16,12 @@ from app.models.configuration import (
     RuleResponse,
 )
 from app.rules.engine import RuleEngine, RuleValidationError
+from app.knowledge.permissions import KnowledgeAccessContext
+from app.memory.historical_case_learning import (
+    HistoricalCaseLearningService,
+    HistoricalCasePair,
+)
+from app.services.document_service import extract_text
 
 
 router = APIRouter(prefix="/configuration", tags=["configuration"])
@@ -31,7 +37,9 @@ def get_knowledge_engine() -> EnterpriseKnowledgeEngine:
 )
 def get_active_rule(
     rule_type: Literal[
-        "extraction", "classification", "knowledge", "writing", "compliance"
+        "extraction", "classification", "response_strategy", "knowledge",
+        "proposal_memory", "writing", "compliance", "conflict_detection",
+        "response_prioritization", "template_generation"
     ],
 ):
     return RuleEngine().load(rule_type).__dict__
@@ -40,7 +48,9 @@ def get_active_rule(
 @router.get("/rules")
 def list_rule_versions(
     rule_type: Literal[
-        "extraction", "classification", "knowledge", "writing", "compliance"
+        "extraction", "classification", "response_strategy", "knowledge",
+        "proposal_memory", "writing", "compliance", "conflict_detection",
+        "response_prioritization", "template_generation"
     ] | None = None,
 ):
     return RuleEngine().list_versions(rule_type)
@@ -129,3 +139,49 @@ async def import_enterprise_knowledge_document(
         )
     except (KnowledgeValidationError, ValueError) as exc:
         raise AppError(422, "KNOWLEDGE_DOCUMENT_INVALID", str(exc)) from exc
+
+
+@router.post(
+    "/proposal-memory/case-pairs",
+    status_code=status.HTTP_201_CREATED,
+)
+async def learn_historical_case_pair(
+    tender_file: UploadFile = File(...),
+    winning_proposal_file: UploadFile = File(...),
+    project_type: str = Form(..., min_length=2, max_length=100),
+    industry: str = Form(..., min_length=2, max_length=100),
+    quality_score: float = Form(0.85, ge=0.7, le=1.0),
+):
+    tender_name = tender_file.filename or "招标文件"
+    proposal_name = winning_proposal_file.filename or "中标响应文件"
+    if not tender_name.lower().endswith((".pdf", ".docx")):
+        raise AppError(415, "TENDER_UNSUPPORTED", "招标文件仅支持 PDF 或 DOCX。")
+    if not proposal_name.lower().endswith(".docx"):
+        raise AppError(
+            415,
+            "WINNING_PROPOSAL_UNSUPPORTED",
+            "中标响应案例需提供 DOCX，才能安全提取结构模式。",
+        )
+    try:
+        tender_content = await tender_file.read()
+        proposal_content = await winning_proposal_file.read()
+        pair = HistoricalCasePair(
+            tender_filename=tender_name,
+            tender_text=extract_text(tender_name, tender_content),
+            proposal_filename=proposal_name,
+            proposal_content=proposal_content,
+            project_type=project_type,
+            industry=industry,
+            quality_score=quality_score,
+        )
+        learned = HistoricalCaseLearningService().learn_pairs(
+            access_context=KnowledgeAccessContext.default(),
+            pairs=[pair],
+        )
+        return {
+            "learned_patterns": len(learned),
+            "permission_scope": "organization_private",
+            "fact_usage": "prohibited",
+        }
+    except (ValueError, KnowledgeValidationError) as exc:
+        raise AppError(422, "CASE_PAIR_INVALID", str(exc)) from exc

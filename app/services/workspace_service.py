@@ -13,6 +13,8 @@ from app.services.proposal_plan_service import ProposalPlanService
 from app.services.requirement_service import RequirementService
 from app.services.section_service import SectionService
 from app.services.workspace_job_service import WorkspaceJobService
+from app.services.generation_profile_service import GenerationProfileService
+from app.services.response_template_service import ResponseTemplateService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -34,11 +36,15 @@ class WorkspaceService:
         requirement_service: RequirementService | None = None,
         plan_service: ProposalPlanService | None = None,
         rule_engine: RuleEngine | None = None,
+        generation_profile_service: GenerationProfileService | None = None,
     ):
         self.document_service = document_service or ProjectDocumentService()
         self.requirement_service = requirement_service or RequirementService()
         self.plan_service = plan_service or ProposalPlanService()
         self.rule_engine = rule_engine or RuleEngine()
+        self.generation_profile_service = (
+            generation_profile_service or GenerationProfileService()
+        )
 
     def create_from_upload(
         self,
@@ -96,6 +102,30 @@ class WorkspaceService:
                     "document_id": str(document.id),
                     "source_count": document.source_count,
                 },
+            )
+            template_rules = self.rule_engine.load("template_generation")
+            pipeline.record(
+                run_id,
+                "load_template_generation_rules",
+                rule_snapshot=template_rules.snapshot(),
+            )
+            profile = self.generation_profile_service.get(workspace.id)
+            pipeline.record(
+                run_id,
+                "response_template_detection",
+                details={
+                    "detected": bool(
+                        profile.template_descriptor.get("detected", False)
+                    ),
+                    "source_format": profile.template_descriptor.get(
+                        "source_format"
+                    ),
+                },
+            )
+            pipeline.record(
+                run_id,
+                "generation_mode_decision",
+                details={"generation_mode": profile.generation_mode},
             )
             if document.validation_status != "valid":
                 self._set_status(workspace.id, "draft")
@@ -241,6 +271,7 @@ class WorkspaceService:
             source_count=source_count,
         )
         budget = ModelBudgetService.summary_for_project(workspace_id)
+        profile = self.generation_profile_service.get(workspace_id)
         job = WorkspaceJobService.latest_status(workspace_id)
         return {
             "id": workspace.id,
@@ -274,6 +305,16 @@ class WorkspaceService:
             "processing_retryable": bool(
                 job and job["status"] == "failed" and documents
             ),
+            "generation_mode": profile.generation_mode,
+            "historical_case_mode": profile.historical_case_mode,
+            "template_filename": profile.template_filename,
+            "template_fidelity": profile.template_descriptor.get(
+                "fidelity"
+            ),
+            "template_required_fields": ResponseTemplateService.required_fields(
+                profile.template_descriptor
+            ),
+            "template_field_values": profile.template_field_values,
             **budget,
         }
 

@@ -21,6 +21,7 @@ def test_default_rules_are_external_versioned_and_valid():
     response_strategy = engine.load_default("response_strategy")
     writing = engine.load_default("writing")
     compliance = engine.load_default("compliance")
+    template_generation = engine.load_default("template_generation")
 
     assert extraction.version == 4
     assert extraction.content["proposal_mapping"]
@@ -45,6 +46,13 @@ def test_default_rules_are_external_versioned_and_valid():
         .startswith("仅可参考结构")
     )
     assert compliance.content["checks"]
+    assert template_generation.content["priority"][0] == "strict_template"
+    assert (
+        template_generation.content["policies"][
+            "historical_case_facts_are_prohibited"
+        ]
+        is True
+    )
     assert len(extraction.checksum) == 64
 
 
