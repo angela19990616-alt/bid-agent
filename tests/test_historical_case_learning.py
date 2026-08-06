@@ -82,3 +82,38 @@ def test_case_pair_learning_preserves_private_organization_boundary():
     )
     assert "甲公司" not in snapshot
     assert "500万元" not in snapshot
+
+
+def test_multiple_pairs_use_one_validated_memory_transaction():
+    calls = []
+
+    class FakeMemoryEngine:
+        def add_patterns(self, **kwargs):
+            calls.append(kwargs)
+            return [uuid4() for _ in kwargs["items"]]
+
+    pairs = [
+        HistoricalCasePair(
+            tender_filename=f"tender-{index}.docx",
+            tender_text=f"第{index}组采购需求",
+            proposal_filename=f"winning-{index}.docx",
+            proposal_content=_winning_bid(),
+            project_type="咨询服务",
+            industry="文旅",
+        )
+        for index in range(1, 6)
+    ]
+    learned = HistoricalCaseLearningService(
+        memory_engine=FakeMemoryEngine()
+    ).learn_pairs(
+        access_context=KnowledgeAccessContext("enterprise-a"),
+        pairs=pairs,
+    )
+
+    assert len(calls) == 1
+    assert len(learned) == len(calls[0]["items"])
+    assert all(
+        item["pattern"]["source_facts_removed"] is True
+        and item["pattern"]["prohibited_fact_copy"] is True
+        for item in calls[0]["items"]
+    )

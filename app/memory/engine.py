@@ -53,47 +53,87 @@ class ProposalMemoryEngine:
         quality_score: float,
         source_knowledge_id: UUID | None = None,
     ) -> UUID:
-        if pattern.get("prohibited_fact_copy") is not True:
-            raise ProposalMemoryValidationError(
-                "方案记忆必须明确禁止复制历史事实。"
+        return self.add_patterns(
+            access_context=access_context,
+            items=[
+                {
+                    "project_type": project_type,
+                    "industry": industry,
+                    "chapter_title": chapter_title,
+                    "pattern": pattern,
+                    "quality_score": quality_score,
+                    "source_knowledge_id": source_knowledge_id,
+                }
+            ],
+        )[0]
+
+    def add_patterns(
+        self,
+        *,
+        access_context: KnowledgeAccessContext,
+        items: list[dict[str, Any]],
+    ) -> list[UUID]:
+        """Validate the full batch, then persist it in one transaction."""
+        prepared: list[dict[str, Any]] = []
+        for item in items:
+            pattern = item["pattern"]
+            quality_score = float(item["quality_score"])
+            if pattern.get("prohibited_fact_copy") is not True:
+                raise ProposalMemoryValidationError(
+                    "方案记忆必须明确禁止复制历史事实。"
+                )
+            if not 0 <= quality_score <= 1:
+                raise ProposalMemoryValidationError("方案记忆质量分无效。")
+            canonical = json.dumps(
+                pattern, ensure_ascii=False, sort_keys=True
             )
-        if not 0 <= quality_score <= 1:
-            raise ProposalMemoryValidationError("方案记忆质量分无效。")
-        canonical = json.dumps(
-            pattern, ensure_ascii=False, sort_keys=True
-        )
-        checksum = hashlib.sha256(canonical.encode()).hexdigest()
+            prepared.append(
+                {
+                    **item,
+                    "quality_score": quality_score,
+                    "canonical": canonical,
+                    "checksum": hashlib.sha256(
+                        canonical.encode()
+                    ).hexdigest(),
+                }
+            )
+        if not prepared:
+            return []
+
+        ids: list[UUID] = []
         with connect() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO proposal_memory (
-                        organization_key, project_type, industry,
-                        chapter_title, pattern, source_knowledge_id,
-                        quality_score, checksum
-                    )
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)
-                    ON CONFLICT (organization_key, checksum) DO UPDATE SET
-                        quality_score = GREATEST(
-                            proposal_memory.quality_score,
-                            EXCLUDED.quality_score
+                for item in prepared:
+                    cursor.execute(
+                        """
+                        INSERT INTO proposal_memory (
+                            organization_key, project_type, industry,
+                            chapter_title, pattern, source_knowledge_id,
+                            quality_score, checksum
+                        )
+                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                        ON CONFLICT (organization_key, checksum) DO UPDATE SET
+                            quality_score = GREATEST(
+                                proposal_memory.quality_score,
+                                EXCLUDED.quality_score
+                            ),
+                            review_status = 'approved',
+                            updated_at = NOW()
+                        RETURNING id
+                        """,
+                        (
+                            access_context.organization_key,
+                            str(item["project_type"]).strip(),
+                            str(item["industry"]).strip(),
+                            str(item["chapter_title"]).strip(),
+                            item["canonical"],
+                            item.get("source_knowledge_id"),
+                            item["quality_score"],
+                            item["checksum"],
                         ),
-                        review_status = 'approved',
-                        updated_at = NOW()
-                    RETURNING id
-                    """,
-                    (
-                        access_context.organization_key,
-                        project_type.strip(),
-                        industry.strip(),
-                        chapter_title.strip(),
-                        canonical,
-                        source_knowledge_id,
-                        quality_score,
-                        checksum,
-                    ),
-                )
-                return cursor.fetchone()[0]
+                    )
+                    ids.append(cursor.fetchone()[0])
+        return ids
 
     def match(
         self,

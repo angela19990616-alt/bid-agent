@@ -101,6 +101,19 @@ Chapter Writer 调用模型前，Knowledge Engine 会先读取全部可用的机
 Proposal Memory。当前仓库只包含一组自贡项目样例（两个响应分册）；其余四组需在
 文件提供后通过同一私有接口逐组导入，系统不会虚构缺失案例。
 
+五组案例到齐后，建议先复制
+`config/examples/historical_case_pairs.example.json` 到案例私有目录，填写相对路径并
+执行完整性与隐私 dry-run；只有五组全部通过才会进入正式批量写入，避免因清单缺项
+产生不完整案例库。正式写入使用同一数据库事务，任一结构模式写入失败时整批回滚：
+
+```bash
+python scripts/import_historical_case_pairs.py /path/to/private/pairs.json --dry-run
+python scripts/import_historical_case_pairs.py /path/to/private/pairs.json
+```
+
+清单及案例文件不应提交 Git。批量导入结果只报告组数、结构模式数、机构私有范围和
+事实禁用状态，不打印案例正文、文件路径或内部 ID。
+
 ## 模板优先生成
 
 上传 DOCX 后，系统在 Requirement 提取前加载独立的

@@ -164,7 +164,7 @@ class HistoricalCaseLearningService:
         access_context: KnowledgeAccessContext,
         pairs: list[HistoricalCasePair],
     ) -> list[UUID]:
-        learned: list[UUID] = []
+        pending: list[dict[str, Any]] = []
         for pair in pairs:
             if not pair.tender_text.strip():
                 raise ValueError("招标文件未解析出可用文本。")
@@ -181,14 +181,25 @@ class HistoricalCaseLearningService:
                 pattern["source_pair_checksum"] = digest
                 pattern["reference_scope"] = "organization_private"
                 pattern["chapter_index"] = chapter_index
-                learned.append(
-                    self.memory_engine.add_pattern(
-                        access_context=access_context,
-                        project_type=pair.project_type,
-                        industry=pair.industry,
-                        chapter_title=pattern["chapter_structure"][0],
-                        pattern=pattern,
-                        quality_score=pair.quality_score,
-                    )
+                pending.append(
+                    {
+                        "project_type": pair.project_type,
+                        "industry": pair.industry,
+                        "chapter_title": pattern["chapter_structure"][0],
+                        "pattern": pattern,
+                        "quality_score": pair.quality_score,
+                    }
                 )
-        return learned
+        add_patterns = getattr(self.memory_engine, "add_patterns", None)
+        if callable(add_patterns):
+            return add_patterns(
+                access_context=access_context,
+                items=pending,
+            )
+        return [
+            self.memory_engine.add_pattern(
+                access_context=access_context,
+                **item,
+            )
+            for item in pending
+        ]
