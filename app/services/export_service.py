@@ -81,21 +81,7 @@ class ExportService:
                 profile_service.record_fill_report(
                     project_id, report.snapshot()
                 )
-                if report.unresolved_fields or report.unresolved_sections:
-                    details = []
-                    if report.unresolved_fields:
-                        details.append(
-                            "未填写已识别字段："
-                            + "、".join(report.unresolved_fields)
-                        )
-                    if report.unresolved_sections:
-                        details.append(
-                            "无明确回填位置的章节："
-                            + "、".join(report.unresolved_sections)
-                        )
-                    raise ExportValidationError(
-                        "响应模板尚未完成已核验回填；" + "；".join(details)
-                    )
+                self._validate_template_fill(report)
             else:
                 build_full_proposal_docx(
                     temporary,
@@ -363,6 +349,18 @@ class ExportService:
             ),
             "requirements": requirements,
         }
+
+    @staticmethod
+    def _validate_template_fill(report) -> None:
+        # Unknown enterprise facts remain blank/placeholder for manual fill;
+        # they must never be guessed, but they do not prevent a draft Word.
+        # Missing section anchors would place generated content incorrectly
+        # and therefore remain a real delivery blocker.
+        if report.unresolved_sections:
+            raise ExportValidationError(
+                "响应模板无明确章节回填位置："
+                + "、".join(report.unresolved_sections)
+            )
 
     @staticmethod
     def _mark_failed(export_id: UUID, error_code: str) -> None:

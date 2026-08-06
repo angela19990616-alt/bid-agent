@@ -329,6 +329,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .template-fields > span { margin-top: 4px; color: var(--muted); font-size: 12px; word-break: break-all; }
 .template-fields .field { margin: 10px 0; }
 .template-fields .secondary { width: 100%; }
+.template-fields .template-field-warning { color: #9a3412; font-weight: 650; }
+.template-fields .template-field-ready { color: var(--green-700); font-weight: 650; }
 .download-button { width: 100%; border: 1px solid #95b3a5; color: #20543e; background: #e6f2eb; }
 .empty-state { padding: 50px; border: 1px dashed #cad6cf; border-radius: 12px; color: var(--muted); text-align: center; background: white; }
 

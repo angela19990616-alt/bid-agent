@@ -119,6 +119,43 @@ class ResponseTemplateService:
                 required.append(key)
         return list(dict.fromkeys(required))
 
+    def extract_source_fields(
+        self,
+        filename: str,
+        content: bytes,
+    ) -> dict[str, str]:
+        """Extract procurement facts that are safe to prefill from source."""
+        suffix = Path(filename).suffix.lower()
+        text = ""
+        try:
+            if suffix == ".docx":
+                document = Document(BytesIO(content))
+                text = "\n".join(
+                    [item.text for item in document.paragraphs]
+                    + [
+                        cell.text
+                        for table in document.tables
+                        for row in table.rows
+                        for cell in row.cells
+                    ]
+                )
+            elif suffix == ".pdf":
+                text = "\n".join(
+                    page.extract_text() or ""
+                    for page in PdfReader(BytesIO(content)).pages
+                )
+        except Exception:
+            return {}
+        project_number = re.search(
+            r"(?:采购项目编号|招标项目编号|项目编号|采购编号|招标编号)"
+            r"\s*(?:[（(][^）)\n]{0,12}[）)])?\s*[：:]\s*"
+            r"([A-Za-z0-9][A-Za-z0-9._/-]{3,79})",
+            text,
+        )
+        if project_number is None:
+            return {}
+        return {"project_number": project_number.group(1).rstrip("。.;；")}
+
     def _detect_docx(self, filename: str, content: bytes) -> TemplateDescriptor:
         document = Document(BytesIO(content))
         blocks = list(document.element.body.iterchildren())

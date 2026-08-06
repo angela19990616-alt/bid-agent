@@ -374,8 +374,8 @@ export default function Home() {
   const editableTemplateFields = (workspace?.template_required_fields ?? []).filter(
     (field) => field !== "project_name",
   );
-  const templateFieldsComplete = editableTemplateFields.every(
-    (field) => Boolean(templateFieldValues[field]?.trim()),
+  const missingTemplateFields = editableTemplateFields.filter(
+    (field) => !templateFieldValues[field]?.trim(),
   );
 
   useEffect(() => {
@@ -751,6 +751,23 @@ export default function Home() {
   async function createExport() {
     if (!workspace) return;
     await run("正在校核并生成 Word", async () => {
+      if (workspace.generation_mode === "strict_template") {
+        const verifiedValues = Object.fromEntries(
+          Object.entries(templateFieldValues).filter(([, value]) => value.trim()),
+        );
+        if (Object.keys(verifiedValues).length > 0) {
+          const updated = await request<Workspace>(
+            `/workspaces/${workspace.id}/template-fields`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ values: verifiedValues }),
+            },
+          );
+          setWorkspace(updated);
+          setTemplateFieldValues(updated.template_field_values ?? {});
+        }
+      }
       const created = await request<ExportItem>(`/workspaces/${workspace.id}/exports`, {
         method: "POST",
       });
@@ -764,7 +781,9 @@ export default function Home() {
       setProposalReview(review);
       setResponseSupport(support);
       setNotice(
-        review.overall.recommended_for_delivery
+        workspace.generation_mode === "strict_template" && missingTemplateFields.length > 0
+          ? `Word 已生成；模板中的${missingTemplateFields.map((field) => templateFieldLabels[field] ?? field).join("、")}保持待填写，未由 AI 猜写。`
+          : review.overall.recommended_for_delivery
           ? "校核完成，Word 文件已经生成。"
           : `Word 已生成，有 ${review.overall.blocking_risk_count} 项建议人工留意。`,
       );
@@ -1167,7 +1186,7 @@ export default function Home() {
                   <div className="template-fields">
                     <strong>原响应模板保真回填</strong>
                     <span>{workspace.template_filename}</span>
-                    <p>请只填写已核验信息；缺失字段不会由 AI 猜测。</p>
+                    <p>系统已自动识别原文模板和采购事实；企业信息只接受人工核验，不会由 AI 猜测。</p>
                     {editableTemplateFields.map((field) => (
                       <label className="field" key={field}>
                         <span>{templateFieldLabels[field] ?? field}</span>
@@ -1178,13 +1197,21 @@ export default function Home() {
                             [field]: event.target.value,
                           }))}
                           maxLength={500}
+                          required
                         />
                       </label>
                     ))}
+                    {missingTemplateFields.length > 0 ? (
+                      <p className="template-field-warning">
+                        待人工填写：{missingTemplateFields.map((field) => templateFieldLabels[field] ?? field).join("、")}。现在也可生成，Word 中会保留原模板空位，不会由 AI 猜写。
+                      </p>
+                    ) : (
+                      <p className="template-field-ready">模板必填信息已齐全，可直接生成。</p>
+                    )}
                     {editableTemplateFields.length > 0 && (
                       <button
                         className="secondary"
-                        disabled={!templateFieldsComplete || Boolean(busy)}
+                        disabled={!Object.values(templateFieldValues).some((value) => value.trim()) || Boolean(busy)}
                         onClick={saveTemplateFields}
                       >
                         保存已核验模板信息
@@ -1239,7 +1266,7 @@ export default function Home() {
                     </details>
                   </details>
                 )}
-                <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved") || (workspace?.generation_mode === "strict_template" && !templateFieldsComplete)} onClick={createExport}>校核并生成 Word</button>
+                <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>
                 {exportItem?.status === "succeeded" && workspace && (
                   <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
                 )}

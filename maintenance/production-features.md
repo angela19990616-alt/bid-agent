@@ -27,6 +27,7 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 
 | run_at | trigger | overall_health | checked_items | incidents_changed | fixes | evidence | blockers | next_action |
 |---|---|---|---|---|---|---|---|---|
+| 2026-08-07 | 用户报告校验后无法生成 | healthy | PF-004 | none | 采购原文自动回填项目编号；未知供应商信息保留模板空位但不阻断草稿导出；仅缺少章节锚点继续阻断 | 后端 221 项全绿；Docker 生产构建与服务健康；真实自贡方案成功导出 138,646 字节 Word，项目编号已写入、供应商标签保留 | none | 用户重新上传后进行页面验收；生产部署仍需单独授权 |
 | 2026-07-31 03:53 CST | 用户报告章节失败与分类异常 | incident | PF-001, PF-002 | INC-001、INC-002 opened | none | 4 个章节任务失败；模型审计显示 403/403/400；分类汇总显示 6 条系统功能设计 | none | 实施最小修复并完成真实回测 |
 | 2026-07-31 04:10 CST | 修复前发布门禁 | degraded | PF-001, PF-002 | INC-001、INC-002 fixing | 10 模型池、健康冷却、费用边界、Prompt 预算、咨询上下文分类 | 161 项后端测试通过；前端构建、Docker 配置、敏感信息检查通过 | 生产尚未回测 | 部署并重试失败章节 |
 | 2026-07-31 04:31 CST | 用户授权真实回测与 MVP 发布 | degraded | PF-001, PF-002 | INC-001 closed；INC-002 fixing | 高级模型优先；移除上传阶段重复知识匹配；交付审查与 Word 导出合并；工作台要求查询合并 | qwen-max 真实生成 2,298 字且 0 条校核问题；164 项后端测试和前端测试通过 | 旧项目分类尚待原位更新 | 重分类后生成剩余章节并验证 Word 导出 |

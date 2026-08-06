@@ -101,6 +101,20 @@ def test_pdf_template_is_not_falsely_claimed_as_auto_fillable():
     assert descriptor.fidelity == "manual_exact_fill_required"
 
 
+def test_extracts_project_number_from_procurement_source_only():
+    document = Document()
+    document.add_paragraph("项目编号：SCXHR20250320。")
+    document.add_paragraph("供应商名称：此处不得从历史响应文件推断")
+    stream = BytesIO()
+    document.save(stream)
+
+    values = ResponseTemplateService().extract_source_fields(
+        "招标文件.docx", stream.getvalue()
+    )
+
+    assert values == {"project_number": "SCXHR20250320"}
+
+
 def test_empty_paragraph_is_never_selected_as_section_heading(tmp_path):
     document = Document()
     document.add_paragraph("")

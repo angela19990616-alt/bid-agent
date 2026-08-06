@@ -37,6 +37,9 @@ class GenerationProfileService:
         content: bytes,
     ) -> GenerationProfile:
         descriptor = self.template_service.detect(filename, content)
+        source_fields = self.template_service.extract_source_fields(
+            filename, content
+        )
         mode = "planned"
         if descriptor.detected and descriptor.source_format == "docx":
             mode = "strict_template"
@@ -58,9 +61,9 @@ class GenerationProfileService:
                     """
                     INSERT INTO proposal_generation_profiles (
                         project_id, generation_mode, template_document_id,
-                        template_descriptor
+                        template_descriptor, template_field_values
                     )
-                    VALUES (%s, %s, %s, %s::jsonb)
+                    VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
                     ON CONFLICT (project_id) DO UPDATE SET
                         generation_mode = CASE
                             WHEN EXCLUDED.generation_mode = 'strict_template'
@@ -86,6 +89,12 @@ class GenerationProfileService:
                                 THEN proposal_generation_profiles.template_descriptor
                             ELSE EXCLUDED.template_descriptor
                         END,
+                        template_field_values = CASE
+                            WHEN EXCLUDED.generation_mode = 'strict_template'
+                                THEN EXCLUDED.template_field_values ||
+                                     proposal_generation_profiles.template_field_values
+                            ELSE proposal_generation_profiles.template_field_values
+                        END,
                         updated_at = NOW()
                     """,
                     (
@@ -93,6 +102,7 @@ class GenerationProfileService:
                         mode,
                         document["id"] if descriptor.detected else None,
                         json.dumps(descriptor.snapshot(), ensure_ascii=False),
+                        json.dumps(source_fields, ensure_ascii=False),
                     ),
                 )
         return self.get(project_id)
