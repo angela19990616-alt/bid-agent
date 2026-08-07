@@ -72,6 +72,7 @@ class ProposalMemoryEngine:
         *,
         access_context: KnowledgeAccessContext,
         items: list[dict[str, Any]],
+        replace_source_pairs: bool = False,
     ) -> list[UUID]:
         """Validate the full batch, then persist it in one transaction."""
         prepared: list[dict[str, Any]] = []
@@ -103,6 +104,24 @@ class ProposalMemoryEngine:
         ids: list[UUID] = []
         with connect() as conn:
             with conn.cursor() as cursor:
+                if replace_source_pairs:
+                    source_pairs = sorted(
+                        {
+                            str(item["pattern"].get("source_pair_checksum"))
+                            for item in prepared
+                            if item["pattern"].get("source_pair_checksum")
+                        }
+                    )
+                    if source_pairs:
+                        cursor.execute(
+                            """
+                            UPDATE proposal_memory
+                            SET review_status = 'retired', updated_at = NOW()
+                            WHERE organization_key = %s
+                              AND pattern->>'source_pair_checksum' = ANY(%s)
+                            """,
+                            (access_context.organization_key, source_pairs),
+                        )
                 for item in prepared:
                     cursor.execute(
                         """
@@ -181,20 +200,73 @@ class ProposalMemoryEngine:
             pattern_text = json.dumps(
                 item["pattern"], ensure_ascii=False
             )
-            item_terms = self._terms(
-                f"{item['project_type']} {item['industry']} "
+            context_terms = self._terms(
+                f"{item['project_type']} {item['industry']}"
+            )
+            structure_terms = self._terms(
                 f"{item['chapter_title']} {pattern_text}"
             )
-            overlap = query_terms & item_terms
+            context_overlap = query_terms & context_terms
+            structure_overlap = query_terms & structure_terms
+            overlap = context_overlap | structure_overlap
             if not overlap:
                 continue
-            semantic_score = min(
+            context_score = min(
                 1.0,
-                len(overlap) / max(3, min(len(query_terms), 40)),
+                len(context_overlap) / max(2, min(len(context_terms), 12)),
+            )
+            structure_score = min(
+                1.0,
+                len(structure_overlap) / max(3, min(len(query_terms), 24)),
+            )
+            generic_penalty = (
+                0.08 if item["chapter_title"] == "通用响应章节" else 0
+            )
+            proposal_query = bool(
+                query_terms
+                & self._terms(
+                    "方案 实施 计划 组织 进度 质量 验收 培训 运维 安全"
+                )
+            )
+            evidence_penalty = (
+                0.22
+                if proposal_query
+                and item["chapter_title"]
+                in {
+                    "响应函", "授权委托", "报价文件", "资格证明",
+                    "业绩证明", "人员材料", "资质证明", "证明材料",
+                    "企业介绍", "商务响应表", "技术响应表",
+                }
+                else 0
+            )
+            core_proposal_bonus = (
+                0.08
+                if proposal_query
+                and item["chapter_title"]
+                in {
+                    "方案正文", "项目理解", "总体思路", "技术方案",
+                    "实施计划", "进度安排", "组织管理", "人员配置",
+                    "质量保障", "验收方案", "培训方案", "运维服务",
+                    "安全方案", "应急预案",
+                }
+                else 0
+            )
+            peripheral_penalty = (
+                0.12
+                if proposal_query
+                and not structure_overlap
+                and item["chapter_title"]
+                in {"保密承诺", "服务承诺", "其他响应材料"}
+                else 0
             )
             score = round(
-                semantic_score * 0.7
-                + float(item["quality_score"]) * 0.3,
+                context_score * 0.5
+                + structure_score * 0.3
+                + float(item["quality_score"]) * 0.2
+                + core_proposal_bonus
+                - generic_penalty
+                - evidence_penalty
+                - peripheral_penalty,
                 4,
             )
             matches.append(
@@ -209,9 +281,27 @@ class ProposalMemoryEngine:
                     ),
                 )
             )
-        return sorted(
-            matches, key=lambda item: item.score, reverse=True
-        )[: max(0, min(limit, 5))]
+        ranked = sorted(matches, key=lambda item: item.score, reverse=True)
+        deduplicated: list[ProposalMemoryMatch] = []
+        seen: set[str] = set()
+        for match in ranked:
+            signature = "|".join(
+                (
+                    str(match.pattern.get("source_pair_checksum") or ""),
+                    match.chapter_title,
+                )
+            )
+            if signature in seen:
+                continue
+            seen.add(signature)
+            deduplicated.append(match)
+        if not deduplicated:
+            return []
+        relative_floor = deduplicated[0].score * 0.75
+        relevant = [
+            item for item in deduplicated if item.score >= relative_floor
+        ]
+        return relevant[: max(0, min(limit, 5))]
 
     @staticmethod
     def _terms(value: str) -> set[str]:

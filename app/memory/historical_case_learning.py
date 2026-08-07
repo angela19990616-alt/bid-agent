@@ -43,12 +43,27 @@ class HistoricalCasePatternExtractor:
             text = paragraph.text.strip()
             style_name = paragraph.style.name if paragraph.style else ""
             match = self.HEADING_RE.match(text)
-            if style_name.startswith("Heading") or match:
+            if self._is_heading_candidate(style_name, text, match):
                 level = self._heading_level(style_name, text)
                 title = self._generic_heading(match.group(1) if match else text)
+                if (
+                    title == "通用响应章节"
+                    and not style_name.startswith("Heading")
+                ):
+                    continue
                 headings.append((index, title, level))
         if not headings:
             headings = [(0, "方案正文", 1)]
+        elif not any(
+            title in {
+                "项目理解", "总体思路", "技术方案", "实施计划",
+                "进度安排", "组织管理", "人员配置", "质量保障",
+                "验收方案", "培训方案", "运维服务", "安全方案",
+                "应急预案", "服务承诺", "保密承诺",
+            }
+            for _, title, _ in headings
+        ):
+            headings.insert(0, (0, "方案正文", 1))
 
         patterns: list[dict[str, Any]] = []
         for position, (start, title, level) in enumerate(headings):
@@ -99,6 +114,29 @@ class HistoricalCasePatternExtractor:
         return patterns
 
     @staticmethod
+    def _is_heading_candidate(
+        style_name: str,
+        text: str,
+        match: re.Match[str] | None,
+    ) -> bool:
+        if style_name.startswith("Heading"):
+            return True
+        if match is None:
+            return False
+        candidate = match.group(1).strip()
+        if not candidate or len(candidate) > 42:
+            return False
+        if candidate.endswith(("。", "；", ";", "，", ",")):
+            return False
+        if re.search(
+            r"(?:我方|本表|填写时|供应商应|如果不|所附|承接企业|"
+            r"从业人员|按.*要求|视为|承担.*责任)",
+            candidate,
+        ):
+            return False
+        return True
+
+    @staticmethod
     def _heading_level(style_name: str, text: str) -> int:
         match = re.search(r"(\d+)$", style_name)
         if match:
@@ -112,12 +150,43 @@ class HistoricalCasePatternExtractor:
     @staticmethod
     def _generic_heading(value: str) -> str:
         value = re.sub(r"[\s:：]+", "", value)
-        known = (
-            "项目理解", "总体思路", "技术方案", "实施计划", "进度安排",
-            "组织管理", "人员配置", "质量保障", "验收方案", "培训方案",
-            "运维服务", "安全方案", "应急预案", "服务承诺",
+        roles = (
+            ("保密承诺", ("保密",)),
+            ("响应函", ("响应函", "投标函")),
+            ("授权委托", ("授权委托", "法定代表人")),
+            ("报价文件", ("报价", "价格明细")),
+            ("技术响应表", ("技术要求应答", "技术偏离")),
+            ("商务响应表", ("商务要求应答", "商务偏离")),
+            ("资格证明", ("资格证明", "资格审查")),
+            ("业绩证明", ("业绩", "类似项目", "成功案例", "咨询合同")),
+            ("人员材料", ("人员", "负责人", "成员", "简历", "社保", "身份证")),
+            ("资质证明", ("资质", "证书", "信用", "财务状况", "合规状况")),
+            ("企业介绍", ("公司简介", "供应商简介", "投标人情况", "供应商基本情况")),
+            ("项目理解", ("项目理解", "需求理解", "项目背景")),
+            ("总体思路", ("总体思路", "总体服务", "整体服务")),
+            ("技术方案", ("技术方案", "服务方案", "实施方案", "服务策略", "实施路径")),
+            ("实施计划", ("实施计划", "工作计划", "工作内容", "工作阶段", "招标流程")),
+            ("进度安排", ("进度", "工期")),
+            ("组织管理", ("组织管理", "项目组织", "团队分工")),
+            ("人员配置", ("人员配置", "团队配置")),
+            ("质量保障", ("质量", "复核", "审核")),
+            ("验收方案", ("验收", "成果交付")),
+            ("培训方案", ("培训",)),
+            ("运维服务", ("运维", "售后", "维护")),
+            ("安全方案", ("安全",)),
+            ("应急预案", ("应急",)),
+            ("服务承诺", ("承诺",)),
+            ("证明材料", ("证明材料", "附件材料")),
+            ("其他响应材料", ("其他有利", "其他内容")),
         )
-        return next((item for item in known if item in value), "通用响应章节")
+        return next(
+            (
+                role
+                for role, keywords in roles
+                if any(keyword in value for keyword in keywords)
+            ),
+            "通用响应章节",
+        )
 
     @staticmethod
     def _dimensions(title: str, children: list[str]) -> list[str]:
@@ -195,6 +264,7 @@ class HistoricalCaseLearningService:
             return add_patterns(
                 access_context=access_context,
                 items=pending,
+                replace_source_pairs=True,
             )
         return [
             self.memory_engine.add_pattern(

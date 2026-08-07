@@ -68,6 +68,54 @@ def test_case_learning_preserves_five_level_structure_depth():
     assert max(item["visual_pattern"]["heading_level"] for item in patterns) == 5
 
 
+def test_case_learning_rejects_numbered_body_sentences_as_headings():
+    document = Document()
+    document.add_paragraph("一、整体服务方案")
+    document.add_paragraph("1.我方承诺响应采购文件的全部要求。")
+    document.add_paragraph("2.本表可根据实际情况进行拓展。")
+    document.add_paragraph("二、质量保证措施")
+    stream = BytesIO()
+    document.save(stream)
+
+    patterns = HistoricalCasePatternExtractor().extract(stream.getvalue())
+
+    assert [item["chapter_structure"][0] for item in patterns] == [
+        "总体思路",
+        "质量保障",
+    ]
+
+
+def test_case_learning_maps_person_specific_heading_without_personal_fact():
+    document = Document()
+    document.add_paragraph("1.项目负责人-某员工")
+    stream = BytesIO()
+    document.save(stream)
+
+    patterns = HistoricalCasePatternExtractor().extract(stream.getvalue())
+    snapshot = json.dumps(patterns, ensure_ascii=False)
+
+    assert any(
+        item["chapter_structure"][0] == "人员材料" for item in patterns
+    )
+    assert "某员工" not in snapshot
+
+
+def test_case_learning_drops_unknown_numbered_source_specific_titles():
+    document = Document()
+    document.add_paragraph("一、类似项目的成功案例")
+    document.add_paragraph("1.某地历史项目专有名称")
+    stream = BytesIO()
+    document.save(stream)
+
+    patterns = HistoricalCasePatternExtractor().extract(stream.getvalue())
+    snapshot = json.dumps(patterns, ensure_ascii=False)
+
+    assert {
+        item["chapter_structure"][0] for item in patterns
+    } == {"方案正文", "业绩证明"}
+    assert "某地历史项目专有名称" not in snapshot
+
+
 def test_case_pair_learning_preserves_private_organization_boundary():
     calls = []
 
@@ -134,6 +182,7 @@ def test_multiple_pairs_use_one_validated_memory_transaction():
     )
 
     assert len(calls) == 1
+    assert calls[0]["replace_source_pairs"] is True
     assert len(learned) == len(calls[0]["items"])
     assert all(
         item["pattern"]["source_facts_removed"] is True
