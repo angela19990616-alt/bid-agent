@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from pathlib import Path
@@ -10,6 +11,7 @@ from docx import Document
 from docx.document import Document as DocumentType
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.table import Table
 from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
@@ -51,6 +53,8 @@ class TemplateDescriptor:
     field_labels: tuple[str, ...]
     strict_reasons: tuple[str, ...]
     outline: tuple[dict[str, Any], ...] = ()
+    fields: tuple[dict[str, Any], ...] = ()
+    end_block: int | None = None
 
     def snapshot(self) -> dict[str, Any]:
         return asdict(self)
@@ -118,6 +122,11 @@ class ResponseTemplateService:
         for key, aliases in FIELD_ALIASES.items():
             if any(alias in labels for alias in aliases):
                 required.append(key)
+        required.extend(
+            item["field_key"]
+            for item in descriptor.get("fields") or ()
+            if item.get("required", True) and item.get("field_key")
+        )
         return list(dict.fromkeys(required))
 
     def extract_source_fields(
@@ -188,14 +197,27 @@ class ResponseTemplateService:
         standalone = any(marker in filename for marker in TEMPLATE_MARKERS)
         detected = marker_index is not None or (standalone and tables > 0)
         start_block = 0 if standalone else marker_index
+        end_block = None
+        if start_block is not None and not standalone:
+            for index in range(start_block + 1, len(texts)):
+                compact = texts[index].replace(" ", "")
+                if re.match(
+                    r"^第[一二三四五六七八九十百零〇\d]+章",
+                    compact,
+                ):
+                    end_block = index
+                    break
         candidate_text = "\n".join(
-            texts[start_block:] if start_block is not None else []
+            texts[start_block:end_block] if start_block is not None else []
         )
         placeholders = tuple(sorted({
             next(group for group in match.groups() if group)
             for match in PLACEHOLDER_RE.finditer(candidate_text)
         }))
         labels = self._fillable_labels(document)
+        fields = self._extract_fillable_fields(
+            document, start_block, end_block
+        )
         strict = tuple(marker for marker in STRICT_MARKERS if marker in candidate_text)
         outline = self._extract_outline(document, start_block)
         confidence = 0.0
@@ -222,7 +244,88 @@ class ResponseTemplateService:
             field_labels=labels,
             strict_reasons=strict,
             outline=outline,
+            fields=fields,
+            end_block=end_block,
         )
+
+    @classmethod
+    def _extract_fillable_fields(
+        cls,
+        document: DocumentType,
+        start_block: int | None,
+        end_block: int | None,
+    ) -> tuple[dict[str, Any], ...]:
+        if start_block is None:
+            return ()
+        fields: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def append(label: str, location: str) -> None:
+            display_label = re.sub(r"\s+", " ", label).strip().strip("：:")
+            clean = re.sub(r"[\s()（）]", "", display_label)
+            if not 2 <= len(clean) <= 40:
+                return
+            if not re.search(
+                r"名称|编号|代表|日期|金额|报价|地址|电话|手机|邮箱|联系人|"
+                r"证书|资质|签字|盖章|账号|开户行|工期|期限",
+                clean,
+            ):
+                return
+            canonical = None
+            for key, aliases in FIELD_ALIASES.items():
+                if any(alias in clean for alias in aliases):
+                    canonical = key
+                    break
+            field_key = canonical or (
+                "custom_" + hashlib.sha256(clean.encode()).hexdigest()[:12]
+            )
+            identity = (field_key, location)
+            if identity in seen:
+                return
+            seen.add(identity)
+            source_type = "manual_input"
+            if field_key in {"project_name", "project_number", "date"}:
+                source_type = "tender_document"
+            elif re.search(r"报价|金额|价格", clean):
+                source_type = "pricing_database"
+            elif re.search(r"代表|联系人|证书|身份证", clean):
+                source_type = "controlled_personnel_vault"
+            elif re.search(r"供应商|投标人|地址|电话|邮箱|账号|开户行", clean):
+                source_type = "company_profile"
+            fields.append({
+                "field_key": field_key,
+                "label": display_label,
+                "required": not bool(re.search(r"可选|如有|若有", clean)),
+                "expected_source": source_type,
+                "source_location": location,
+            })
+
+        blocks = list(document.element.body.iterchildren())
+        table_index = 0
+        paragraph_index = 0
+        for block in blocks[start_block:end_block]:
+            if block.tag.endswith("}tbl"):
+                table_index += 1
+                table = Table(block, document)
+                for row_index, row in enumerate(table.rows, start=1):
+                    for cell_index, cell in enumerate(row.cells[:-1], start=1):
+                        target = row.cells[cell_index].text.strip()
+                        if target and not PLACEHOLDER_RE.search(target):
+                            continue
+                        append(
+                            cell.text,
+                            f"表格{table_index}/第{row_index}行/第{cell_index}列",
+                        )
+            elif block.tag.endswith("}p"):
+                paragraph_index += 1
+                text = Paragraph(block, document).text.strip()
+                match = re.match(
+                    r"^(.{2,40}?)[：:]\s*(?:[_＿]{2,}|…+|\.{3,})?\s*$",
+                    text,
+                )
+                if match:
+                    append(match.group(1), f"第{paragraph_index}段")
+        return tuple(fields)
 
     @classmethod
     def _extract_outline(
@@ -318,8 +421,15 @@ class ResponseTemplateService:
             raise ValueError("当前文件不是可自动回填的 DOCX 响应模板。")
         document = Document(BytesIO(template_content))
         start = data.get("start_block")
-        if isinstance(start, int) and start > 0:
-            self._retain_from_block(document, start)
+        end = data.get("end_block")
+        if isinstance(start, int) and (
+            start > 0 or isinstance(end, int)
+        ):
+            self._retain_block_range(
+                document,
+                start,
+                end if isinstance(end, int) else None,
+            )
 
         normalized_values = self._normalized_values(field_values)
         filled: set[str] = set()
@@ -334,6 +444,12 @@ class ResponseTemplateService:
             unresolved.update(missing)
         self._fill_label_paragraphs(document, normalized_values, filled)
         self._fill_label_cells(document, normalized_values, filled)
+        self._fill_descriptor_fields(
+            document,
+            data.get("fields") or (),
+            normalized_values,
+            filled,
+        )
         descriptor_labels = set(data.get("field_labels") or ())
         for key, aliases in FIELD_ALIASES.items():
             if any(alias in descriptor_labels for alias in aliases):
@@ -378,13 +494,18 @@ class ResponseTemplateService:
         return "".join(node.text or "" for node in block.iter()).strip()
 
     @staticmethod
-    def _retain_from_block(document: DocumentType, start: int) -> None:
+    def _retain_block_range(
+        document: DocumentType,
+        start: int,
+        end: int | None,
+    ) -> None:
         body = document.element.body
         blocks = list(body.iterchildren())
-        for block in blocks[:start]:
+        for index, block in enumerate(blocks):
             if block.tag.endswith("}sectPr"):
                 continue
-            body.remove(block)
+            if index < start or (end is not None and index >= end):
+                body.remove(block)
 
     @staticmethod
     def _all_paragraphs(document: DocumentType):
@@ -455,6 +576,55 @@ class ResponseTemplateService:
                             target.text = value
                             filled.add(key)
                         break
+
+    @staticmethod
+    def _fill_descriptor_fields(
+        document: DocumentType,
+        fields: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        values: dict[str, str],
+        filled: set[str],
+    ) -> None:
+        by_label = {
+            re.sub(r"[\s:：()（）]", "", str(item.get("label", ""))): (
+                str(item.get("field_key", ""))
+            )
+            for item in fields
+            if item.get("label") and item.get("field_key")
+        }
+        field_entries = [
+            (str(item.get("label", "")).strip(), str(item.get("field_key", "")))
+            for item in fields
+            if item.get("label") and item.get("field_key")
+        ]
+        for table in document.tables:
+            for row in table.rows:
+                for index, cell in enumerate(row.cells[:-1]):
+                    label = re.sub(r"[\s:：()（）]", "", cell.text)
+                    key = by_label.get(label)
+                    if not key or not values.get(key):
+                        continue
+                    target = row.cells[index + 1]
+                    if not target.text.strip() or PLACEHOLDER_RE.search(target.text):
+                        target.text = values[key]
+                        filled.add(key)
+        for paragraph in ResponseTemplateService._all_paragraphs(document):
+            original = paragraph.text
+            updated = original
+            for label, key in field_entries:
+                value = values.get(key)
+                if not value:
+                    continue
+                pattern = re.compile(
+                    rf"^(?P<label>{re.escape(label)}\s*[:：])"
+                    r"[ \t]*(?:[_＿]{2,}|…+|\.{3,})?[ \t]*$"
+                )
+                updated, count = pattern.subn(
+                    lambda match: f"{match.group('label')} {value}", updated
+                )
+                if count:
+                    filled.add(key)
+            if updated != original:
+                ResponseTemplateService._replace_paragraph_text(paragraph, updated)
 
     @staticmethod
     def _fill_label_paragraphs(

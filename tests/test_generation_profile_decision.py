@@ -6,6 +6,7 @@ from docx import Document
 from app.agents.proposal_planner import ProposalPlanner
 from app.rules.engine import RuleEngine
 from app.services.generation_profile_service import GenerationProfileService
+from app.services.generation_profile_service import GenerationProfile
 from app.services.response_template_service import ResponseTemplateService
 
 
@@ -66,3 +67,53 @@ def test_attachment_template_priority_cannot_be_downgraded():
         "strict_template"
     )
     assert preferred("strict_template", "planned") == "strict_template"
+
+
+def test_template_field_decisions_separate_tender_and_enterprise_facts():
+    profile = GenerationProfile(
+        project_id=uuid4(),
+        generation_mode="strict_template",
+        historical_case_mode="closest_case",
+        template_descriptor={
+            "field_labels": ["项目编号", "供应商名称", "法定代表人"]
+        },
+        template_field_values={
+            "project_number": "SCXHR20250320",
+            "bidder_name": "北京大岳咨询有限责任公司",
+        },
+        template_filename="自贡招标文件.docx",
+        last_fill_report={},
+    )
+
+    decisions = {
+        item["field_key"]: item
+        for item in GenerationProfileService.template_field_decisions(profile)
+    }
+
+    assert decisions["project_number"]["status"] == "AUTO_FILL"
+    assert decisions["project_number"]["source_type"] == "tender_document"
+    assert decisions["bidder_name"]["status"] == "REVIEW_REQUIRED"
+    assert decisions["legal_representative"]["status"] == "MISSING"
+
+
+def test_confirmed_manual_value_becomes_traceable_auto_fill():
+    profile = GenerationProfile(
+        project_id=uuid4(),
+        generation_mode="strict_template",
+        historical_case_mode="closest_case",
+        template_descriptor={"field_labels": ["供应商名称"]},
+        template_field_values={"bidder_name": "北京大岳咨询有限责任公司"},
+        last_fill_report={
+            "field_reviews": {
+                "bidder_name": {
+                    "status": "confirmed",
+                    "value": "北京大岳咨询有限责任公司",
+                }
+            }
+        },
+    )
+
+    decision = GenerationProfileService.template_field_decisions(profile)[0]
+
+    assert decision["status"] == "AUTO_FILL"
+    assert decision["source_type"] == "manual_verified"

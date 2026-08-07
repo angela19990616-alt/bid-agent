@@ -1,5 +1,7 @@
 .git/
 .git-corrupt-backup/
+.recovery-source/
+.testdeps/
 .gitignore
 .env
 .env.*
@@ -25,3 +27,4 @@ uploads/
 exports/
 database/历史案例（投标文件）/
 database/输入（招标文件）/
+database/私有案例/

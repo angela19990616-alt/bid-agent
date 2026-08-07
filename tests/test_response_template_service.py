@@ -228,6 +228,67 @@ def test_fills_visible_blank_label_paragraphs():
     assert filled == {"project_number", "project_name", "bidder_name"}
 
 
+def test_detects_and_fills_generic_blank_table_field(tmp_path):
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "投标报价金额"
+    table.cell(0, 1).text = ""
+    stream = BytesIO()
+    document.save(stream)
+    content = stream.getvalue()
+    service = ResponseTemplateService()
+    descriptor = service.detect("招标文件.docx", content)
+    field = next(
+        item for item in descriptor.fields
+        if item["label"] == "投标报价金额"
+    )
+
+    assert field["expected_source"] == "pricing_database"
+    assert field["field_key"].startswith("custom_")
+
+    output = tmp_path / "generic-fill.docx"
+    report = service.fill_docx(
+        template_content=content,
+        output_path=output,
+        descriptor=descriptor,
+        field_values={field["field_key"]: "100000.00元"},
+        sections=[],
+    )
+
+    result = Document(output)
+    assert result.tables[0].cell(0, 1).text == "100000.00元"
+    assert field["field_key"] in report.filled_fields
+
+
+def test_detects_and_fills_generic_blank_paragraph_field(tmp_path):
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("开户行： __________")
+    document.add_heading("第八章 合同条款", level=1)
+    document.add_paragraph("合同编号： __________")
+    stream = BytesIO()
+    document.save(stream)
+    content = stream.getvalue()
+    service = ResponseTemplateService()
+    descriptor = service.detect("招标文件.docx", content)
+    field = next(item for item in descriptor.fields if item["label"] == "开户行")
+
+    assert all(item["label"] != "合同编号" for item in descriptor.fields)
+
+    output = tmp_path / "paragraph-fill.docx"
+    service.fill_docx(
+        template_content=content,
+        output_path=output,
+        descriptor=descriptor,
+        field_values={field["field_key"]: "中国银行自贡分行"},
+        sections=[],
+    )
+
+    result = Document(output)
+    assert result.paragraphs[-1].text == "开户行： 中国银行自贡分行"
+
+
 def test_repository_tender_uses_actual_template_chapter_not_toc(tmp_path):
     samples = list(Path("database/输入（招标文件）").glob("*.docx"))
     if not samples:
@@ -240,11 +301,12 @@ def test_repository_tender_uses_actual_template_chapter_not_toc(tmp_path):
     assert descriptor.start_block is not None
     assert descriptor.start_block > 300
     assert descriptor.marker_text.startswith("第七章")
-    assert service.required_fields(descriptor.snapshot()) == [
-        "project_name",
-        "project_number",
-        "bidder_name",
-    ]
+    required = service.required_fields(descriptor.snapshot())
+    assert {"project_name", "project_number", "bidder_name"} <= set(required)
+    assert "legal_representative" in required
+    assert len(required) == 10
+    assert descriptor.end_block is not None
+    assert descriptor.end_block > descriptor.start_block
 
     report = service.fill_docx(
         template_content=content,

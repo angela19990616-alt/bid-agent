@@ -21,6 +21,16 @@
 - `EnterpriseFact`：企业真实数据，保存值、来源类型、来源引用、核验状态、可信度和敏感级别。
 - `FillDecision`：字段与企业事实匹配后的可审计决策。
 
+字段识别结果保存在生成档案的 `template_descriptor.fields` 中。每项至少包含：
+
+- `field_key`
+- `label`
+- `required`
+- `expected_source`
+- `source_location`
+
+当前支持识别常见占位符、段落空位和表格右侧空白单元格。模板扫描严格限制在“响应文件格式”章节内，到下一章前结束，避免把合同和采购文件附件误识别为待填写内容。
+
 ## 三态规则
 
 - `AUTO_FILL`：来源唯一、已经权威核验、可信度 100%，且不属于敏感数据。
@@ -44,6 +54,13 @@
 4. 保留原模板表格、章节、页边距、方向和主要样式。
 5. 输出前生成字段审计清单，可定位招标原文和企业数据来源。
 6. 相同项目的人工变量和审核结果隔离保存，不跨项目复用敏感值。
+
+## 当前接口
+
+- `PUT /api/v1/workspaces/{id}/template-fields`：保存当前项目字段值。
+- `POST /api/v1/workspaces/{id}/template-fields/review`：确认或重置单个字段审核状态。
+- `GET /api/v1/workspaces/{id}`：返回字段决策、来源、可信度、五案例库状态和模板信息。
+- `POST /api/v1/workspaces/{id}/exports`：只回填 `AUTO_FILL` 字段；待审核和缺失字段保持模板空位。
 
 ## 后续数据库增量（待单独迁移）
 

@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "organization_key": "default",
+  "permission_scope": "organization_private",
+  "fact_usage": "prohibited",
+  "cases": [
+    {"case_id": "case-01", "project_type": "招标代理服务", "active": true},
+    {"case_id": "case-02", "project_type": "投融资咨询", "active": true},
+    {"case_id": "case-03", "project_type": "绩效评价", "active": true},
+    {"case_id": "case-04", "project_type": "规划咨询", "active": true},
+    {"case_id": "case-05", "project_type": "专项债券咨询", "active": true}
+  ]
+}

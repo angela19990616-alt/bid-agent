@@ -68,18 +68,31 @@ class ExportService:
                 template_path = profile_service.template_path(profile)
                 if template_path is None or not template_path.is_file():
                     raise ExportValidationError("响应模板原文件不存在。")
+                field_decisions = profile_service.template_field_decisions(
+                    profile,
+                    {"project_name": data["project_name"]},
+                )
+                approved_values = {
+                    item["field_key"]: item["value"]
+                    for item in field_decisions
+                    if item["status"] == "AUTO_FILL" and item["value"]
+                }
                 report = ResponseTemplateService().fill_docx(
                     template_content=template_path.read_bytes(),
                     output_path=temporary,
                     descriptor=profile.template_descriptor,
                     field_values={
-                        **profile.template_field_values,
+                        **approved_values,
                         "project_name": data["project_name"],
                     },
                     sections=data["sections"],
                 )
                 profile_service.record_fill_report(
-                    project_id, report.snapshot()
+                    project_id,
+                    {
+                        **report.snapshot(),
+                        "field_decisions": field_decisions,
+                    },
                 )
                 self._validate_template_fill(report)
             else:

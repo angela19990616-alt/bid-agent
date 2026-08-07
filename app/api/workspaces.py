@@ -31,7 +31,10 @@ from app.models.sections import (
     SectionResponse,
 )
 from app.models.workspaces import OutlineUpdate, WorkspaceResponse
-from app.models.generation_profiles import TemplateFieldsUpdate
+from app.models.generation_profiles import (
+    TemplateFieldReviewUpdate,
+    TemplateFieldsUpdate,
+)
 from app.services.project_document_service import (
     DocumentParseFailedError,
     DuplicateDocumentError,
@@ -218,6 +221,31 @@ def update_workspace_template_fields(
         raise AppError(
             422,
             "TEMPLATE_FIELDS_INVALID",
+            str(exc),
+        ) from exc
+
+
+@router.post(
+    "/{workspace_id}/template-fields/review",
+    response_model=WorkspaceResponse,
+)
+def review_workspace_template_field(
+    workspace_id: UUID,
+    payload: TemplateFieldReviewUpdate,
+    _access: None = Depends(authorize_workspace),
+    service: WorkspaceService = Depends(get_workspace_service),
+):
+    try:
+        GenerationProfileService.review_template_field(
+            workspace_id,
+            payload.field_key,
+            payload.action,
+        )
+        return service.get(workspace_id)
+    except ValueError as exc:
+        raise AppError(
+            422,
+            "TEMPLATE_FIELD_REVIEW_INVALID",
             str(exc),
         ) from exc
 

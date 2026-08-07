@@ -18,3 +18,7 @@ uploads/
 exports/
 database/历史案例（投标文件）/
 database/输入（招标文件）/
+database/私有案例/
+.git-corrupt-backup/
+.recovery-source/
+.testdeps/

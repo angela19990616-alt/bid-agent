@@ -288,3 +288,24 @@ DOCX 的 `locator.kind` 为 `paragraph`，并返回起止段落序号。
 | `413` | 上传文件过大 |
 | `422` | 业务校验失败 |
 | `503` | 必要依赖暂不可用 |
+# 严格回填字段
+
+工作区详情新增：
+
+- `template_field_decisions`：字段值、来源、可信度、审核状态和原因。
+- `case_library_count`：当前默认启用的机构私有真实案例数。
+- `case_library_scope`：固定为 `organization_private`。
+- `case_library_fact_usage`：固定为 `prohibited`，表示历史案例不能直接作为企业事实。
+
+`POST /api/v1/workspaces/{workspace_id}/template-fields/review`
+
+请求：
+
+```json
+{
+  "field_key": "bidder_name",
+  "action": "confirm"
+}
+```
+
+`action` 支持 `confirm` 和 `reset`。企业字段必须先保存，再人工确认；字段值变化后原确认自动失效。

@@ -13,6 +13,7 @@ from app.services.proposal_plan_service import ProposalPlanService
 from app.services.requirement_service import RequirementService
 from app.services.section_service import SectionService
 from app.services.workspace_job_service import WorkspaceJobService
+from app.knowledge.default_case_library import default_case_library_summary
 from app.services.generation_profile_service import GenerationProfileService
 from app.services.response_template_service import ResponseTemplateService
 from app.workflows.controlled_pipeline import ControlledPipeline
@@ -272,6 +273,7 @@ class WorkspaceService:
         )
         budget = ModelBudgetService.summary_for_project(workspace_id)
         profile = self.generation_profile_service.get(workspace_id)
+        case_library = default_case_library_summary()
         job = WorkspaceJobService.latest_status(workspace_id)
         return {
             "id": workspace.id,
@@ -315,6 +317,14 @@ class WorkspaceService:
                 profile.template_descriptor
             ),
             "template_field_values": profile.template_field_values,
+            "template_field_decisions": (
+                GenerationProfileService.template_field_decisions(
+                    profile, {"project_name": workspace.name}
+                )
+            ),
+            "case_library_count": case_library["count"],
+            "case_library_scope": case_library["scope"],
+            "case_library_fact_usage": case_library["fact_usage"],
             "template_outline": profile.template_descriptor.get(
                 "outline", []
             ),

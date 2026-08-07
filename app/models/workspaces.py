@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.models.documents import ProjectDocumentResponse
 from app.models.requirements import RequirementResponse
 from app.models.sections import SectionResponse
+from app.models.generation_profiles import TemplateFieldDecisionResponse
 
 
 class OutlineChapterUpdate(BaseModel):
@@ -62,6 +63,12 @@ class WorkspaceResponse(BaseModel):
     template_fidelity: str | None = None
     template_required_fields: list[str] = Field(default_factory=list)
     template_field_values: dict[str, str] = Field(default_factory=dict)
+    template_field_decisions: list[TemplateFieldDecisionResponse] = Field(
+        default_factory=list
+    )
+    case_library_count: int = 5
+    case_library_scope: str = "organization_private"
+    case_library_fact_usage: str = "prohibited"
     template_outline: list[TemplateOutlineItem] = Field(default_factory=list)
     model_calls_used: int = 0
     model_calls_limit: int = 40

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -11,6 +12,22 @@ from psycopg.rows import dict_row
 from app.config.settings import settings
 from app.database.db import connect
 from app.services.response_template_service import ResponseTemplateService
+from app.core.strict_fill import (
+    DataSensitivity,
+    EnterpriseFact,
+    StrictFillDecisionEngine,
+    TemplateField,
+)
+
+
+TEMPLATE_FIELD_LABELS = {
+    "project_name": "项目名称",
+    "project_number": "项目编号",
+    "bidder_name": "供应商名称",
+    "legal_representative": "法定代表人",
+    "authorized_representative": "授权代表",
+    "date": "日期",
+}
 
 
 @dataclass(frozen=True)
@@ -22,6 +39,7 @@ class GenerationProfile:
     template_field_values: dict[str, str]
     template_storage_key: str | None = None
     template_filename: str | None = None
+    last_fill_report: dict[str, Any] | None = None
 
 
 class GenerationProfileService:
@@ -151,6 +169,7 @@ class GenerationProfileService:
                     SELECT p.project_id, p.generation_mode,
                            p.historical_case_mode, p.template_descriptor,
                            p.template_field_values,
+                           p.last_fill_report,
                            d.storage_key AS template_storage_key,
                            d.filename AS template_filename
                     FROM proposal_generation_profiles p
@@ -167,8 +186,134 @@ class GenerationProfileService:
                 historical_case_mode="closest_case",
                 template_descriptor={},
                 template_field_values={},
+                last_fill_report={},
             )
         return GenerationProfile(**row)
+
+    @staticmethod
+    def template_field_decisions(
+        profile: GenerationProfile,
+        fallback_values: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        required = ResponseTemplateService.required_fields(
+            profile.template_descriptor
+        )
+        fallback_values = fallback_values or {}
+        keys = list(dict.fromkeys([
+            *required,
+            *profile.template_field_values,
+            *fallback_values,
+        ]))
+        reviews = (getattr(profile, "last_fill_report", None) or {}).get(
+            "field_reviews", {}
+        )
+        field_metadata = {
+            item.get("field_key"): item
+            for item in profile.template_descriptor.get("fields", [])
+            if item.get("field_key")
+        }
+        engine = StrictFillDecisionEngine()
+        decisions: list[dict[str, Any]] = []
+        for key in keys:
+            value = (
+                profile.template_field_values.get(key)
+                or fallback_values.get(key)
+                or ""
+            ).strip()
+            facts: list[EnterpriseFact] = []
+            if value:
+                review = reviews.get(key, {})
+                confirmed = (
+                    review.get("status") == "confirmed"
+                    and review.get("value") == value
+                )
+                procurement_fact = key in {"project_name", "project_number"}
+                metadata = field_metadata.get(key, {})
+                expected_source = metadata.get("expected_source")
+                facts.append(EnterpriseFact(
+                    canonical_key=key,
+                    value=value,
+                    source_type=(
+                        "tender_document"
+                        if procurement_fact
+                        else "manual_verified" if confirmed
+                        else expected_source or "manual_input"
+                    ),
+                    source_reference=(
+                        profile.template_filename or "uploaded_tender"
+                        if procurement_fact
+                        else "current_project_manual_archive"
+                    ),
+                    confidence=1.0 if procurement_fact or confirmed else 0.8,
+                    verified=procurement_fact or confirmed,
+                    sensitivity=(
+                        DataSensitivity.SENSITIVE
+                        if (
+                            expected_source == "controlled_personnel_vault"
+                            and not confirmed
+                        )
+                        else DataSensitivity.NORMAL
+                    ),
+                ))
+            metadata = field_metadata.get(key, {})
+            field = TemplateField(
+                field_id=key,
+                label=metadata.get("label") or TEMPLATE_FIELD_LABELS.get(key, key),
+                canonical_key=key,
+                required=key in required,
+                source_location=metadata.get("source_location") or "原响应模板",
+            )
+            decision = engine.decide(field, facts)
+            decisions.append({
+                "field_key": key,
+                "label": field.label,
+                "value": decision.value,
+                "source_type": decision.source_type,
+                "source_reference": decision.source_reference,
+                "confidence": decision.confidence,
+                "status": decision.status.value,
+                "reason": decision.reason,
+                "required": field.required,
+            })
+        return decisions
+
+    @staticmethod
+    def review_template_field(
+        project_id: UUID,
+        field_key: str,
+        action: str,
+    ) -> GenerationProfile:
+        profile = GenerationProfileService.get(project_id)
+        key = field_key.strip()
+        if key not in profile.template_field_values:
+            raise ValueError("模板字段不存在或尚未填写。")
+        report = dict(profile.last_fill_report or {})
+        reviews = dict(report.get("field_reviews") or {})
+        if action == "confirm":
+            reviews[key] = {
+                "status": "confirmed",
+                "value": profile.template_field_values[key],
+                "reviewed_by": "current_session",
+                "reviewed_at": datetime.now().astimezone().isoformat(),
+            }
+        elif action == "reset":
+            reviews.pop(key, None)
+        else:
+            raise ValueError("不支持的审核操作。")
+        report["field_reviews"] = reviews
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE proposal_generation_profiles
+                    SET last_fill_report = %s::jsonb, updated_at = NOW()
+                    WHERE project_id = %s
+                    """,
+                    (json.dumps(report, ensure_ascii=False), project_id),
+                )
+                if cursor.rowcount == 0:
+                    raise ValueError("方案生成档案不存在。")
+        return GenerationProfileService.get(project_id)
 
     @staticmethod
     def update_template_fields(
@@ -214,7 +359,8 @@ class GenerationProfileService:
                 cursor.execute(
                     """
                     UPDATE proposal_generation_profiles
-                    SET last_fill_report = %s::jsonb, updated_at = NOW()
+                    SET last_fill_report = last_fill_report || %s::jsonb,
+                        updated_at = NOW()
                     WHERE project_id = %s
                     """,
                     (json.dumps(report, ensure_ascii=False), project_id),

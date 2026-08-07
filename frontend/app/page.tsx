@@ -117,6 +117,20 @@ type Workspace = {
   template_fidelity: string | null;
   template_required_fields: string[];
   template_field_values: Record<string, string>;
+  template_field_decisions: Array<{
+    field_key: string;
+    label: string;
+    value: string | null;
+    source_type: string | null;
+    source_reference: string | null;
+    confidence: number;
+    status: "AUTO_FILL" | "REVIEW_REQUIRED" | "MISSING";
+    reason: string;
+    required: boolean;
+  }>;
+  case_library_count: number;
+  case_library_scope: string;
+  case_library_fact_usage: string;
   template_outline: Array<{
     title: string;
     level: 1 | 2 | 3 | 4 | 5;
@@ -289,11 +303,17 @@ const importanceRank: Record<Requirement["importance"], number> = {
   low: 3,
 };
 const templateFieldLabels: Record<string, string> = {
+  project_name: "项目名称",
   project_number: "项目编号",
   bidder_name: "供应商名称",
   legal_representative: "法定代表人",
   authorized_representative: "授权代表",
   date: "日期",
+};
+const fillStatusLabels = {
+  AUTO_FILL: "可自动填写",
+  REVIEW_REQUIRED: "待人工确认",
+  MISSING: "资料缺失",
 };
 const priorityRank: Record<Requirement["priority"], number> = {
   P0: 0,
@@ -833,6 +853,23 @@ export default function Home() {
     });
   }
 
+  async function reviewTemplateField(fieldKey: string, action: "confirm" | "reset") {
+    if (!workspace) return;
+    await run(action === "confirm" ? "正在确认字段" : "正在恢复审核", async () => {
+      const updated = await request<Workspace>(
+        `/workspaces/${workspace.id}/template-fields/review`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ field_key: fieldKey, action }),
+        },
+      );
+      setWorkspace(updated);
+      setTemplateFieldValues(updated.template_field_values ?? {});
+      setNotice(action === "confirm" ? "字段已确认并记录来源。" : "字段已恢复为待审核状态。");
+    });
+  }
+
   if (accessState !== "authorized") {
     return (
       <main className="invite-shell">
@@ -1252,6 +1289,10 @@ export default function Home() {
                     <strong>原响应模板保真回填</strong>
                     <span>{workspace.template_filename}</span>
                     <p>系统已自动识别原文模板和采购事实；企业信息只接受人工核验，不会由 AI 猜测。</p>
+                    <div className="case-library-note">
+                      <b>默认企业知识库：{workspace.case_library_count} 组真实案例</b>
+                      <span>机构私有，仅参考目录与写法；案例事实禁止直接自动回填。</span>
+                    </div>
                     {editableTemplateFields.map((field) => (
                       <label className="field" key={field}>
                         <span>{templateFieldLabels[field] ?? field}</span>
@@ -1282,6 +1323,33 @@ export default function Home() {
                         保存已核验模板信息
                       </button>
                     )}
+                    <div className="fill-decision-list">
+                      {(workspace.template_field_decisions ?? []).map((item) => (
+                        <article key={item.field_key} className={`fill-decision ${item.status.toLowerCase()}`}>
+                          <div>
+                            <strong>{item.label}</strong>
+                            <span>{fillStatusLabels[item.status]}</span>
+                          </div>
+                          <p>{item.value || "尚未提供"}</p>
+                          <small>{item.reason}</small>
+                          {item.source_reference && <small>来源：{item.source_reference}</small>}
+                          {item.status === "REVIEW_REQUIRED" && item.value && (
+                            <button
+                              className="secondary compact"
+                              disabled={Boolean(busy)}
+                              onClick={() => reviewTemplateField(item.field_key, "confirm")}
+                            >确认该字段</button>
+                          )}
+                          {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && (
+                            <button
+                              className="text-button"
+                              disabled={Boolean(busy)}
+                              onClick={() => reviewTemplateField(item.field_key, "reset")}
+                            >重新审核</button>
+                          )}
+                        </article>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {proposalReview && (
