@@ -482,13 +482,23 @@ class ResponseTemplateService:
     @staticmethod
     def _find_heading(document: DocumentType, title: str) -> Paragraph | None:
         normalized = re.sub(r"[\s\d一二三四五六七八九十、.．()（）]", "", title)
-        for paragraph in ResponseTemplateService._all_paragraphs(document):
+        aliases = {
+            "技术方案": ("技术方案", "项目实施方案", "服务方案"),
+            "项目实施方案": ("项目实施方案", "技术方案", "服务方案"),
+        }
+        targets = aliases.get(normalized, (normalized,))
+        paragraphs = list(ResponseTemplateService._all_paragraphs(document))
+        for paragraph in paragraphs:
             candidate = re.sub(
                 r"[\s\d一二三四五六七八九十、.．()（）]", "", paragraph.text
             )
-            if normalized and candidate and (
-                normalized in candidate or candidate in normalized
-            ):
+            if candidate in targets:
+                return paragraph
+        for paragraph in paragraphs:
+            candidate = re.sub(
+                r"[\s\d一二三四五六七八九十、.．()（）]", "", paragraph.text
+            )
+            if any(len(target) >= 4 and target in candidate for target in targets):
                 return paragraph
         return None
 

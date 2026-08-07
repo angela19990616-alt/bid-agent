@@ -175,6 +175,18 @@ def test_empty_paragraph_is_never_selected_as_section_heading(tmp_path):
     assert report.unresolved_sections == ()
 
 
+def test_technical_solution_does_not_match_short_table_label():
+    document = Document()
+    table = document.add_table(rows=1, cols=1)
+    table.cell(0, 0).text = "技术"
+    expected = document.add_paragraph("5.格式13 项目实施方案")
+
+    target = ResponseTemplateService._find_heading(document, "技术方案")
+
+    assert target is not None
+    assert target._p is expected._p
+
+
 def test_repository_tender_uses_actual_template_chapter_not_toc(tmp_path):
     samples = list(Path("database/输入（招标文件）").glob("*.docx"))
     if not samples:
@@ -201,3 +213,11 @@ def test_repository_tender_uses_actual_template_chapter_not_toc(tmp_path):
         sections=[{"title": "技术方案", "content": "受控测试正文。"}],
     )
     assert report.unresolved_sections == ()
+    result = Document(tmp_path / "real-template-fill.docx")
+    implementation = next(
+        item for item in result.paragraphs if "项目实施方案" in item.text
+    )
+    assert implementation._p.getnext() is not None
+    assert "受控测试正文" in "".join(
+        node.text or "" for node in implementation._p.getnext().iter()
+    )
