@@ -107,9 +107,14 @@ Proposal Memory。当前仓库只包含一组自贡项目样例（两个响应�
 产生不完整案例库。正式写入使用同一数据库事务，任一结构模式写入失败时整批回滚：
 
 ```bash
+python scripts/audit_template_case_readiness.py
 python scripts/import_historical_case_pairs.py /path/to/private/pairs.json --dry-run
 python scripts/import_historical_case_pairs.py /path/to/private/pairs.json
 ```
+
+第一条命令只读检查模板分支、案例数量和历史事实隔离，不写数据库，也不在报告中
+输出文件名、原文或历史项目事实。当前仓库的真实结果是 1 组、49 个结构模式，
+完整五组门禁保持失败并明确报告仍缺 4 组文件。
 
 清单及案例文件不应提交 Git。批量导入结果只报告组数、结构模式数、机构私有范围和
 事实禁用状态，不打印案例正文、文件路径或内部 ID。
@@ -122,8 +127,8 @@ python scripts/import_historical_case_pairs.py /path/to/private/pairs.json
 
 - DOCX 模板保留原文件包中的样式、表格、区块顺序、页眉页脚和节设置，仅裁去模板
   章节之前的采购正文，并在明确字段或章节位置回填已核验内容。
-- 缺失字段保持原占位符并阻止最终导出；用户通过已核验模板字段
-  接口补齐，系统不猜测企业事实。
+- 缺失企业字段保持原占位符并进入“人工事项档案”；用户可先生成草稿，系统不会
+  猜测企业事实。找不到章节回填位置时仍阻止导出，避免破坏模板结构。
 - 非可填写 PDF 只标记为严格人工回填参照，不谎称已实现坐标级自动回填。
 - 严格模板找不到章节落点时，导出门禁阻止生成错误版式并返回明确缺项。
 
@@ -308,6 +313,8 @@ python scripts/acceptance_mvp.py \
 验收脚本会实际执行上传、解析、Requirement 提取、目录规划和逐章模型生成。
 报告只记录状态、数量、ID、字符数和校核严重级别，不记录招标原文、生成正文、
 企业知识、文件名或模型密钥。章节仍必须经过人工编辑和确认后才能整本导出。
+脚本使用同一 Cookie 会话完成上传后的轮询；若本地启用了邀请码，可在当前终端临时
+注入 `BID_AGENT_INVITE_CODE` 环境变量，脚本会先授权且不会把邀请码写入报告。
 
 ## ECS 部署
 

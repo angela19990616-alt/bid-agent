@@ -30,6 +30,21 @@ def _winning_bid() -> bytes:
     return stream.getvalue()
 
 
+def _five_level_winning_bid() -> bytes:
+    document = Document()
+    for level, title in enumerate([
+        "第一章 项目理解",
+        "1.1 总体思路",
+        "1.1.1 实施路径",
+        "1.1.1.1 质量控制",
+        "1.1.1.1.1 检查记录",
+    ], start=1):
+        document.add_heading(title, level=level)
+    stream = BytesIO()
+    document.save(stream)
+    return stream.getvalue()
+
+
 def test_case_learning_keeps_structure_but_removes_historical_facts():
     patterns = HistoricalCasePatternExtractor().extract(_winning_bid())
     snapshot = json.dumps(patterns, ensure_ascii=False)
@@ -43,6 +58,14 @@ def test_case_learning_keeps_structure_but_removes_historical_facts():
     assert "某市客户" not in snapshot
     assert "500万元" not in snapshot
     assert "历史阶段A" not in snapshot
+
+
+def test_case_learning_preserves_five_level_structure_depth():
+    patterns = HistoricalCasePatternExtractor().extract(
+        _five_level_winning_bid()
+    )
+
+    assert max(item["visual_pattern"]["heading_level"] for item in patterns) == 5
 
 
 def test_case_pair_learning_preserves_private_organization_boundary():

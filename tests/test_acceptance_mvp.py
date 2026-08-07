@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -82,3 +83,59 @@ def test_acceptance_waits_for_async_workspace_before_generation():
 
     assert result["status"] == "outline_ready"
     assert client.reads == 1
+
+
+def test_acceptance_client_reuses_cookie_capable_opener():
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({"status": "outline_ready"}).encode()
+
+    class Opener:
+        def open(self, request, timeout):
+            calls.append((request.full_url, timeout))
+            return Response()
+
+    client = MODULE.AcceptanceClient(
+        "http://127.0.0.1", timeout=12, opener=Opener()
+    )
+
+    assert client.workspace("workspace-1")["status"] == "outline_ready"
+    assert calls == [
+        ("http://127.0.0.1/api/v1/workspaces/workspace-1", 12)
+    ]
+
+
+def test_acceptance_invite_uses_same_cookie_opener_without_logging_code():
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return b'{"authorized": true}'
+
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request)
+            return Response()
+
+    client = MODULE.AcceptanceClient(
+        "http://127.0.0.1", opener=Opener()
+    )
+    result = client.authorize_invite("private-code")
+
+    assert result == {"authorized": True}
+    assert requests[0].full_url.endswith("/api/v1/access/invite")
+    assert json.loads(requests[0].data) == {"code": "private-code"}

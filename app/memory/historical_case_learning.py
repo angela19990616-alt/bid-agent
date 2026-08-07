@@ -32,7 +32,7 @@ class HistoricalCasePatternExtractor:
 
     HEADING_RE = re.compile(
         r"^(?:第?[一二三四五六七八九十百\d]+[章节、.]|"
-        r"[一二三四五六七八九十]+、|\d+(?:\.\d+){0,3})\s*(.+)$"
+        r"[一二三四五六七八九十]+、|\d+(?:\.\d+){0,4})\s*(.+)$"
     )
 
     def extract(self, content: bytes) -> list[dict[str, Any]]:
@@ -102,7 +102,7 @@ class HistoricalCasePatternExtractor:
     def _heading_level(style_name: str, text: str) -> int:
         match = re.search(r"(\d+)$", style_name)
         if match:
-            return max(1, min(3, int(match.group(1))))
+            return max(1, min(5, int(match.group(1))))
         if re.match(r"^第?[一二三四五六七八九十百\d]+章", text):
             return 1
         if re.match(r"^[一二三四五六七八九十]+、", text):

@@ -7,10 +7,12 @@ import argparse
 import hashlib
 import json
 import mimetypes
+import os
 import sys
 import time
 import urllib.error
 import urllib.request
+from http.cookiejar import CookieJar
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -86,9 +88,17 @@ def summarize_section(section: dict) -> dict:
 
 
 class AcceptanceClient:
-    def __init__(self, base_url: str, timeout: int = 300):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: int = 300,
+        opener=None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.opener = opener or urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(CookieJar())
+        )
 
     def upload(self, path: Path) -> dict:
         body, content_type = build_multipart(path)
@@ -97,6 +107,15 @@ class AcceptanceClient:
             data=body,
             method="POST",
             headers={"Content-Type": content_type},
+        )
+        return self._json(request)
+
+    def authorize_invite(self, code: str) -> dict:
+        request = urllib.request.Request(
+            f"{self.base_url}/api/v1/access/invite",
+            data=json.dumps({"code": code}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
         )
         return self._json(request)
 
@@ -142,7 +161,7 @@ class AcceptanceClient:
         return current
 
     def _json(self, request: urllib.request.Request) -> dict:
-        with urllib.request.urlopen(
+        with self.opener.open(
             request, timeout=self.timeout
         ) as response:
             return json.load(response)
@@ -215,9 +234,13 @@ def main() -> int:
         print("验收文件必须是存在的 PDF 或 DOCX。", file=sys.stderr)
         return 2
     try:
+        client = AcceptanceClient(args.base_url, timeout=args.timeout)
+        invite_code = os.getenv("BID_AGENT_INVITE_CODE", "").strip()
+        if invite_code:
+            client.authorize_invite(invite_code)
         report = run(
             args.file,
-            AcceptanceClient(args.base_url, timeout=args.timeout),
+            client,
         )
     except urllib.error.HTTPError as exc:
         error_code = f"HTTP_{exc.code}"
