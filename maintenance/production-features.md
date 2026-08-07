@@ -29,6 +29,7 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 
 | run_at | trigger | overall_health | checked_items | incidents_changed | fixes | evidence | blockers | next_action |
 |---|---|---|---|---|---|---|---|---|
+| 2026-08-08 | 无模板与附件模板分支补强 | maintenance | PF-005 | INC-006 fixing | 抽离可测试的生成模式决策；无模板强制 Requirement 规划；PDF/DOCX 模板优先级不可被后续普通附件降级 | 47项聚焦测试通过；实际只读审计中 no_template_requirement_planning 与 attachment_template_priority_stable 均为 true | 完整案例库仍缺4组真实文件；正式目录树迁移未获许可 | 提交本地版本并保持五组门禁失败，等待真实文件和迁移确认 |
 | 2026-08-08 | 模板优先目标完成度审计 | blocked | PF-005 | INC-006 fixing | 新增无数据库写入的案例就绪度审计；历史案例结构提升到五级；真实 API 验收复用同一 Cookie 并支持邀请码环境变量 | 1组真实案例、49个结构模式、strict_template 决策、机构私有事实隔离全部通过；14项聚焦测试通过 | 目标要求5组，项目目录及清单当前只有1组，仍缺4组真实招标与中标响应文件 | 文件到齐后运行只读审计，五组全绿后再单事务导入 |
 | 2026-08-08 | 完整投标文件业务反馈第一批落实 | maintenance | PF-005 | INC-006 confirmed | 建立 V2 模块边界与八阶段清单；识别并展示原模板最多五级标题；章节字数上下限进入生成与校核；集中汇总项目人工事项档案 | 后端 225 项全绿、pyflakes 通过、Docker 前端生产构建与五容器健康；真实自贡模板边界停止于下一章，目录 30 项；人工档案 33 项，项目编号已完成且供应商名称待填 | 目录父子关系、增删持久化和跨项目变量需要数据库迁移；钉钉材料与审批仍缺外部接口 | 提交第一批本地版本；确认迁移后推进目录树和项目变量中心 |
 | 2026-08-07 | 用户报告校验后无法生成 | healthy | PF-004 | none | 采购原文自动回填项目编号；未知供应商信息保留模板空位但不阻断草稿导出；仅缺少章节锚点继续阻断 | 后端 221 项全绿；Docker 生产构建与服务健康；真实自贡方案成功导出 138,646 字节 Word，项目编号已写入、供应商标签保留 | none | 用户重新上传后进行页面验收；生产部署仍需单独授权 |

@@ -6,7 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
+
+from docx import Document
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -14,6 +18,11 @@ sys.path.insert(0, str(ROOT))
 from app.memory.case_pair_batch import (  # noqa: E402
     CasePairBatchImporter,
     CasePairManifestError,
+)
+from app.agents.proposal_planner import ProposalPlanner  # noqa: E402
+from app.rules.engine import RuleEngine  # noqa: E402
+from app.services.generation_profile_service import (  # noqa: E402
+    GenerationProfileService,
 )
 from app.services.response_template_service import (  # noqa: E402
     ResponseTemplateService,
@@ -78,6 +87,8 @@ def audit(manifest_path: Path, expected_pairs: int = 5) -> dict:
             and "source_lookup_failed" not in template_modes
         ),
         "historical_facts_isolated": bool(prepared) and patterns_isolated,
+        "no_template_requirement_planning": _no_template_planning_gate(),
+        "attachment_template_priority_stable": _template_priority_gate(),
     }
     return {
         "expected_pairs": expected_pairs,
@@ -113,6 +124,43 @@ def _resolve_tender(root: Path, relative_path: str) -> Path | None:
     return path
 
 
+def _no_template_planning_gate() -> bool:
+    document = Document()
+    document.add_paragraph("采购需求：供应商应提交实施计划与进度安排。")
+    stream = BytesIO()
+    document.save(stream)
+    descriptor = ResponseTemplateService().detect(
+        "采购文件.docx", stream.getvalue()
+    )
+    planned = ProposalPlanner().plan(
+        [{
+            "id": uuid4(),
+            "proposal_chapter": "实施计划与进度安排",
+            "need_generation": True,
+        }],
+        RuleEngine().load_default("writing"),
+    )
+    return (
+        GenerationProfileService.mode_for_descriptor(
+            descriptor.snapshot()
+        ) == "planned"
+        and bool(planned)
+        and planned[0].title == "实施计划与进度安排"
+    )
+
+
+def _template_priority_gate() -> bool:
+    preferred = GenerationProfileService.preferred_mode
+    return (
+        preferred("pdf_template_manual_fill", "planned")
+        == "pdf_template_manual_fill"
+        and preferred("strict_template", "pdf_template_manual_fill")
+        == "strict_template"
+        and preferred("planned", "strict_template")
+        == "strict_template"
+    )
+
+
 def _failed_report(expected_pairs: int, blocker: str) -> dict:
     return {
         "expected_pairs": expected_pairs,
@@ -125,6 +173,8 @@ def _failed_report(expected_pairs: int, blocker: str) -> dict:
             "complete_five_pair_batch": False,
             "all_cases_have_generation_decision": False,
             "historical_facts_isolated": False,
+            "no_template_requirement_planning": False,
+            "attachment_template_priority_stable": False,
         },
         "ready": False,
         "blocker": blocker,

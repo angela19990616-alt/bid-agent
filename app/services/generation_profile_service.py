@@ -40,11 +40,7 @@ class GenerationProfileService:
         source_fields = self.template_service.extract_source_fields(
             filename, content
         )
-        mode = "planned"
-        if descriptor.detected and descriptor.source_format == "docx":
-            mode = "strict_template"
-        elif descriptor.detected and descriptor.source_format == "pdf":
-            mode = "pdf_template_manual_fill"
+        mode = self.mode_for_descriptor(descriptor.snapshot())
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
@@ -71,6 +67,12 @@ class GenerationProfileService:
                             WHEN proposal_generation_profiles.generation_mode =
                                 'strict_template'
                                 THEN proposal_generation_profiles.generation_mode
+                            WHEN EXCLUDED.generation_mode =
+                                'pdf_template_manual_fill'
+                                THEN EXCLUDED.generation_mode
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'pdf_template_manual_fill'
+                                THEN proposal_generation_profiles.generation_mode
                             ELSE EXCLUDED.generation_mode
                         END,
                         template_document_id = CASE
@@ -79,6 +81,12 @@ class GenerationProfileService:
                             WHEN proposal_generation_profiles.generation_mode =
                                 'strict_template'
                                 THEN proposal_generation_profiles.template_document_id
+                            WHEN EXCLUDED.generation_mode =
+                                'pdf_template_manual_fill'
+                                THEN EXCLUDED.template_document_id
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'pdf_template_manual_fill'
+                                THEN proposal_generation_profiles.template_document_id
                             ELSE EXCLUDED.template_document_id
                         END,
                         template_descriptor = CASE
@@ -86,6 +94,12 @@ class GenerationProfileService:
                                 THEN EXCLUDED.template_descriptor
                             WHEN proposal_generation_profiles.generation_mode =
                                 'strict_template'
+                                THEN proposal_generation_profiles.template_descriptor
+                            WHEN EXCLUDED.generation_mode =
+                                'pdf_template_manual_fill'
+                                THEN EXCLUDED.template_descriptor
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'pdf_template_manual_fill'
                                 THEN proposal_generation_profiles.template_descriptor
                             ELSE EXCLUDED.template_descriptor
                         END,
@@ -106,6 +120,27 @@ class GenerationProfileService:
                     ),
                 )
         return self.get(project_id)
+
+    @staticmethod
+    def mode_for_descriptor(descriptor: dict[str, Any]) -> str:
+        if descriptor.get("detected") and descriptor.get("source_format") == "docx":
+            return "strict_template"
+        if descriptor.get("detected") and descriptor.get("source_format") == "pdf":
+            return "pdf_template_manual_fill"
+        return "planned"
+
+    @staticmethod
+    def preferred_mode(existing: str, incoming: str) -> str:
+        priority = {
+            "planned": 1,
+            "pdf_template_manual_fill": 2,
+            "strict_template": 3,
+        }
+        return (
+            incoming
+            if priority.get(incoming, 0) >= priority.get(existing, 0)
+            else existing
+        )
 
     @staticmethod
     def get(project_id: UUID) -> GenerationProfile:
