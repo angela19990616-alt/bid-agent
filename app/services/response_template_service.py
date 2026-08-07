@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from copy import deepcopy
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from pathlib import Path
@@ -10,6 +9,7 @@ from typing import Any
 from docx import Document
 from docx.document import Document as DocumentType
 from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
@@ -332,6 +332,7 @@ class ResponseTemplateService:
                 self._replace_paragraph_text(paragraph, replaced)
             filled.update(used)
             unresolved.update(missing)
+        self._fill_label_paragraphs(document, normalized_values, filled)
         self._fill_label_cells(document, normalized_values, filled)
         descriptor_labels = set(data.get("field_labels") or ())
         for key, aliases in FIELD_ALIASES.items():
@@ -456,6 +457,36 @@ class ResponseTemplateService:
                         break
 
     @staticmethod
+    def _fill_label_paragraphs(
+        document: DocumentType,
+        values: dict[str, str],
+        filled: set[str],
+    ) -> None:
+        label_patterns = {
+            "project_name": r"(?:项目名称|采购项目名称|招标项目名称)",
+            "project_number": r"(?:项目编号|采购编号|招标编号)",
+            "bidder_name": r"(?:供应商名称|投标人名称|响应人名称|供应商)",
+        }
+        for paragraph in ResponseTemplateService._all_paragraphs(document):
+            original = paragraph.text
+            updated = original
+            for key, label_pattern in label_patterns.items():
+                value = values.get(key)
+                if not value:
+                    continue
+                pattern = re.compile(
+                    rf"(?P<label>{label_pattern}(?:\s*[（(][^）)]{{0,24}}[）)])?\s*[:：])"
+                    r"(?P<blank>[ \t]*(?:[_＿]{2,}|…+|\.{3,})?[ \t]*$)"
+                )
+                updated, count = pattern.subn(
+                    lambda match: f"{match.group('label')} {value}", updated
+                )
+                if count:
+                    filled.add(key)
+            if updated != original:
+                ResponseTemplateService._replace_paragraph_text(paragraph, updated)
+
+    @staticmethod
     def _fillable_labels(document: DocumentType) -> tuple[str, ...]:
         labels: set[str] = set()
         for table in document.tables:
@@ -507,9 +538,38 @@ class ResponseTemplateService:
         anchor = paragraph._p
         for raw_line in reversed([line.strip() for line in content.splitlines() if line.strip()]):
             new_p = OxmlElement("w:p")
-            if paragraph._p.pPr is not None:
-                new_p.append(deepcopy(paragraph._p.pPr))
+            heading = bool(re.match(r"^\d+(?:[.．]\d+)*[.、．]?\s+\S", raw_line))
+            properties = OxmlElement("w:pPr")
+            spacing = OxmlElement("w:spacing")
+            spacing.set(qn("w:line"), "360")
+            spacing.set(qn("w:lineRule"), "auto")
+            spacing.set(qn("w:before"), "160" if heading else "0")
+            spacing.set(qn("w:after"), "100")
+            properties.append(spacing)
+            if not heading:
+                indentation = OxmlElement("w:ind")
+                indentation.set(qn("w:firstLineChars"), "200")
+                properties.append(indentation)
+            new_p.append(properties)
             run = OxmlElement("w:r")
+            run_properties = OxmlElement("w:rPr")
+            fonts = OxmlElement("w:rFonts")
+            fonts.set(qn("w:ascii"), "Arial")
+            fonts.set(qn("w:hAnsi"), "Arial")
+            fonts.set(qn("w:eastAsia"), "宋体")
+            run_properties.append(fonts)
+            size = OxmlElement("w:sz")
+            size.set(qn("w:val"), "24")
+            run_properties.append(size)
+            size_complex = OxmlElement("w:szCs")
+            size_complex.set(qn("w:val"), "24")
+            run_properties.append(size_complex)
+            color = OxmlElement("w:color")
+            color.set(qn("w:val"), "000000")
+            run_properties.append(color)
+            if heading:
+                run_properties.append(OxmlElement("w:b"))
+            run.append(run_properties)
             text = OxmlElement("w:t")
             text.text = re.sub(r"^#{1,6}\s*", "", raw_line)
             run.append(text)

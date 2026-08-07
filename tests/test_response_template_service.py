@@ -2,6 +2,7 @@ from io import BytesIO
 from pathlib import Path
 
 from docx import Document
+from docx.shared import RGBColor
 
 from app.services.response_template_service import ResponseTemplateService
 
@@ -185,6 +186,46 @@ def test_technical_solution_does_not_match_short_table_label():
 
     assert target is not None
     assert target._p is expected._p
+
+
+def test_inserted_content_does_not_inherit_heading_page_break():
+    document = Document()
+    anchor = document.add_paragraph("项目实施方案")
+    anchor.paragraph_format.page_break_before = True
+
+    ResponseTemplateService._insert_content_after(anchor, "1. 工作范围\n正文内容")
+
+    stream = BytesIO()
+    document.save(stream)
+    result = Document(BytesIO(stream.getvalue()))
+    heading, body = result.paragraphs[1:3]
+    assert heading.paragraph_format.page_break_before is not True
+    assert body.paragraph_format.page_break_before is not True
+    assert heading.runs[0].bold is True
+    assert body.runs[0].font.color.rgb == RGBColor(0, 0, 0)
+
+
+def test_fills_visible_blank_label_paragraphs():
+    document = Document()
+    document.add_paragraph("项目编号： __________")
+    document.add_paragraph("项目名称：")
+    document.add_paragraph("供应商（加盖公章）：      ")
+    filled: set[str] = set()
+
+    ResponseTemplateService._fill_label_paragraphs(
+        document,
+        {
+            "project_number": "SCXHR20250320",
+            "project_name": "自贡智慧文旅项目",
+            "bidder_name": "【待人工确认供应商名称】",
+        },
+        filled,
+    )
+
+    assert document.paragraphs[0].text == "项目编号： SCXHR20250320"
+    assert document.paragraphs[1].text == "项目名称： 自贡智慧文旅项目"
+    assert "【待人工确认供应商名称】" in document.paragraphs[2].text
+    assert filled == {"project_number", "project_name", "bidder_name"}
 
 
 def test_repository_tender_uses_actual_template_chapter_not_toc(tmp_path):
