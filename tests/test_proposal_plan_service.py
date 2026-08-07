@@ -43,6 +43,56 @@ def test_outline_filter_removes_duplicate_requirement_links():
     assert result[0]["requirement_ids"] == [requirement_id]
 
 
+def test_strict_template_outline_controls_writing_structure():
+    implementation = uuid4()
+    training = uuid4()
+    chapters = ProposalPlanService._template_chapters(
+        {
+            "outline": [
+                {"title": "格式1 投标函", "level": 1},
+                {"title": "格式13 项目实施方案", "level": 1},
+                {"title": "13.1 实施计划", "level": 2},
+                {"title": "13.2 培训方案", "level": 2},
+                {"title": "格式14 商务偏离表", "level": 1},
+            ]
+        },
+        [
+            {
+                "id": implementation,
+                "target_chapter": "实施计划",
+                "normalized_text": "项目实施周期180日历天",
+            },
+            {
+                "id": training,
+                "target_chapter": "培训方案",
+                "normalized_text": "提供业务培训",
+            },
+        ],
+        {
+            "writing_section_patterns": ["项目实施方案", "实施计划", "培训方案"],
+            "non_writing_section_patterns": ["投标函", "偏离表"],
+        },
+    )
+
+    assert [item["title"] for item in chapters] == [
+        "13.1 实施计划",
+        "13.2 培训方案",
+    ]
+    assert chapters[0]["requirement_ids"] == [implementation]
+    assert chapters[1]["requirement_ids"] == [training]
+
+
+def test_strict_template_does_not_fall_back_to_generated_outline():
+    assert ProposalPlanService._template_chapters(
+        {"outline": [{"title": "格式1 投标函", "level": 1}]},
+        [],
+        {
+            "writing_section_patterns": ["技术方案"],
+            "non_writing_section_patterns": ["投标函"],
+        },
+    ) == []
+
+
 def test_reconcile_feedback_restores_requirement_to_mapped_draft(
     monkeypatch,
 ):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 from psycopg.rows import dict_row
@@ -28,11 +29,12 @@ class ProposalPlanService:
         project_id: UUID,
         rules: RuleDocument | None = None,
     ) -> list[dict]:
+        template_rules = self.rule_engine.load("template_generation")
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
                     """
-                    SELECT id,
+                    SELECT id, normalized_text,
                            proposal_mapping AS proposal_chapter,
                            proposal_mapping AS target_chapter,
                            need_generation
@@ -47,6 +49,15 @@ class ProposalPlanService:
                     (project_id,),
                 )
                 requirements = cursor.fetchall()
+                cursor.execute(
+                    """
+                    SELECT generation_mode, template_descriptor
+                    FROM proposal_generation_profiles
+                    WHERE project_id = %s
+                    """,
+                    (project_id,),
+                )
+                generation_profile = cursor.fetchone() or {}
                 cursor.execute(
                     """
                     SELECT normalized_text, quote
@@ -64,15 +75,24 @@ class ProposalPlanService:
                     (project_id,),
                 )
                 format_constraints = cursor.fetchall()
-                active_rules = rules or self.rule_engine.load("writing")
-                chapters = self.planner.plan(
-                    requirements,
-                    active_rules,
-                    format_constraints=format_constraints,
-                )
+                if generation_profile.get("generation_mode") == "strict_template":
+                    chapters = self._template_chapters(
+                        generation_profile.get("template_descriptor") or {},
+                        requirements,
+                        template_rules.content.get("policies", {}),
+                    )
+                else:
+                    active_rules = rules or self.rule_engine.load("writing")
+                    chapters = self.planner.plan(
+                        requirements,
+                        active_rules,
+                        format_constraints=format_constraints,
+                    )
                 if not chapters:
                     raise ProposalPlanError(
-                        "未提取到可用于技术方案撰写的要求。"
+                        "未在原投标文件格式中识别到可回填的写作章节。"
+                        if generation_profile.get("generation_mode") == "strict_template"
+                        else "未提取到可用于技术方案撰写的要求。"
                     )
                 cursor.execute(
                     """
@@ -83,6 +103,18 @@ class ProposalPlanService:
                     (project_id,),
                 )
                 for chapter in chapters:
+                    title = (
+                        chapter["title"] if isinstance(chapter, dict)
+                        else chapter.title
+                    )
+                    sort_order = (
+                        chapter["sort_order"] if isinstance(chapter, dict)
+                        else chapter.sort_order
+                    )
+                    requirement_ids = (
+                        chapter["requirement_ids"] if isinstance(chapter, dict)
+                        else chapter.requirement_ids
+                    )
                     cursor.execute(
                         """
                         INSERT INTO sections (
@@ -91,7 +123,7 @@ class ProposalPlanService:
                         VALUES (%s, %s, %s, TRUE)
                         RETURNING id
                         """,
-                        (project_id, chapter.title, chapter.sort_order),
+                        (project_id, title, sort_order),
                     )
                     section_id = cursor.fetchone()["id"]
                     cursor.executemany(
@@ -103,7 +135,7 @@ class ProposalPlanService:
                         """,
                         [
                             (section_id, requirement_id)
-                            for requirement_id in chapter.requirement_ids
+                            for requirement_id in requirement_ids
                         ],
                     )
                 cursor.execute(
@@ -115,6 +147,92 @@ class ProposalPlanService:
                     (project_id,),
                 )
         return SectionService().list(project_id)
+
+    @classmethod
+    def _template_chapters(
+        cls,
+        descriptor: dict,
+        requirements: list[dict],
+        policies: dict,
+    ) -> list[dict]:
+        """Use detected template headings as the only writing skeleton."""
+        outline = descriptor.get("outline") or []
+        include = tuple(policies.get("writing_section_patterns") or ())
+        exclude = tuple(policies.get("non_writing_section_patterns") or ())
+        anchors = [
+            item for item in outline
+            if any(pattern in item.get("title", "") for pattern in include)
+            and not any(pattern in item.get("title", "") for pattern in exclude)
+        ]
+        if not anchors:
+            return []
+
+        selected: list[dict] = []
+        for anchor in anchors:
+            if anchor not in selected:
+                selected.append(anchor)
+            anchor_index = outline.index(anchor)
+            anchor_level = int(anchor.get("level") or 1)
+            for item in outline[anchor_index + 1:]:
+                if int(item.get("level") or 1) <= anchor_level:
+                    break
+                if not any(
+                    pattern in item.get("title", "") for pattern in exclude
+                ):
+                    selected.append(item)
+
+        # A parent heading already exists in the original template. When it
+        # has concrete child headings, generate only those leaf sections so
+        # the model does not invent a second generic parent-body chapter.
+        leaf_items = []
+        for index, item in enumerate(selected):
+            level = int(item.get("level") or 1)
+            next_item = selected[index + 1] if index + 1 < len(selected) else None
+            if next_item and int(next_item.get("level") or 1) > level:
+                continue
+            leaf_items.append(item)
+
+        unique = []
+        seen_titles: set[str] = set()
+        for item in leaf_items:
+            title = str(item.get("title") or "").strip()
+            if title and title not in seen_titles:
+                unique.append(item)
+                seen_titles.add(title)
+
+        assignments: dict[str, list[UUID]] = {
+            item["title"]: [] for item in unique
+        }
+        for requirement in requirements:
+            target = str(requirement.get("target_chapter") or "")
+            normalized = str(requirement.get("normalized_text") or "")
+            best = max(
+                unique,
+                key=lambda item: cls._title_match_score(
+                    item["title"], target, normalized
+                ),
+            )
+            assignments[best["title"]].append(requirement["id"])
+
+        return [
+            {
+                "title": item["title"],
+                "sort_order": index,
+                "requirement_ids": assignments[item["title"]],
+            }
+            for index, item in enumerate(unique, start=1)
+        ]
+
+    @staticmethod
+    def _title_match_score(title: str, target: str, text: str) -> int:
+        clean_title = re.sub(r"^[\d.．、（）()一二三四五六七八九十\s]+", "", title)
+        score = 0
+        if target and (target in title or clean_title in target):
+            score += 100
+        keywords = set(re.findall(r"[\u4e00-\u9fff]{2,6}", clean_title))
+        score += sum(5 for keyword in keywords if keyword in target)
+        score += sum(1 for keyword in keywords if keyword in text)
+        return score
 
     def reconcile_requirement_feedback(
         self,

@@ -16,7 +16,35 @@
     "fill_verified_values_only": true,
     "never_guess_missing_fields": true,
     "historical_cases_are_structure_only": true,
-    "historical_case_facts_are_prohibited": true
+    "historical_case_facts_are_prohibited": true,
+    "detected_template_is_primary_structure": true,
+    "writing_section_patterns": [
+      "项目实施方案",
+      "技术方案",
+      "服务方案",
+      "工作方案",
+      "实施计划",
+      "组织管理",
+      "进度计划",
+      "质量保障",
+      "运维保障",
+      "培训方案",
+      "安全保障"
+    ],
+    "non_writing_section_patterns": [
+      "投标函",
+      "开标一览表",
+      "报价表",
+      "偏离表",
+      "应答表",
+      "声明函",
+      "承诺函",
+      "授权委托书",
+      "资格证明",
+      "中小企业声明",
+      "人员情况表",
+      "业绩表"
+    ]
   },
   "pdf_policy": {
     "non_fillable_pdf": "manual_exact_fill_required",
