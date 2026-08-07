@@ -39,6 +39,39 @@ def test_detects_embedded_docx_template_and_strict_rules():
     assert "严格按照" in descriptor.strict_reasons
 
 
+def test_extracts_response_template_outline_up_to_five_levels():
+    document = Document()
+    document.add_heading("采购需求", level=1)
+    document.add_heading("附件：投标文件格式", level=1)
+    document.add_heading("一、投标函", level=1)
+    document.add_heading("（一）项目基本信息", level=2)
+    document.add_heading("1.1 报价信息", level=3)
+    document.add_heading("1.1.1 报价明细", level=4)
+    document.add_heading("1.1.1.1 其他说明", level=5)
+    document.add_heading(
+        "一、本段是很长的说明文字，不应当作为可编辑目录标题展示给用户，而应当保留在原模板正文中。",
+        level=1,
+    )
+    document.add_heading("第八章 评审办法", level=1)
+    document.add_heading("一、评审原则", level=1)
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "招标文件.docx", stream.getvalue()
+    )
+
+    assert [item["title"] for item in descriptor.outline] == [
+        "附件：投标文件格式",
+        "一、投标函",
+        "（一）项目基本信息",
+        "1.1 报价信息",
+        "1.1.1 报价明细",
+        "1.1.1.1 其他说明",
+    ]
+    assert [item["level"] for item in descriptor.outline] == [1, 1, 2, 3, 4, 5]
+
+
 def test_fills_verified_values_and_keeps_original_table(tmp_path):
     service = ResponseTemplateService()
     content = _template_bytes()

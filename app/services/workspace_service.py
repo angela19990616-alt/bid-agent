@@ -315,6 +315,9 @@ class WorkspaceService:
                 profile.template_descriptor
             ),
             "template_field_values": profile.template_field_values,
+            "template_outline": profile.template_descriptor.get(
+                "outline", []
+            ),
             **budget,
         }
 

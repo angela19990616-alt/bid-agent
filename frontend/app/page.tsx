@@ -117,6 +117,12 @@ type Workspace = {
   template_fidelity: string | null;
   template_required_fields: string[];
   template_field_values: Record<string, string>;
+  template_outline: Array<{
+    title: string;
+    level: 1 | 2 | 3 | 4 | 5;
+    order: number;
+    source: string;
+  }>;
 };
 type ExportItem = { id: string; status: string; filename?: string | null };
 type ProposalReview = {
@@ -142,6 +148,21 @@ type ProposalReview = {
   };
 };
 type ResponseSupport = {
+  manual_action_archive: {
+    total: number;
+    pending: number;
+    completed: number;
+    items: Array<{
+      key: string;
+      category: "variable" | "format_review" | "material_review" | "content_review" | "conflict_review";
+      title: string;
+      instruction: string;
+      status: "pending" | "completed";
+      field_key: string | null;
+      value_preview: string | null;
+      blocking_scope: string;
+    }>;
+  };
   response_groups: Array<{
     group_key: string;
     item_count: number;
@@ -328,6 +349,8 @@ export default function Home() {
   const [activeSectionId, setActiveSectionId] = useState("");
   const [editorContent, setEditorContent] = useState("");
   const [generationInstruction, setGenerationInstruction] = useState("");
+  const [minChapterChars, setMinChapterChars] = useState(800);
+  const [maxChapterChars, setMaxChapterChars] = useState(5000);
   const [exportItem, setExportItem] = useState<ExportItem | null>(null);
   const [proposalReview, setProposalReview] = useState<ProposalReview | null>(null);
   const [responseSupport, setResponseSupport] = useState<ResponseSupport | null>(null);
@@ -705,6 +728,8 @@ export default function Home() {
           body: JSON.stringify({
             instruction: generationInstruction.trim() || null,
             case_reference_mode: caseReferenceMode,
+            min_chars: minChapterChars,
+            max_chars: maxChapterChars,
           }),
         },
       );
@@ -803,6 +828,7 @@ export default function Home() {
       );
       setWorkspace(updated);
       setTemplateFieldValues(updated.template_field_values ?? {});
+      setResponseSupport(await request<ResponseSupport>(`/workspaces/${workspace.id}/response-support`));
       setNotice("模板字段已保存，导出时只会回填这些已核验信息。");
     });
   }
@@ -1101,6 +1127,22 @@ export default function Home() {
 
           {step === "outline" && (
             <div className="outline-layout">
+              {workspace?.template_outline?.length > 0 && (
+                <section className="panel template-outline-panel">
+                  <div>
+                    <span className="panel-label">TENDER RESPONSE FORMAT</span>
+                    <h3>招标文件规定的投标文件格式</h3>
+                    <p>已从原文件识别 {workspace.template_outline.length} 个标题，最多保留五级层次。正式装配时以此结构为准，不由 AI 擅自改名。</p>
+                  </div>
+                  <ol className="template-outline-tree">
+                    {workspace.template_outline.map((item) => (
+                      <li key={`${item.order}-${item.title}`} data-level={item.level}>
+                        <b>{item.order}</b><span>{item.title}</span><small>{item.level} 级</small>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              )}
               <div className="section-toolbar">
                 <div><strong>{sections.length}</strong><span>个推荐章节</span></div>
                 <p>可改名和调整顺序，不需要逐条确认要求。</p>
@@ -1145,6 +1187,10 @@ export default function Home() {
                   </div>
                   <div className="generation-instruction">
                     <label htmlFor="generation-instruction">本章微调要求（可选）</label>
+                    <div className="length-controls">
+                      <label>最少字数<input type="number" min={200} max={20000} value={minChapterChars} onChange={(event) => setMinChapterChars(Number(event.target.value))} /></label>
+                      <label>最多字数<input type="number" min={200} max={20000} value={maxChapterChars} onChange={(event) => setMaxChapterChars(Number(event.target.value))} /></label>
+                    </div>
                     <select value={caseReferenceMode} onChange={(event) => setCaseReferenceMode(event.target.value as typeof caseReferenceMode)} aria-label="历史案例参考方式">
                       <option value="balanced">综合参考多个相似案例</option>
                       <option value="closest_case">尽量贴近最相似案例</option>
@@ -1182,6 +1228,25 @@ export default function Home() {
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
                 <p>一次完成来源校核、真实性检查、自动清理和 Word 生成；检查结果仅作提醒，不会阻断导出。</p>
+                {responseSupport?.manual_action_archive && (
+                  <details className="manual-archive" open={responseSupport.manual_action_archive.pending > 0}>
+                    <summary>
+                      人工事项档案
+                      <b>{responseSupport.manual_action_archive.pending} 项待处理</b>
+                    </summary>
+                    <p>系统集中记录需要人工填写或审核的内容；变量填写一次后，本项目后续生成和导出统一使用。</p>
+                    <div>
+                      {responseSupport.manual_action_archive.items.map((item) => (
+                        <article key={item.key} className={item.status}>
+                          <span>{item.status === "completed" ? "已完成" : "待处理"}</span>
+                          <strong>{item.title}</strong>
+                          <p>{item.instruction}</p>
+                          <small>影响范围：{item.blocking_scope}</small>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
+                )}
                 {workspace?.generation_mode === "strict_template" && (
                   <div className="template-fields">
                     <strong>原响应模板保真回填</strong>

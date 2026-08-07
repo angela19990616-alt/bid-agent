@@ -8,7 +8,10 @@ from psycopg.rows import dict_row
 
 from app.database.db import connect
 from app.knowledge.engine import EnterpriseKnowledgeEngine
+from app.services.conflict_service import ConflictService
+from app.services.generation_profile_service import GenerationProfileService
 from app.services.provenance_service import content_paragraphs
+from app.services.response_template_service import ResponseTemplateService
 from app.services.requirement_service import RequirementService
 from app.services.section_service import SectionService
 
@@ -29,20 +32,131 @@ class ResponseSupportService:
         requirement_service: RequirementService | None = None,
         knowledge_engine: EnterpriseKnowledgeEngine | None = None,
         section_service: SectionService | None = None,
+        generation_profile_service: GenerationProfileService | None = None,
+        conflict_service: ConflictService | None = None,
     ):
         self.requirement_service = requirement_service or RequirementService()
         self.knowledge_engine = knowledge_engine or EnterpriseKnowledgeEngine()
         self.section_service = section_service or SectionService()
+        self.generation_profile_service = (
+            generation_profile_service or GenerationProfileService()
+        )
+        self.conflict_service = conflict_service or ConflictService()
 
     def overview(self, project_id: UUID) -> dict[str, Any]:
         requirements = self.requirement_service.list(project_id)
+        format_requirements = self._format_requirements(requirements)
+        qualification_responses = self._qualification_responses(
+            project_id, requirements
+        )
         return {
             "response_groups": self._groups(requirements),
-            "format_requirements": self._format_requirements(requirements),
-            "qualification_responses": self._qualification_responses(
-                project_id, requirements
+            "format_requirements": format_requirements,
+            "qualification_responses": qualification_responses,
+            "manual_action_archive": self._manual_action_archive(
+                project_id,
+                format_requirements,
+                qualification_responses,
             ),
             "traceability": self._traceability(project_id, requirements),
+        }
+
+    def _manual_action_archive(
+        self,
+        project_id: UUID,
+        format_requirements: list[dict],
+        qualification_responses: list[dict],
+    ) -> dict[str, Any]:
+        """Collect every known human input/review gate in one project view."""
+        profile = self.generation_profile_service.get(project_id)
+        required_fields = ResponseTemplateService.required_fields(
+            profile.template_descriptor
+        )
+        field_labels = {
+            "project_number": "项目编号",
+            "bidder_name": "供应商名称",
+            "legal_representative": "法定代表人",
+            "authorized_representative": "授权代表",
+            "date": "响应日期",
+        }
+        actions: list[dict[str, Any]] = []
+        for field in required_fields:
+            if field == "project_name":
+                continue
+            value = profile.template_field_values.get(field, "").strip()
+            actions.append({
+                "key": f"variable:{field}",
+                "category": "variable",
+                "title": field_labels.get(field, field),
+                "instruction": "填写并核验后，所有模板回填和导出统一使用该值。",
+                "status": "completed" if value else "pending",
+                "field_key": field,
+                "value_preview": value,
+                "blocking_scope": "仅影响引用该变量的模板位置",
+            })
+        for item in format_requirements:
+            if not item["manual_check_required"]:
+                continue
+            actions.append({
+                "key": f"format:{item['requirement_id']}",
+                "category": "format_review",
+                "title": item["title"],
+                "instruction": "导出前按招标原文逐项复核版式、表格和固定文字。",
+                "status": "pending",
+                "field_key": None,
+                "value_preview": None,
+                "blocking_scope": "最终交付复核",
+            })
+        for item in qualification_responses:
+            if item["status"] == "matched_verified":
+                continue
+            actions.append({
+                "key": f"material:{item['requirement_id']}",
+                "category": "material_review",
+                "title": item["requirement"],
+                "instruction": "选择并核验资格或证明材料，未经核验不得写入投标文件。",
+                "status": "pending",
+                "field_key": None,
+                "value_preview": None,
+                "blocking_scope": "对应资格或附件响应",
+            })
+        for index, section in enumerate(
+            self.section_service.list(project_id), start=1
+        ):
+            if section.get("status") == "approved":
+                continue
+            actions.append({
+                "key": f"section:{section.get('sort_order', index)}:{section['title']}",
+                "category": "content_review",
+                "title": section["title"],
+                "instruction": "生成或编辑本章后由业务人员人工确认。",
+                "status": "pending",
+                "field_key": None,
+                "value_preview": None,
+                "blocking_scope": "本章节",
+            })
+        for conflict in self.conflict_service.list(project_id):
+            if (
+                conflict["conflict_type"] != "true_conflict"
+                or conflict["resolution_status"] != "pending"
+            ):
+                continue
+            actions.append({
+                "key": f"conflict:{conflict['conflict_id']}",
+                "category": "conflict_review",
+                "title": conflict["topic"],
+                "instruction": "采用 A、采用 B、分别响应或提交澄清。",
+                "status": "pending",
+                "field_key": None,
+                "value_preview": None,
+                "blocking_scope": "仅影响关联章节",
+            })
+        pending = sum(item["status"] == "pending" for item in actions)
+        return {
+            "total": len(actions),
+            "pending": pending,
+            "completed": len(actions) - pending,
+            "items": actions,
         }
 
     @staticmethod

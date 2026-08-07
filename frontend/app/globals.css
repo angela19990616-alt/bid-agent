@@ -331,6 +331,29 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .template-fields .secondary { width: 100%; }
 .template-fields .template-field-warning { color: #9a3412; font-weight: 650; }
 .template-fields .template-field-ready { color: var(--green-700); font-weight: 650; }
+.template-outline-panel { margin-bottom: 18px; padding: 20px; }
+.template-outline-panel h3 { margin: 4px 0 6px; }
+.template-outline-panel p { margin: 0; color: var(--muted); }
+.template-outline-tree { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+.template-outline-tree li { display: grid; grid-template-columns: 34px minmax(0, 1fr) 44px; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fbfdfc; }
+.template-outline-tree li[data-level="2"] { margin-left: 24px; }
+.template-outline-tree li[data-level="3"] { margin-left: 48px; }
+.template-outline-tree li[data-level="4"] { margin-left: 72px; }
+.template-outline-tree li[data-level="5"] { margin-left: 96px; }
+.template-outline-tree b { color: var(--green-700); font-size: 12px; }
+.template-outline-tree small { color: var(--muted); text-align: right; }
+.length-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 180px)); gap: 12px; }
+.length-controls label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.length-controls input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--ink); }
+.manual-archive { margin: 16px 0; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: #fbfdfc; }
+.manual-archive summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; font-weight: 700; }
+.manual-archive summary b { color: #9a3412; }
+.manual-archive > p { color: var(--muted); font-size: 13px; }
+.manual-archive > div { display: grid; gap: 8px; }
+.manual-archive article { display: grid; grid-template-columns: 64px 1fr; gap: 3px 10px; padding: 10px; border-radius: 8px; background: white; border: 1px solid var(--line); }
+.manual-archive article > span { grid-row: 1 / span 3; font-size: 12px; color: #9a3412; }
+.manual-archive article.completed > span { color: var(--green-700); }
+.manual-archive article p, .manual-archive article small { margin: 0; color: var(--muted); }
 .download-button { width: 100%; border: 1px solid #95b3a5; color: #20543e; background: #e6f2eb; }
 .empty-state { padding: 50px; border: 1px dashed #cad6cf; border-radius: 12px; color: var(--muted); text-align: center; background: white; }
 

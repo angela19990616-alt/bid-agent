@@ -75,13 +75,36 @@ class FakeSections:
         ]
 
 
-def test_support_groups_fine_requirements_for_user_display():
-    items = [requirement(), requirement(title="进度控制措施")]
-    service = ResponseSupportService(
+class FakeGenerationProfile:
+    @staticmethod
+    def get(_project_id):
+        return SimpleNamespace(
+            template_descriptor={
+                "field_labels": ["项目编号", "供应商名称"],
+            },
+            template_field_values={"project_number": "SCXHR20250320"},
+        )
+
+
+class FakeConflicts:
+    @staticmethod
+    def list(_project_id):
+        return []
+
+
+def make_service(items):
+    return ResponseSupportService(
         requirement_service=FakeRequirements(items),
         knowledge_engine=FakeKnowledge(),
         section_service=FakeSections(),
+        generation_profile_service=FakeGenerationProfile(),
+        conflict_service=FakeConflicts(),
     )
+
+
+def test_support_groups_fine_requirements_for_user_display():
+    items = [requirement(), requirement(title="进度控制措施")]
+    service = make_service(items)
 
     result = service.overview(uuid4())
 
@@ -109,11 +132,7 @@ def test_support_marks_exact_format_and_matches_verified_qualification():
             proposal_mapping=None,
         ),
     ]
-    service = ResponseSupportService(
-        requirement_service=FakeRequirements(items),
-        knowledge_engine=FakeKnowledge(),
-        section_service=FakeSections(),
-    )
+    service = make_service(items)
 
     result = service.overview(uuid4())
 
@@ -122,3 +141,44 @@ def test_support_marks_exact_format_and_matches_verified_qualification():
     assert qualification["status"] == "matched_verified"
     assert qualification["matches"][0]["holder"] == "张三"
     assert "content" not in qualification["matches"][0]
+
+
+def test_manual_archive_collects_variables_and_human_reviews():
+    items = [
+        requirement(
+            type="format_requirement",
+            title="固定响应表",
+            normalized_text="严格按照附件表格填写，不得修改格式",
+            quote="须严格按照附件表格填写。",
+            response_action="write_into_response_table",
+            proposal_mapping=None,
+        ),
+        requirement(
+            type="qualification_requirement",
+            title="未匹配资格",
+            normalized_text="须提供法律职业资格证书",
+            quote="须提供法律职业资格证书。",
+            response_action="provide_attachment",
+            proposal_mapping=None,
+        ),
+    ]
+    service = make_service(items)
+    service.knowledge_engine.list_active = lambda _context: []
+
+    archive = service.overview(uuid4())["manual_action_archive"]
+
+    variables = {
+        item["title"]: item["status"]
+        for item in archive["items"]
+        if item["category"] == "variable"
+    }
+    assert variables == {"项目编号": "completed", "供应商名称": "pending"}
+    assert any(
+        item["category"] == "format_review"
+        for item in archive["items"]
+    )
+    assert any(
+        item["category"] == "material_review"
+        for item in archive["items"]
+    )
+    assert archive["pending"] >= 3

@@ -8,6 +8,7 @@
 | PF-002 | 章节生成与模型路由 | active | critical | bid-agent | http://101.200.154.141 | `app/core/model_client.py`, `app/core/model_routing.py`, `app/services/section_service.py` | 章节任务状态、模型使用审计、HTTP 5xx | 一个真实章节生成成功；不可用模型被冷却；输入保持在模型限制内；尝试次数和费用受控 | `README.md` 模型路由章节 | release | 2026-07-31 | 下次发布 | healthy | ECS `e10c2637`；DeepSeek V4 Flash 抽取与 V4 Pro 写作生产真实调用成功，公网健康 | 继续监控实际全文件处理时延和有界降级 |
 | PF-003 | 私有使用统计后台 | active | medium | bid-agent | SSH 隧道至 `127.0.0.1:8000/internal/usage` | `app/api/internal_dashboard.py`, `app/services/usage_dashboard_service.py` | 页面可访问、聚合查询成功、仅回环端口、前端无入口 | 仅管理员通过 SSH 隧道访问；展示使用量、成功率和模型消耗；不展示文件名、项目名、用户标识、UUID、原文或密钥 | `README.md` 后台使用统计章节 | release | 2026-08-03 | 下次发布 | healthy | ECS `180f1b23`；后台查询 200，公网 8000 超时不可达，官网 200，5 容器健康 | SSH 隧道依赖管理员本机连接保持在线 |
 | PF-004 | 聚合响应、格式资格与溯源审核 | discovery | high | bid-agent | 本地 `http://127.0.0.1/` | `app/services/response_support_service.py`, `app/services/response_template_service.py`, `app/memory/historical_case_learning.py`, `frontend/app/page.tsx` | 同类分组、模板决策、格式清单、资格匹配、案例模式、审核地图 | DOCX 模板优先并保留原包版式；底层细粒度不丢失；未核验资格不进入响应；历史案例不复制事实 | `README.md` 模板优先生成 | local acceptance | 2026-08-06 | 全量回归后 | maintenance | 仓库自贡招标文件正确定位真实第七章而非目录，原包裁剪、项目字段与技术方案回填成功；结构隔离聚焦测试通过 | 非可填写 PDF 仍需人工坐标级回填；当前仓库仅有一组案例，尚缺用户所述其余四组 |
+| PF-005 | 完整投标文件格式与材料装配 | discovery | critical | bid-agent | 本地设计与分阶段验收 | `docs/BID_PLATFORM_V2_ARCHITECTURE.md`, `app/services/response_template_service.py`, `app/services/response_support_service.py` | 五级模板目录、变量缺口、评分证据、材料权限、人工目录门禁 | 原格式不被改写；未知变量不猜测；材料有来源和权限；采分点能定位正文与证据；目录经人工确认 | `docs/BID_PLATFORM_V2_ARCHITECTURE.md` | milestone | 2026-08-08 | 第一阶段提交后 | discovery | 业务试用反馈已分解为 8 个可独立验收阶段 | 钉钉 API、真实台账、审批规则和多组标注案例尚未提供 |
 
 Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `retired`.
 
@@ -20,6 +21,7 @@ Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `ret
 | INC-003 | 2026-07-31 | PF-001 | 用户反馈 | sev3 | 已忽略事项恢复“写入方案”后未回到推荐目录 | 人工确认与目录同步 | 先忽略一条方案事项，再恢复写入 | closed | 人工反馈只恢复 Requirement 状态，未重建草稿章节关联，前端也未刷新目录 | 增加草稿目录双向同步；忽略时移除关联，恢复时按方案章节重新关联并刷新前端 | 后端 179 项测试、前端构建及 2 项页面测试通过 | codex | 随下一次生产发布回测 | 2026-07-31 |
 | INC-004 | 2026-07-31 | PF-001, PF-002 | 用户反馈 | sev3 | 最新输出再次出现 `###` 且 Requirement 分类错误 | 最新生产方案 | 查看最新生成章节及响应事项 | monitoring | 分类器与响应动作直接耦合，缺少独立 Response Strategy；写作规则禁止 Markdown 但保存前未强制清除标题标记 | 新增规则驱动的 Response Strategy、五类响应视图、人工双向归类和 `###` 保存门禁 | 后端 188 项、前端与发布门禁通过；ECS `f752ddd5`、迁移 021、公网健康和邀请码保护正常 | codex | 等待用户真实文件试用反馈 | 2026-07-31 |
 | INC-005 | 2026-07-31 17:20 CST | PF-001 | 用户公网实测 | sev2 | 上传处理失败与后续进度轮询 500 | 新上传招标文件的 Requirement 分析 | 公网上传并等待后台处理 | closed | 工作流阶段遗漏；模型超时未进入小批恢复；Workspace 消费了内部字段名而非 API 字段 `type` | 注册固定阶段；小批恢复；统一 Workspace 字段契约并正确结束目录工作流 | 199 项测试及发布门禁通过；全新 DeepSeek 样例 113 条、5/5 章、整本 Review 和 Word 导出成功 | codex | 按发布周期持续监控 | 2026-07-31 |
+| INC-006 | 2026-08-08 | PF-005 | 郑冰聪、刘长辉初步试用反馈 | sev2 | 输出结构、章节深度、资料打通和人工协同与完整投标业务偏差较大 | 完整投标文件编制与交付 | 对照招标文件格式、评分办法和现有平台输出 | fixing | 现有 V3 以技术方案闭环为主，尚无完整五级目录、项目变量中心、商务材料装配和审批门禁 | 已形成 V2 目标架构与八阶段验收清单；完成五级模板目录、章节字数控制和项目人工事项档案 | 后端 225 项、前端 Docker 生产构建、真实自贡模板与人工档案回归通过 | codex | 迁移获确认后完成层级目录编辑和变量持久化，再接评分材料闭环 | 2026-08-08 |
 
 Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring`, `blocked`, `deferred`, `closed`.
 
@@ -27,6 +29,7 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 
 | run_at | trigger | overall_health | checked_items | incidents_changed | fixes | evidence | blockers | next_action |
 |---|---|---|---|---|---|---|---|---|
+| 2026-08-08 | 完整投标文件业务反馈第一批落实 | maintenance | PF-005 | INC-006 confirmed | 建立 V2 模块边界与八阶段清单；识别并展示原模板最多五级标题；章节字数上下限进入生成与校核；集中汇总项目人工事项档案 | 后端 225 项全绿、pyflakes 通过、Docker 前端生产构建与五容器健康；真实自贡模板边界停止于下一章，目录 30 项；人工档案 33 项，项目编号已完成且供应商名称待填 | 目录父子关系、增删持久化和跨项目变量需要数据库迁移；钉钉材料与审批仍缺外部接口 | 提交第一批本地版本；确认迁移后推进目录树和项目变量中心 |
 | 2026-08-07 | 用户报告校验后无法生成 | healthy | PF-004 | none | 采购原文自动回填项目编号；未知供应商信息保留模板空位但不阻断草稿导出；仅缺少章节锚点继续阻断 | 后端 221 项全绿；Docker 生产构建与服务健康；真实自贡方案成功导出 138,646 字节 Word，项目编号已写入、供应商标签保留 | none | 用户重新上传后进行页面验收；生产部署仍需单独授权 |
 | 2026-07-31 03:53 CST | 用户报告章节失败与分类异常 | incident | PF-001, PF-002 | INC-001、INC-002 opened | none | 4 个章节任务失败；模型审计显示 403/403/400；分类汇总显示 6 条系统功能设计 | none | 实施最小修复并完成真实回测 |
 | 2026-07-31 04:10 CST | 修复前发布门禁 | degraded | PF-001, PF-002 | INC-001、INC-002 fixing | 10 模型池、健康冷却、费用边界、Prompt 预算、咨询上下文分类 | 161 项后端测试通过；前端构建、Docker 配置、敏感信息检查通过 | 生产尚未回测 | 部署并重试失败章节 |

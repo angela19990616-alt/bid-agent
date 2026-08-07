@@ -431,6 +431,8 @@ def generate_section(
             section_id,
             payload.instruction if payload else None,
             payload.case_reference_mode if payload else "balanced",
+            payload.min_chars if payload else 800,
+            payload.max_chars if payload else 5000,
         )
     except SectionNotFoundError as exc:
         raise AppError(404, "SECTION_NOT_FOUND", "未找到该章节。") from exc

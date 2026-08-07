@@ -62,6 +62,31 @@ def test_prompt_accepts_refinement_without_overriding_truth_rules():
     assert "不能覆盖事实边界" in messages[1]["content"]
 
 
+def test_prompt_applies_user_controlled_chapter_length():
+    messages = SectionService._messages(
+        "实施计划",
+        [{
+            "id": "requirement-1",
+            "normalized_text": "提交实施计划",
+            "quote": "供应商须提交实施计划。",
+        }],
+        min_chars=1800,
+        max_chars=3600,
+    )
+
+    assert "1800-3600 个中文字符" in messages[1]["content"]
+    assert "不得为凑字数" in messages[1]["content"]
+
+
+def test_length_review_reports_both_bounds_as_non_blocking():
+    short = SectionService.review_length("内容", 200, 500)
+    long = SectionService.review_length("内容" * 300, 200, 500)
+
+    assert short[0].finding_type == "chapter_too_short"
+    assert long[0].finding_type == "chapter_too_long"
+    assert short[0].severity == long[0].severity == "warning"
+
+
 def test_prompt_includes_tender_format_constraints():
     messages = SectionService._messages(
         "实施计划",

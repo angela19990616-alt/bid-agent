@@ -27,6 +27,13 @@ class ResponseSummary(BaseModel):
     risk: int = 0
 
 
+class TemplateOutlineItem(BaseModel):
+    title: str
+    level: int = Field(ge=1, le=5)
+    order: int = Field(ge=1)
+    source: str
+
+
 class WorkspaceResponse(BaseModel):
     id: UUID
     name: str
@@ -55,6 +62,7 @@ class WorkspaceResponse(BaseModel):
     template_fidelity: str | None = None
     template_required_fields: list[str] = Field(default_factory=list)
     template_field_values: dict[str, str] = Field(default_factory=dict)
+    template_outline: list[TemplateOutlineItem] = Field(default_factory=list)
     model_calls_used: int = 0
     model_calls_limit: int = 40
     model_tokens_used: int = 0

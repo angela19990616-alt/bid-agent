@@ -157,7 +157,11 @@ class SectionService:
         section_id: UUID,
         generation_instruction: str | None = None,
         case_reference_mode: str = "balanced",
+        min_chars: int = 800,
+        max_chars: int = 5000,
     ) -> dict:
+        if min_chars > max_chars:
+            raise SectionValidationError("章节最少字数不能大于最多字数。")
         section, requirements = self._load_generation_input(
             project_id,
             section_id,
@@ -261,6 +265,10 @@ class SectionService:
                 else None
             ),
             "case_reference_mode": case_reference_mode,
+            "length_constraint": {
+                "min_chars": min_chars,
+                "max_chars": max_chars,
+            },
             "format_constraints": section["format_constraints"],
         }
         self._create_job(
@@ -279,9 +287,11 @@ class SectionService:
                     section["format_constraints"],
                     memory_matches=memory_matches,
                     case_reference_mode=case_reference_mode,
+                    min_chars=min_chars,
+                    max_chars=max_chars,
                 ),
                 temperature=0.2,
-                max_tokens=5000,
+                max_tokens=min(8000, max(5000, int(max_chars * 0.8))),
                 task="writing",
                 workflow_run_id=workflow_run_id,
             ).strip()
@@ -312,6 +322,9 @@ class SectionService:
             rule_snapshot=compliance_rules.snapshot(),
         )
         findings = self.review(content, compliance_rules)
+        findings.extend(
+            self.review_length(content, min_chars, max_chars)
+        )
         provenance, case_usage = ProvenanceService.build(
             section_title=section["title"],
             content=content,
@@ -635,6 +648,27 @@ class SectionService:
         return findings
 
     @staticmethod
+    def review_length(
+        content: str,
+        min_chars: int,
+        max_chars: int,
+    ) -> list[ReviewFinding]:
+        length = len(re.sub(r"\s+", "", content))
+        if length < min_chars:
+            return [ReviewFinding(
+                "chapter_too_short",
+                "warning",
+                f"本章约 {length} 字，低于人工设定的 {min_chars} 字下限。",
+            )]
+        if length > max_chars:
+            return [ReviewFinding(
+                "chapter_too_long",
+                "warning",
+                f"本章约 {length} 字，超过人工设定的 {max_chars} 字上限。",
+            )]
+        return []
+
+    @staticmethod
     def _messages(
         title: str,
         requirements: list[dict],
@@ -644,6 +678,8 @@ class SectionService:
         format_constraints: list[dict] | None = None,
         memory_matches: list[ProposalMemoryMatch] | None = None,
         case_reference_mode: str = "balanced",
+        min_chars: int = 800,
+        max_chars: int = 5000,
     ) -> list[dict[str, str]]:
         active = rules or RuleEngine().load_default("writing")
         matched_items = matches or []
@@ -740,6 +776,8 @@ class SectionService:
             active.content["user_template"].format(
                 section_title=title
             )
+            + f"\n正文长度控制：{min_chars}-{max_chars} 个中文字符。"
+            + "应保证论证充分，但不得为凑字数重复内容或编造事实。"
             + refinement
             + f"\n\n响应事项证据：\n{evidence}"
             + f"\n\n招标文件硬性格式与必写内容：\n{format_evidence}"

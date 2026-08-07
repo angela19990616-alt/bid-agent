@@ -50,6 +50,7 @@ class TemplateDescriptor:
     placeholders: tuple[str, ...]
     field_labels: tuple[str, ...]
     strict_reasons: tuple[str, ...]
+    outline: tuple[dict[str, Any], ...] = ()
 
     def snapshot(self) -> dict[str, Any]:
         return asdict(self)
@@ -196,6 +197,7 @@ class ResponseTemplateService:
         }))
         labels = self._fillable_labels(document)
         strict = tuple(marker for marker in STRICT_MARKERS if marker in candidate_text)
+        outline = self._extract_outline(document, start_block)
         confidence = 0.0
         if detected:
             confidence = min(
@@ -219,7 +221,84 @@ class ResponseTemplateService:
             placeholders=placeholders,
             field_labels=labels,
             strict_reasons=strict,
+            outline=outline,
         )
+
+    @classmethod
+    def _extract_outline(
+        cls,
+        document: DocumentType,
+        start_block: int | None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Extract an ordered, user-facing outline up to five levels deep."""
+        if start_block is None:
+            return ()
+        items: list[dict[str, Any]] = []
+        blocks = list(document.element.body.iterchildren())
+        for block_index, block in enumerate(blocks[start_block:], start=start_block):
+            if not block.tag.endswith("}p"):
+                continue
+            paragraph = Paragraph(block, document)
+            title = re.sub(r"\s+", " ", paragraph.text).strip()
+            if not title or len(title) > 160:
+                continue
+            compact = title.replace(" ", "")
+            if (
+                block_index > start_block
+                and re.match(
+                    r"^第[一二三四五六七八九十百零〇\d]+章",
+                    compact,
+                )
+            ):
+                break
+            if title.endswith(("。", "；", ";")):
+                continue
+            level, source = cls._heading_level(paragraph, title)
+            if level is None:
+                continue
+            items.append(
+                {
+                    "title": title,
+                    "level": min(5, max(1, level)),
+                    "order": len(items) + 1,
+                    "source": source,
+                    "source_block": block_index,
+                }
+            )
+        return tuple(items)
+
+    @staticmethod
+    def _heading_level(
+        paragraph: Paragraph,
+        title: str,
+    ) -> tuple[int | None, str]:
+        style_name = ""
+        try:
+            style_name = paragraph.style.name or ""
+        except (AttributeError, KeyError):
+            style_name = ""
+        style_match = re.search(r"(?:Heading|标题)\s*([1-5])", style_name, re.I)
+        if style_match:
+            return int(style_match.group(1)), "paragraph_style"
+        compact = title.replace(" ", "")
+        if re.match(r"^第[一二三四五六七八九十百零〇\d]+章", compact):
+            return 1, "numbering"
+        if re.match(r"^第[一二三四五六七八九十百零〇\d]+节", compact):
+            return 2, "numbering"
+        decimal = re.match(r"^(\d+(?:[.．]\d+){1,4})(?:[\s、.]|$)", compact)
+        if decimal:
+            return decimal.group(1).replace("．", ".").count(".") + 1, "numbering"
+        if re.match(r"^[一二三四五六七八九十百]+、", compact):
+            return 1, "numbering"
+        if re.match(r"^[（(][一二三四五六七八九十百]+[）)]", compact):
+            return 2, "numbering"
+        if re.match(r"^\d+[、.]", compact):
+            return 2, "numbering"
+        if re.match(r"^[（(]\d+[）)]", compact):
+            return 3, "numbering"
+        if re.match(r"^[①②③④⑤⑥⑦⑧⑨⑩]", compact):
+            return 4, "numbering"
+        return None, "none"
 
     def fill_docx(
         self,
