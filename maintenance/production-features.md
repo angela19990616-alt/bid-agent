@@ -16,6 +16,7 @@ Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `ret
 
 | id | opened_at | feature_id | source | severity | symptom | affected_scope | reproduction | status | root_cause_or_hypothesis | fix | verification | owner | next_action | updated_at |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| INC-011 | 2026-08-09 | PF-004, PF-005 | 用户本地实测 | sev2 | 已有表格模板却提示未识别格式并处理失败 | 最新服务类磋商DOCX严格回填 | 上传后等待后台规划 | closed | Worker仍运行旧镜像并拒绝零写作章节；重复的“响应文件格式”标题又因空格差异误命中前部说明章节 | 重建Backend/Worker加载字段型模板修复；正式章节候选按目录/说明排除并优先后部正文；Word XML文本只读取叶节点避免标题重复 | 同一真实文件命中点由117移至496，识别17表格、28字段；项目恢复outline_ready/strict_template；17项模板测试通过，五容器和健康接口正常 | codex | 业务人员刷新后直接审核28个自动匹配字段并导出 | 2026-08-09 |
 | INC-001 | 2026-07-31 03:53 CST | PF-002 | 用户反馈与生产日志 | sev2 | “章节生成失败，请检查模型配置或稍后重试” | 天津轨道交通方案至少 3 个章节 | 点击生成章节；生产连续返回 502 | closed | `qwen3.7-plus`、`qwen-plus-2025-07-28` 无权限；`qwen-max` 输入超过 30720 | 已实现 10 模型池、高级模型优先、零消耗失败冷却、计费失败上限和 24,000 字符 Prompt 预算 | 生产真实失败章节由 qwen-max 一次成功，2,298 字，0 条校核问题；本地 164 项测试通过 | codex | 按发布周期持续监控 | 2026-07-31 |
 | INC-002 | 2026-07-31 03:53 CST | PF-001 | 用户反馈与分类汇总 | sev3 | 规划咨询项目分类不符合方案编写逻辑 | 最新天津轨道交通项目 | 查看响应事项分类汇总 | closed | 分类器缺少项目上下文，且 Reviewer 未强制纠正高置信模型的软件类误判 | 已增加咨询项目上下文覆盖和 Reviewer 确定性纠正；原位重分类同步未生成目录 | 83 条真实响应事项重分类；6 条误分全部纠正，系统功能误分 0、无章节映射 0；10 章整本生成导出成功 | codex | 按发布周期持续监控 | 2026-07-31 |
 | INC-003 | 2026-07-31 | PF-001 | 用户反馈 | sev3 | 已忽略事项恢复“写入方案”后未回到推荐目录 | 人工确认与目录同步 | 先忽略一条方案事项，再恢复写入 | closed | 人工反馈只恢复 Requirement 状态，未重建草稿章节关联，前端也未刷新目录 | 增加草稿目录双向同步；忽略时移除关联，恢复时按方案章节重新关联并刷新前端 | 后端 179 项测试、前端构建及 2 项页面测试通过 | codex | 随下一次生产发布回测 | 2026-07-31 |
@@ -33,6 +34,7 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 
 | run_at | trigger | overall_health | checked_items | incidents_changed | fixes | evidence | blockers | next_action |
 |---|---|---|---|---|---|---|---|---|
+| 2026-08-09 | 重复模板标题与本地旧镜像修复 | healthy | PF-004, PF-005 | INC-011 closed | 正式响应章节优先选择后部正文；Word XML标题去重；重建Backend/Worker；原失败项目本地恢复 | 同一真实DOCX识别17表格、28字段，正式起点496；项目outline_ready/strict_template；17项模板测试通过，服务健康 | 未调用外部模型；未部署ECS | 刷新本地页面审核字段来源与实际Word预览 |
 | 2026-08-08 | 字段型表格模板误判修复 | healthy | PF-004, PF-005 | INC-008 closed | 有字段/表格模板即严格回填；零写作章节不再失败或生成虚构目录；无模板分支保持Requirement目录规划 | 最新DOCX识别6标题、36字段；267项测试和完整门禁通过；ECS `563addaf` 部署后自动恢复原失败项目，状态outline_ready且队列成功 | none | 业务人员刷新页面后审核字段来源并导出原格式Word |
 | 2026-08-08 | 504 与 ETA 历史污染修复 | healthy | PF-001, PF-002 | INC-007 closed | 单章生成从同步 HTTP 改为可恢复后台队列；ETA 排除任何失败/超时项目，只取近30天最多12个干净成功样本 | 生产任务从34个成功历史中筛出10个干净样本；ECS `da6fa7f4` 五服务健康，部署后日志无504或应用错误；265项测试与完整门禁通过 | none | 持续记录后续干净成功样本并滚动替换旧数据 |
 | 2026-08-08 | 严格回填两分支正式部署 | healthy | PF-001, PF-004, PF-005 | INC-006 monitoring | 检查模板/无模板共享链路与静态死代码；保留必要的解析、证据、Review、导出共用模块；部署默认分支修正为 `codex/v2-response-map` | 263 项后端、前端生产构建、架构、Compose、敏感信息门禁通过；ECS 提交 `1fb68272`，新 backend/worker/frontend 启动，公网首页和健康接口 200，邀请码仍启用；备份 `postgres-20260808T142353Z.sql` | PDF 模板仍属于保真参照模式，不能冒充 DOCX 坐标级自动回填；真实企业 API 尚未接入 | 用下一份真实 DOCX 模板观察自动匹配质量和人工审核耗时 |

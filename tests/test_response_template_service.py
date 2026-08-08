@@ -74,6 +74,37 @@ def test_extracts_response_template_outline_up_to_five_levels():
     assert [item["level"] for item in descriptor.outline] == [1, 1, 2, 3, 4, 5]
 
 
+def test_repeated_response_format_title_prefers_later_real_chapter():
+    document = Document()
+    document.add_paragraph("第六章 响应文件格式")
+    document.add_heading("三、响应文件的编制", level=1)
+    document.add_paragraph(
+        "说明：本部分格式用于询问函，不属于响应文件格式的组成部分。"
+    )
+    document.add_heading("第五章 合同条款", level=1)
+    document.add_paragraph("第六章  响应文件格式")
+    document.add_heading("一、响应函", level=1)
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "供应商名称"
+    table.cell(0, 1).text = ""
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "采购文件.docx", stream.getvalue()
+    )
+
+    assert descriptor.marker_text == "第六章  响应文件格式"
+    assert [item["title"] for item in descriptor.outline] == [
+        "第六章 响应文件格式",
+        "一、响应函",
+    ]
+    assert any(
+        item["field_key"] == "bidder_name"
+        for item in descriptor.fields
+    )
+
+
 def test_fills_verified_values_and_keeps_original_table(tmp_path):
     service = ResponseTemplateService()
     content = _template_bytes()

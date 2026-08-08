@@ -192,15 +192,8 @@ class ResponseTemplateService:
         marker_index = (
             min(
                 marker_candidates,
-                key=lambda index: (
-                    0 if re.match(
-                        r"^第[一二三四五六七八九十百\d]+章",
-                        texts[index].replace(" ", ""),
-                    ) else 1,
-                    len(texts[index])
-                    + (200 if "HYPERLINK" in texts[index] or "PAGEREF" in texts[index] else 0)
-                    + (100 if "本章所制" in texts[index] else 0),
-                    -index,
+                key=lambda index: self._marker_candidate_rank(
+                    texts[index], index
                 ),
             )
             if marker_candidates else None
@@ -260,6 +253,32 @@ class ResponseTemplateService:
             fields=fields,
             end_block=end_block,
             font_profile=font_profile,
+        )
+
+    @staticmethod
+    def _marker_candidate_rank(text: str, index: int) -> tuple[int, int, int, int]:
+        """Prefer the real response chapter over TOC/prose repetitions.
+
+        Procurement documents commonly repeat the response-format title in
+        the table of contents, preparation instructions and explanatory
+        notes.  A later formal chapter heading is a stronger boundary signal
+        than a slightly shorter earlier spelling (for example, one versus two
+        spaces between the chapter number and title).
+        """
+        compact = re.sub(r"\s+", "", text)
+        is_chapter_heading = bool(re.match(
+            r"^第[一二三四五六七八九十百零〇\d]+章(?:投标|响应|报价|资格|技术|附件)",
+            compact,
+        ))
+        is_explanatory = bool(re.match(
+            r"^(?:说明|备注|注)[：:]?", compact
+        )) or "不属于响应文件格式" in compact
+        is_toc = "HYPERLINK" in text or "PAGEREF" in text
+        return (
+            0 if is_chapter_heading else 1,
+            1 if is_toc or is_explanatory else 0,
+            -index,
+            len(text),
         )
 
     @classmethod
@@ -639,7 +658,14 @@ class ResponseTemplateService:
 
     @staticmethod
     def _block_text(block) -> str:
-        return "".join(node.text or "" for node in block.iter()).strip()
+        # python-docx exposes aggregate text on container nodes as well as on
+        # their child ``w:t`` nodes. Walking every element therefore repeats
+        # the same heading two or three times and makes boundary ranking depend
+        # on XML shape. Read only Word text leaves.
+        return "".join(
+            node.text or ""
+            for node in block.xpath(".//*[local-name()='t']")
+        ).strip()
 
     @staticmethod
     def _retain_block_range(
