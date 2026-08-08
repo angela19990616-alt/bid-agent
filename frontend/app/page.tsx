@@ -379,6 +379,7 @@ function WordDocumentPreview({ workspace }: { workspace: Workspace }) {
 
   useEffect(() => {
     let cancelled = false;
+    let resizeObserver: ResizeObserver | null = null;
     setPreviewState("loading");
     void (async () => {
       try {
@@ -399,12 +400,29 @@ function WordDocumentPreview({ workspace }: { workspace: Workspace }) {
           ignoreHeight: false,
           ignoreFonts: false,
         });
+        const updateScale = () => {
+          if (!containerRef.current) return;
+          const page = containerRef.current.querySelector<HTMLElement>("section.docx");
+          if (!page) return;
+          const availableWidth = Math.max(280, containerRef.current.clientWidth - 24);
+          const naturalWidth = page.offsetWidth || 794;
+          containerRef.current.style.setProperty(
+            "--word-preview-scale",
+            String(Math.min(1, availableWidth / naturalWidth)),
+          );
+        };
+        updateScale();
+        resizeObserver = new ResizeObserver(updateScale);
+        resizeObserver.observe(containerRef.current);
         if (!cancelled) setPreviewState("ready");
       } catch {
         if (!cancelled) setPreviewState("error");
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      resizeObserver?.disconnect();
+    };
   }, [workspace.id, revision]);
 
   return <div className="word-preview-shell">
@@ -454,6 +472,8 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [evidenceItem, setEvidenceItem] = useState<TemplateFieldDecision | null>(null);
+  const [editingFieldKey, setEditingFieldKey] = useState("");
+  const [editingFieldValue, setEditingFieldValue] = useState("");
 
   const activeSection = sections.find((item) => item.id === activeSectionId);
   const feedbackSummary = useMemo(() => ({
@@ -984,7 +1004,7 @@ export default function Home() {
     });
   }
 
-  async function reviewTemplateField(fieldKey: string, action: "confirm" | "reset") {
+  async function reviewTemplateField(fieldKey: string, action: "confirm" | "reset", value?: string) {
     if (!workspace) return;
     await run(action === "confirm" ? "正在确认字段" : "正在恢复审核", async () => {
       const updated = await request<Workspace>(
@@ -992,12 +1012,19 @@ export default function Home() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ field_key: fieldKey, action }),
+          body: JSON.stringify({ field_key: fieldKey, action, value }),
         },
       );
       setWorkspace(updated);
+      setEditingFieldKey("");
+      setEditingFieldValue("");
       setNotice(action === "confirm" ? "字段已确认并记录来源。" : "字段已恢复为待审核状态。");
     });
+  }
+
+  function startEditingTemplateField(item: TemplateFieldDecision) {
+    setEditingFieldKey(item.field_key);
+    setEditingFieldValue(item.value ?? "");
   }
 
   if (accessState !== "authorized") {
@@ -1428,7 +1455,7 @@ export default function Home() {
                         <WordDocumentPreview workspace={workspace} />
                       </section>
                       <section className="fill-review-pane">
-                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验来源并导出</h3><p>系统自动匹配，业务人员只需审核，不重复填写。</p></header>
+                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验来源并导出</h3><p>系统优先自动匹配；需要调整时可人工修改，修改值会记录为人工确认来源。</p></header>
                         <div className="font-fidelity-note">
                           <b>已自动继承原模板字体</b>
                           <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>
@@ -1440,11 +1467,23 @@ export default function Home() {
                           {(workspace.template_field_decisions ?? []).map((item) => (
                             <article key={item.field_key} className={`fill-decision ${item.status.toLowerCase()}`}>
                               <div><strong>{item.label}</strong><span>{fillStatusLabels[item.status]}</span></div>
-                              <p>{item.value || "尚未提供"}</p><small>{item.reason}</small>
+                              {editingFieldKey === item.field_key ? (
+                                <div className="field-edit-form">
+                                  <input aria-label={`修改${item.label}`} maxLength={500} value={editingFieldValue} onChange={(event) => setEditingFieldValue(event.target.value)} autoFocus />
+                                  <div>
+                                    <button className="secondary compact" disabled={Boolean(busy) || !editingFieldValue.trim()} onClick={() => reviewTemplateField(item.field_key, "confirm", editingFieldValue.trim())}>保存并确认</button>
+                                    <button className="text-button" disabled={Boolean(busy)} onClick={() => { setEditingFieldKey(""); setEditingFieldValue(""); }}>取消</button>
+                                  </div>
+                                </div>
+                              ) : <p>{item.value || "尚未提供"}</p>}
+                              <small>{item.reason}</small>
                               {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)}</small>}
                               {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
-                              {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "confirm")}>确认该字段</button>}
-                              {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "reset")}>重新审核</button>}
+                              {editingFieldKey !== item.field_key && <div className="field-review-actions">
+                                {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "confirm")}>确认该字段</button>}
+                                <button className="text-button" disabled={Boolean(busy)} onClick={() => startEditingTemplateField(item)}>修改</button>
+                                {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "reset")}>重新审核</button>}
+                              </div>}
                             </article>
                           ))}
                         </div>

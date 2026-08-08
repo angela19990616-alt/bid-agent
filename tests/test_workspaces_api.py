@@ -176,6 +176,47 @@ def test_verified_template_fields_are_saved_through_workspace_flow(monkeypatch):
     assert result["id"] == service.id
 
 
+def test_manual_template_field_edit_is_confirmed_through_workspace_flow(
+    monkeypatch,
+):
+    workspace_id = uuid4()
+    calls = {}
+    service = FakeWorkspaceService()
+    monkeypatch.setattr(
+        workspace_api,
+        "GenerationProfileService",
+        SimpleNamespace(
+            review_template_field=lambda item_id, key, action, value=None: (
+                calls.update(
+                    workspace_id=item_id,
+                    field_key=key,
+                    action=action,
+                    value=value,
+                )
+            )
+        ),
+    )
+
+    result = workspace_api.review_workspace_template_field(
+        workspace_id,
+        TemplateFieldReviewUpdate(
+            field_key="bidder_name",
+            action="confirm",
+            value="人工核验后的供应商名称",
+        ),
+        None,
+        service,
+    )
+
+    assert calls == {
+        "workspace_id": workspace_id,
+        "field_key": "bidder_name",
+        "action": "confirm",
+        "value": "人工核验后的供应商名称",
+    }
+    assert result["id"] == service.id
+
+
 def test_manual_strategy_switch_reconciles_draft_outline(monkeypatch):
     calls = {}
     requirement_id = uuid4()

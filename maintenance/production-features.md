@@ -78,3 +78,4 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 | 2026-08-08 | 实际Word预览与原文定位优化 | healthy | PF-004, PF-005 | INC-009 closed | 左侧直接渲染后端实时生成的回填审阅DOCX，右侧集中人工核验与Word导出；案例证据增加可读段落位置，站内弹窗高亮命中原文 | 真实严格模板生成113KB有效DOCX并渲染19页；后端全量测试、前端生产构建与2项页面回归通过 | 未修改生产环境 | 本地试用确认后再部署ECS |
 | 2026-08-09 | MCP真实验收门禁固化 | maintenance | PF-001, PF-002, PF-004, PF-005 | none | 前端修改必须通过浏览器MCP真实点击、网络与可见性检查；文档输出必须渲染实际生成文件并核查版式 | AGENTS.md新增独立门禁，明确环境受限时不得宣称完整验收 | 当前浏览器MCP尚未成功完成最新Word预览交互验收 | 下一次前端交付先执行MCP门禁再汇报完成 |
 | 2026-08-09 | 本地工作台恢复 | healthy | PF-001, PF-002, PF-004, PF-005 | INC-010 closed | 启动原有 Colima 实例并恢复现有 Docker 容器 | 五容器运行、Backend healthy；浏览器 MCP 打开本地首页，上传入口正常且无控制台错误 | none | 保持本地 Colima 运行；下次故障先查 Docker daemon |
+| 2026-08-09 | 回填字段人工修改与预览自适应 | maintenance | PF-004, PF-005 | none | 保留企业库/案例证据自动匹配；每个已识别字段可人工修改并以人工确认来源留痕；Word 分页按容器宽度自适应 | diff/compile 通过；API 增加人工修改传递回归 | Mac 当前高负载导致完整构建无输出 | 提交后在 ECS Docker 完成后端、前端与真实页面验收 |

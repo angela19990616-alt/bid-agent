@@ -247,6 +247,7 @@ def review_workspace_template_field(
             workspace_id,
             payload.field_key,
             payload.action,
+            payload.value,
         )
         return service.get(workspace_id)
     except ValueError as exc:

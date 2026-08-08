@@ -333,11 +333,35 @@ class GenerationProfileService:
         project_id: UUID,
         field_key: str,
         action: str,
+        value: str | None = None,
     ) -> GenerationProfile:
         profile = GenerationProfileService.get(project_id)
         key = field_key.strip()
         evidence: dict[str, Any] = {}
-        if key not in profile.template_field_values:
+        manual_value = value.strip() if value is not None else None
+        known_keys = set(ResponseTemplateService.required_fields(
+            profile.template_descriptor
+        )) | set(profile.template_field_values)
+        if key not in known_keys:
+            raise ValueError("模板字段不存在，不能新增未识别字段。")
+        if manual_value and action != "confirm":
+            raise ValueError("只有确认操作可以保存人工修改值。")
+        if manual_value:
+            previous_value = profile.template_field_values.get(key)
+            values = dict(profile.template_field_values)
+            values[key] = manual_value
+            GenerationProfileService.update_template_fields(project_id, values)
+            profile = GenerationProfileService.get(project_id)
+            evidence = {
+                "source_reference": "人工审核修改",
+                "evidence_title": "人工审核修改",
+                "evidence_excerpt": manual_value,
+                "evidence_location": "当前项目人工审核",
+                "evidence_match_count": 1,
+                "input_method": "manual_edit",
+                "previous_value": previous_value,
+            }
+        elif key not in profile.template_field_values:
             decisions = GenerationProfileService.template_field_decisions(
                 profile,
                 enterprise_facts=EnterpriseFactResolver().resolve(project_id),
@@ -373,7 +397,11 @@ class GenerationProfileService:
                 "value": profile.template_field_values[key],
                 "reviewed_by": "current_session",
                 "reviewed_at": datetime.now().astimezone().isoformat(),
-                **{name: value for name, value in evidence.items() if value},
+                **{
+                    name: evidence_value
+                    for name, evidence_value in evidence.items()
+                    if evidence_value
+                },
             }
         elif action == "reset":
             reviews.pop(key, None)

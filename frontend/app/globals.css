@@ -348,6 +348,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .fill-decision small { color: var(--muted); }
 .fill-decision .compact { width: auto; justify-self: start; padding: 6px 10px; }
 .fill-decision .text-button { justify-self: start; border: 0; background: transparent; color: var(--green-700); padding: 2px 0; }
+.field-review-actions, .field-edit-form > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.field-edit-form { display: grid; gap: 8px; }
+.field-edit-form input { width: 100%; padding: 9px 10px; border: 1px solid #b8c9c0; border-radius: 7px; color: var(--ink); background: white; font: inherit; }
+.field-edit-form input:focus { border-color: var(--green-700); outline: 2px solid rgba(48, 104, 78, .1); }
 .strict-fill-workbench { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr); align-items: start; gap: 18px; }
 .fill-preview-pane, .fill-review-pane { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: #f8faf8; }
 .fill-preview-pane { position: sticky; top: 18px; overflow: hidden; }
@@ -361,7 +365,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .word-preview-status { position: sticky; z-index: 2; top: 0; padding: 10px 12px; border-radius: 8px; color: #365046; background: rgba(255, 255, 255, .94); text-align: center; box-shadow: 0 2px 10px rgba(0, 0, 0, .08); }
 .word-preview-status.error { color: #8b3f38; }
 .word-preview-canvas { min-height: 420px; }
-.word-preview-canvas .docx-wrapper { padding: 12px 0 !important; background: transparent !important; }
+.word-preview-canvas .docx-wrapper { width: max-content; min-width: 100%; padding: 12px 0 !important; background: transparent !important; zoom: var(--word-preview-scale, .82); }
 .word-preview-canvas .docx-wrapper > section.docx { margin: 0 auto 16px !important; box-shadow: 0 5px 22px rgba(24, 49, 37, .16); }
 .evidence-open-button { width: fit-content; padding: 6px 9px; border: 1px solid #b8c9c0; border-radius: 6px; color: var(--green-800); background: white; font-weight: 700; }
 .strict-export-button { width: 100%; margin-top: 14px; }

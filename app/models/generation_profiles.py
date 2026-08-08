@@ -24,6 +24,7 @@ class TemplateFieldsUpdate(BaseModel):
 class TemplateFieldReviewUpdate(BaseModel):
     field_key: str = Field(min_length=1, max_length=80)
     action: Literal["confirm", "reset"]
+    value: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class TemplateFieldDecisionResponse(BaseModel):
