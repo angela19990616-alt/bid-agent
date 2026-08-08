@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from app.services.processing_eta_service import ProcessingEtaService
+from app.services.processing_eta_service import (
+    ProcessingEtaService,
+    _CLEAN_SAMPLE_QUERY,
+)
 
 
 def test_eta_uses_completed_local_workloads_and_current_source_count(
@@ -58,3 +61,15 @@ def test_completed_workspace_has_zero_remaining_time(monkeypatch):
 
     assert estimate.remaining_seconds_low == 0
     assert estimate.remaining_seconds_high == 0
+
+
+def test_eta_history_excludes_failed_timeout_and_old_runs():
+    query = " ".join(_CLEAN_SAMPLE_QUERY.split()).lower()
+
+    assert "wr.status = 'succeeded'" in query
+    assert "pj.status = 'succeeded'" in query
+    assert "failed_wr.status = 'failed'" in query
+    assert "failed_job.status = 'failed'" in query
+    assert "interval '30 days'" in query
+    assert "limit 12" in query
+    assert "pj.finished_at - pj.created_at" in query

@@ -12,6 +12,7 @@ from app.database.db import connect
 
 WORKSPACE_PIPELINE_JOB = "workspace_pipeline"
 AUTONOMOUS_DRAFT_JOB = "autonomous_draft"
+SECTION_GENERATION_JOB = "section_generation"
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,11 @@ class WorkspaceJob:
     @property
     def workflow_run_id(self) -> UUID | None:
         value = self.input_snapshot.get("workflow_run_id")
+        return UUID(value) if value else None
+
+    @property
+    def section_id(self) -> UUID | None:
+        value = self.input_snapshot.get("section_id")
         return UUID(value) if value else None
 
 
@@ -102,6 +108,55 @@ class WorkspaceJobService:
                 )
         return job_id
 
+    def enqueue_section_generation(
+        self,
+        workspace_id: UUID,
+        section_id: UUID,
+        *,
+        instruction: str | None,
+        case_reference_mode: str,
+        min_chars: int,
+        max_chars: int,
+    ) -> UUID:
+        snapshot = json.dumps({
+            "section_id": str(section_id),
+            "instruction": instruction,
+            "case_reference_mode": case_reference_mode,
+            "min_chars": min_chars,
+            "max_chars": max_chars,
+        }, ensure_ascii=False)
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id FROM processing_jobs
+                    WHERE project_id = %s AND job_type = %s
+                      AND status IN ('queued', 'running')
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (workspace_id, SECTION_GENERATION_JOB),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    return existing["id"]
+                job_id = uuid4()
+                cursor.execute(
+                    """
+                    INSERT INTO processing_jobs (
+                        id, project_id, job_type, status, progress,
+                        input_snapshot
+                    )
+                    VALUES (%s, %s, %s, 'queued', 0, %s::jsonb)
+                    """,
+                    (
+                        job_id,
+                        workspace_id,
+                        SECTION_GENERATION_JOB,
+                        snapshot,
+                    ),
+                )
+        return job_id
+
     def claim_next(self) -> WorkspaceJob | None:
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
@@ -123,7 +178,11 @@ class WorkspaceJobService:
                     RETURNING jobs.id, jobs.project_id, jobs.job_type,
                               jobs.input_snapshot
                     """,
-                    ([WORKSPACE_PIPELINE_JOB, AUTONOMOUS_DRAFT_JOB],),
+                    ([
+                        WORKSPACE_PIPELINE_JOB,
+                        AUTONOMOUS_DRAFT_JOB,
+                        SECTION_GENERATION_JOB,
+                    ],),
                 )
                 row = cursor.fetchone()
         if row is None:
@@ -192,7 +251,11 @@ class WorkspaceJobService:
                     """,
                     (
                         workspace_id,
-                        [WORKSPACE_PIPELINE_JOB, AUTONOMOUS_DRAFT_JOB],
+                        [
+                            WORKSPACE_PIPELINE_JOB,
+                            AUTONOMOUS_DRAFT_JOB,
+                            SECTION_GENERATION_JOB,
+                        ],
                     ),
                 )
                 row = cursor.fetchone()
@@ -211,6 +274,10 @@ class WorkspaceJobService:
                       AND status = 'running'
                       AND updated_at < NOW() - %s
                     """,
-                    ([WORKSPACE_PIPELINE_JOB, AUTONOMOUS_DRAFT_JOB], after),
+                    ([
+                        WORKSPACE_PIPELINE_JOB,
+                        AUTONOMOUS_DRAFT_JOB,
+                        SECTION_GENERATION_JOB,
+                    ], after),
                 )
                 return cursor.rowcount

@@ -62,7 +62,6 @@ from app.services.requirement_service import (
     RequirementValidationError,
 )
 from app.services.section_service import (
-    SectionGenerationError,
     SectionNotFoundError,
     SectionService,
     SectionValidationError,
@@ -452,7 +451,8 @@ def replace_outline(
 
 @router.post(
     "/{workspace_id}/sections/{section_id}/generate",
-    response_model=SectionResponse,
+    response_model=WorkspaceResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 def generate_section(
     workspace_id: UUID,
@@ -462,27 +462,24 @@ def generate_section(
 ):
     try:
         ConflictService.assert_section_unblocked(workspace_id, section_id)
-        return SectionService().generate(
+        SectionService().get(workspace_id, section_id)
+        WorkspaceJobService().enqueue_section_generation(
             workspace_id,
             section_id,
-            payload.instruction if payload else None,
-            payload.case_reference_mode if payload else "balanced",
-            payload.min_chars if payload else 800,
-            payload.max_chars if payload else 5000,
+            instruction=payload.instruction if payload else None,
+            case_reference_mode=(
+                payload.case_reference_mode if payload else "balanced"
+            ),
+            min_chars=payload.min_chars if payload else 800,
+            max_chars=payload.max_chars if payload else 5000,
         )
+        return WorkspaceService().get(workspace_id)
     except SectionNotFoundError as exc:
         raise AppError(404, "SECTION_NOT_FOUND", "未找到该章节。") from exc
     except SectionValidationError as exc:
         raise AppError(422, "SECTION_INVALID", str(exc)) from exc
     except ConflictResolutionError as exc:
         raise AppError(409, "SECTION_CONFLICT_PENDING", str(exc)) from exc
-    except SectionGenerationError as exc:
-        raise AppError(
-            502,
-            "SECTION_GENERATION_FAILED",
-            str(exc),
-            {"job_id": str(exc.job_id), "retryable": True},
-        ) from exc
 
 
 @router.post(

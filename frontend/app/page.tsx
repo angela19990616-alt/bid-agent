@@ -779,7 +779,7 @@ export default function Home() {
   async function generateSection(section: SectionItem) {
     if (!workspace) return;
     await run(`正在生成《${section.title}》`, async () => {
-      const generated = await request<SectionItem>(
+      let current = await request<Workspace>(
         `/workspaces/${workspace.id}/sections/${section.id}/generate`,
         {
           method: "POST",
@@ -792,7 +792,24 @@ export default function Home() {
           }),
         },
       );
-      setSections((items) => items.map((item) => item.id === generated.id ? generated : item));
+      while (
+        current.processing_job_type === "section_generation"
+        && ["queued", "running"].includes(current.processing_job_status ?? "")
+      ) {
+        setBusy(`正在后台生成《${section.title}》 · ${current.processing_job_progress}%`);
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        current = await request<Workspace>(`/workspaces/${workspace.id}`);
+      }
+      if (current.processing_job_status === "failed") {
+        throw new Error(
+          current.processing_error_message
+          ?? "章节生成失败，已保留现有内容，可继续重试。",
+        );
+      }
+      const generated = current.outline.find((item) => item.id === section.id);
+      if (!generated?.current_version) throw new Error("章节生成未完成，请稍后重试。");
+      setWorkspace(current);
+      setSections(current.outline);
       setActiveSectionId(generated.id);
       setEditorContent(generated.current_version?.content ?? "");
       setGenerationInstruction("");

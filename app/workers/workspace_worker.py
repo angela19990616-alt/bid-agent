@@ -7,7 +7,11 @@ import time
 from app.services.workspace_job_service import WorkspaceJobService
 from app.services.workspace_service import WorkspaceService
 from app.services.autonomous_draft_service import AutonomousDraftService
-from app.services.workspace_job_service import AUTONOMOUS_DRAFT_JOB
+from app.services.section_service import SectionService
+from app.services.workspace_job_service import (
+    AUTONOMOUS_DRAFT_JOB,
+    SECTION_GENERATION_JOB,
+)
 
 
 LOGGER = logging.getLogger("bid-agent.workspace-worker")
@@ -47,6 +51,17 @@ def run() -> None:
         try:
             if job.job_type == AUTONOMOUS_DRAFT_JOB:
                 AutonomousDraftService().run(job.workspace_id, job.id)
+            elif job.job_type == SECTION_GENERATION_JOB:
+                if job.section_id is None:
+                    raise ValueError("章节生成任务缺少章节引用。")
+                SectionService().generate(
+                    job.workspace_id,
+                    job.section_id,
+                    job.input_snapshot.get("instruction"),
+                    job.input_snapshot.get("case_reference_mode", "balanced"),
+                    int(job.input_snapshot.get("min_chars", 800)),
+                    int(job.input_snapshot.get("max_chars", 5000)),
+                )
             else:
                 if job.document_id is None or job.workflow_run_id is None:
                     raise ValueError("文档处理任务缺少必要引用。")

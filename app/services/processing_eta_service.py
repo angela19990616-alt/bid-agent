@@ -10,6 +10,43 @@ from psycopg.rows import dict_row
 from app.database.db import connect
 
 
+_CLEAN_SAMPLE_QUERY = """
+    SELECT
+        EXTRACT(EPOCH FROM (pj.finished_at - pj.created_at))
+            AS duration_seconds,
+        COUNT(DISTINCT sc.id)::INTEGER AS source_count
+    FROM workflow_runs wr
+    JOIN processing_jobs pj
+      ON pj.project_id = wr.project_id
+     AND pj.job_type = 'workspace_pipeline'
+     AND pj.input_snapshot->>'workflow_run_id' = wr.id::TEXT
+    JOIN projects p ON p.id = wr.project_id
+    JOIN documents d ON d.project_id = p.id
+    JOIN source_chunks sc ON sc.document_id = d.id
+    WHERE p.id <> %s
+      AND wr.status = 'succeeded'
+      AND wr.finished_at IS NOT NULL
+      AND pj.status = 'succeeded'
+      AND pj.finished_at IS NOT NULL
+      AND wr.finished_at >= NOW() - INTERVAL '30 days'
+      AND NOT EXISTS (
+          SELECT 1 FROM workflow_runs failed_wr
+          WHERE failed_wr.project_id = p.id
+            AND failed_wr.status = 'failed'
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM processing_jobs failed_job
+          WHERE failed_job.project_id = p.id
+            AND failed_job.status = 'failed'
+      )
+    GROUP BY wr.id, pj.id, pj.created_at, pj.finished_at
+    HAVING EXTRACT(EPOCH FROM (pj.finished_at - pj.created_at))
+               BETWEEN 10 AND 7200
+    ORDER BY pj.finished_at DESC
+    LIMIT 12
+"""
+
+
 @dataclass(frozen=True)
 class ProcessingEstimate:
     remaining_seconds_low: int | None
@@ -74,27 +111,7 @@ class ProcessingEtaService:
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
-                    """
-                    SELECT
-                        EXTRACT(EPOCH FROM (
-                            MIN(s.created_at) - wr.created_at
-                        )) AS duration_seconds,
-                        COUNT(DISTINCT sc.id)::INTEGER AS source_count
-                    FROM workflow_runs wr
-                    JOIN projects p ON p.id = wr.project_id
-                    JOIN sections s ON s.project_id = p.id
-                                      AND s.is_recommended = TRUE
-                    JOIN documents d ON d.project_id = p.id
-                    JOIN source_chunks sc ON sc.document_id = d.id
-                    WHERE p.id <> %s
-                    GROUP BY wr.id, wr.created_at
-                    HAVING MIN(s.created_at) > wr.created_at
-                       AND EXTRACT(EPOCH FROM (
-                           MIN(s.created_at) - wr.created_at
-                       )) BETWEEN 10 AND 7200
-                    ORDER BY wr.created_at DESC
-                    LIMIT 30
-                    """,
+                    _CLEAN_SAMPLE_QUERY,
                     (exclude_workspace_id,),
                 )
                 return [
