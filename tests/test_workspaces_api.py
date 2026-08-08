@@ -12,7 +12,10 @@ from app.api.workspaces import (
 )
 from app.main import app
 from app.models.requirements import RequirementStrategyUpdate
-from app.models.generation_profiles import TemplateFieldsUpdate
+from app.models.generation_profiles import (
+    TemplateFieldReviewUpdate,
+    TemplateFieldsUpdate,
+)
 from app.services.workspace_service import InvalidTenderDocumentError
 from app.services.workspace_access_service import (
     SessionAccess,

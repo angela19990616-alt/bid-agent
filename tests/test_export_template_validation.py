@@ -155,7 +155,7 @@ def test_template_preview_builds_real_docx_without_delivery_record(
     monkeypatch.setattr(
         ExportService,
         "resolve_path",
-        lambda _storage_key: tmp_path / "preview.docx",
+        staticmethod(lambda _storage_key: tmp_path / "preview.docx"),
     )
 
     path = ExportService().create_template_preview("project")
