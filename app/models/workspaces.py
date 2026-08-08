@@ -64,6 +64,8 @@ class WorkspaceResponse(BaseModel):
     historical_case_mode: str = "closest_case"
     template_filename: str | None = None
     template_fidelity: str | None = None
+    template_fonts: list[str] = Field(default_factory=list)
+    template_font_policy: str = "inherit_source_template"
     template_required_fields: list[str] = Field(default_factory=list)
     template_field_values: dict[str, str] = Field(default_factory=dict)
     template_field_decisions: list[TemplateFieldDecisionResponse] = Field(

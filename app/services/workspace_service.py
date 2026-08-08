@@ -318,6 +318,16 @@ class WorkspaceService:
             "template_fidelity": profile.template_descriptor.get(
                 "fidelity"
             ),
+            "template_fonts": (
+                profile.template_descriptor.get("font_profile", {}).get(
+                    "detected_fonts", []
+                )
+            ),
+            "template_font_policy": (
+                profile.template_descriptor.get("font_profile", {}).get(
+                    "policy", "inherit_source_template"
+                )
+            ),
             "template_required_fields": ResponseTemplateService.required_fields(
                 profile.template_descriptor
             ),

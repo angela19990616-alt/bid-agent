@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import hashlib
+from collections import Counter
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from pathlib import Path
@@ -55,6 +57,7 @@ class TemplateDescriptor:
     outline: tuple[dict[str, Any], ...] = ()
     fields: tuple[dict[str, Any], ...] = ()
     end_block: int | None = None
+    font_profile: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         return asdict(self)
@@ -220,6 +223,7 @@ class ResponseTemplateService:
         )
         strict = tuple(marker for marker in STRICT_MARKERS if marker in candidate_text)
         outline = self._extract_outline(document, start_block)
+        font_profile = self._extract_font_profile(document, start_block, end_block)
         confidence = 0.0
         if detected:
             confidence = min(
@@ -246,7 +250,122 @@ class ResponseTemplateService:
             outline=outline,
             fields=fields,
             end_block=end_block,
+            font_profile=font_profile,
         )
+
+    @classmethod
+    def _extract_font_profile(
+        cls,
+        document: DocumentType,
+        start_block: int | None,
+        end_block: int | None,
+    ) -> dict[str, Any]:
+        """Record template typography so generated runs inherit, not override, it."""
+        body_counter: Counter[tuple] = Counter()
+        heading_counter: Counter[tuple] = Counter()
+        detected_fonts: set[str] = set()
+        for paragraph in cls._paragraphs_in_block_range(
+            document, start_block, end_block
+        ):
+            text = paragraph.text.strip()
+            if not text:
+                continue
+            level, _ = cls._heading_level(paragraph, text)
+            for run in paragraph.runs:
+                if not run.text.strip():
+                    continue
+                style = cls._run_style_snapshot(run, paragraph)
+                for value in (
+                    style.get("ascii"), style.get("hAnsi"),
+                    style.get("eastAsia"), style.get("cs"),
+                ):
+                    if value:
+                        detected_fonts.add(value)
+                key = tuple(sorted(style.items()))
+                (heading_counter if level else body_counter)[key] += len(run.text)
+
+        def most_common(counter: Counter[tuple]) -> dict[str, Any]:
+            return dict(counter.most_common(1)[0][0]) if counter else {}
+
+        body = most_common(body_counter)
+        heading = most_common(heading_counter) or body
+        return {
+            "detected_fonts": sorted(detected_fonts),
+            "body": body,
+            "heading": heading,
+            "policy": "inherit_source_template",
+        }
+
+    @staticmethod
+    def _paragraphs_in_block_range(
+        document: DocumentType,
+        start_block: int | None,
+        end_block: int | None,
+    ):
+        blocks = list(document.element.body.iterchildren())
+        start = start_block if isinstance(start_block, int) else 0
+        end = end_block if isinstance(end_block, int) else len(blocks)
+        for block in blocks[start:end]:
+            if block.tag == qn("w:p"):
+                yield Paragraph(block, document._body)
+            elif block.tag == qn("w:tbl"):
+                table = Table(block, document._body)
+                for row in table.rows:
+                    for cell in row.cells:
+                        yield from cell.paragraphs
+
+    @staticmethod
+    def _run_style_snapshot(run, paragraph: Paragraph) -> dict[str, Any]:
+        fonts = run._r.rPr.rFonts if run._r.rPr is not None else None
+        style: dict[str, Any] = {}
+        if fonts is not None:
+            for key in (
+                "ascii", "hAnsi", "eastAsia", "cs",
+                "asciiTheme", "hAnsiTheme", "eastAsiaTheme", "csTheme",
+            ):
+                value = fonts.get(qn(f"w:{key}"))
+                if value:
+                    style[key] = value
+        try:
+            paragraph_style = paragraph.style
+        except (AttributeError, KeyError):
+            paragraph_style = None
+        style_fonts = (
+            paragraph_style._element.rPr.rFonts
+            if paragraph_style is not None
+            and paragraph_style._element.rPr is not None
+            else None
+        )
+        if style_fonts is not None:
+            for key in (
+                "ascii", "hAnsi", "eastAsia", "cs",
+                "asciiTheme", "hAnsiTheme", "eastAsiaTheme", "csTheme",
+            ):
+                value = style_fonts.get(qn(f"w:{key}"))
+                if value:
+                    style.setdefault(key, value)
+        inherited_name = run.font.name or (
+            paragraph_style.font.name if paragraph_style is not None else None
+        )
+        if inherited_name:
+            for key in ("ascii", "hAnsi", "eastAsia", "cs"):
+                style.setdefault(key, inherited_name)
+        inherited_size = run.font.size or (
+            paragraph_style.font.size if paragraph_style is not None else None
+        )
+        if inherited_size is not None:
+            style["size_half_points"] = int(round(inherited_size.pt * 2))
+        inherited_bold = run.bold
+        if inherited_bold is None and paragraph_style is not None:
+            inherited_bold = paragraph_style.font.bold
+        if inherited_bold is not None:
+            style["bold"] = bool(inherited_bold)
+        inherited_italic = run.italic
+        if inherited_italic is None and paragraph_style is not None:
+            inherited_italic = paragraph_style.font.italic
+        if inherited_italic is not None:
+            style["italic"] = bool(inherited_italic)
+        return style
 
     @classmethod
     def _extract_fillable_fields(
@@ -476,7 +595,11 @@ class ResponseTemplateService:
             if target is None:
                 missing_sections.append(title)
                 continue
-            self._insert_content_after(target, content)
+            self._insert_content_after(
+                target,
+                content,
+                font_profile=data.get("font_profile") or {},
+            )
             inserted.append(title)
 
         if missing_sections:
@@ -487,7 +610,11 @@ class ResponseTemplateService:
                     for item in sections
                     if item["title"] in missing_sections
                 )
-                self._insert_content_after(generic_target, combined)
+                self._insert_content_after(
+                    generic_target,
+                    combined,
+                    font_profile=data.get("font_profile") or {},
+                )
                 inserted.extend(missing_sections)
                 missing_sections = []
 
@@ -584,7 +711,9 @@ class ResponseTemplateService:
                         value = values.get(key)
                         target = row.cells[index + 1]
                         if value and (not target.text.strip() or PLACEHOLDER_RE.search(target.text)):
-                            target.text = value
+                            ResponseTemplateService._set_cell_text_preserving_style(
+                                target, value, source_cell=cell
+                            )
                             filled.add(key)
                         break
 
@@ -616,7 +745,9 @@ class ResponseTemplateService:
                         continue
                     target = row.cells[index + 1]
                     if not target.text.strip() or PLACEHOLDER_RE.search(target.text):
-                        target.text = values[key]
+                        ResponseTemplateService._set_cell_text_preserving_style(
+                            target, values[key], source_cell=cell
+                        )
                         filled.add(key)
         for paragraph in ResponseTemplateService._all_paragraphs(document):
             original = paragraph.text
@@ -715,8 +846,14 @@ class ResponseTemplateService:
         return None
 
     @staticmethod
-    def _insert_content_after(paragraph: Paragraph, content: str) -> None:
+    def _insert_content_after(
+        paragraph: Paragraph,
+        content: str,
+        *,
+        font_profile: dict[str, Any] | None = None,
+    ) -> None:
         anchor = paragraph._p
+        profile = font_profile or {}
         for raw_line in reversed([line.strip() for line in content.splitlines() if line.strip()]):
             new_p = OxmlElement("w:p")
             heading = bool(re.match(r"^\d+(?:[.．]\d+)*[.、．]?\s+\S", raw_line))
@@ -734,17 +871,8 @@ class ResponseTemplateService:
             new_p.append(properties)
             run = OxmlElement("w:r")
             run_properties = OxmlElement("w:rPr")
-            fonts = OxmlElement("w:rFonts")
-            fonts.set(qn("w:ascii"), "Arial")
-            fonts.set(qn("w:hAnsi"), "Arial")
-            fonts.set(qn("w:eastAsia"), "宋体")
-            run_properties.append(fonts)
-            size = OxmlElement("w:sz")
-            size.set(qn("w:val"), "24")
-            run_properties.append(size)
-            size_complex = OxmlElement("w:szCs")
-            size_complex.set(qn("w:val"), "24")
-            run_properties.append(size_complex)
+            style = profile.get("heading" if heading else "body") or {}
+            ResponseTemplateService._apply_run_style(run_properties, style)
             color = OxmlElement("w:color")
             color.set(qn("w:val"), "000000")
             run_properties.append(color)
@@ -756,3 +884,56 @@ class ResponseTemplateService:
             run.append(text)
             new_p.append(run)
             anchor.addnext(new_p)
+
+    @staticmethod
+    def _apply_run_style(run_properties, style: dict[str, Any]) -> None:
+        font_values = {
+            key: style.get(key)
+            for key in (
+                "ascii", "hAnsi", "eastAsia", "cs",
+                "asciiTheme", "hAnsiTheme", "eastAsiaTheme", "csTheme",
+            )
+            if style.get(key)
+        }
+        if font_values:
+            fonts = OxmlElement("w:rFonts")
+            for key, value in font_values.items():
+                fonts.set(qn(f"w:{key}"), str(value))
+            run_properties.append(fonts)
+        size_value = style.get("size_half_points")
+        if size_value:
+            for tag in ("w:sz", "w:szCs"):
+                size = OxmlElement(tag)
+                size.set(qn("w:val"), str(size_value))
+                run_properties.append(size)
+        if style.get("bold"):
+            run_properties.append(OxmlElement("w:b"))
+        if style.get("italic"):
+            run_properties.append(OxmlElement("w:i"))
+
+    @staticmethod
+    def _set_cell_text_preserving_style(
+        target,
+        value: str,
+        *,
+        source_cell=None,
+    ) -> None:
+        paragraph = target.paragraphs[0]
+        if paragraph.runs:
+            paragraph.runs[0].text = value
+            for run in paragraph.runs[1:]:
+                run.text = ""
+            return
+        run = paragraph.add_run(value)
+        if source_cell is None:
+            return
+        source_run = next(
+            (
+                item
+                for item in source_cell.paragraphs[0].runs
+                if item._r.rPr is not None
+            ),
+            None,
+        )
+        if source_run is not None:
+            run._r.insert(0, deepcopy(source_run._r.rPr))

@@ -118,6 +118,8 @@ type Workspace = {
   historical_case_mode: "balanced" | "closest_case" | "structure_only" | "current_only";
   template_filename: string | null;
   template_fidelity: string | null;
+  template_fonts: string[];
+  template_font_policy: string;
   template_required_fields: string[];
   template_field_values: Record<string, string>;
   template_field_decisions: Array<{
@@ -1278,6 +1280,11 @@ export default function Home() {
                     <strong>原响应模板保真回填</strong>
                     <span>{workspace.template_filename}</span>
                     <p>系统已自动识别原文模板，并从采购文件与企业私有数据库匹配字段；业务人员只审核匹配结果。</p>
+                    <div className="font-fidelity-note">
+                      <b>已自动继承原模板字体</b>
+                      <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>
+                      <small>回填字段和生成正文均继承所在模板样式，不再强制替换为系统默认字体。</small>
+                    </div>
                     <div className="case-library-note">
                       <b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b>
                       <span>机构私有，仅参考目录与写法；案例事实禁止直接自动回填。</span>

@@ -2,7 +2,8 @@ from io import BytesIO
 from pathlib import Path
 
 from docx import Document
-from docx.shared import RGBColor
+from docx.oxml.ns import qn
+from docx.shared import Pt, RGBColor
 
 from app.services.response_template_service import ResponseTemplateService
 
@@ -209,6 +210,63 @@ def test_inserted_content_does_not_inherit_heading_page_break():
     assert body.paragraph_format.page_break_before is not True
     assert heading.runs[0].bold is True
     assert body.runs[0].font.color.rgb == RGBColor(0, 0, 0)
+
+
+def test_detects_template_fonts_and_uses_them_for_inserted_content(tmp_path):
+    document = Document()
+    document.add_heading("附件：响应文件格式", level=1)
+    heading = document.add_heading("技术方案", level=1)
+    heading_run = heading.runs[0]
+    heading_run.font.name = "黑体"
+    heading_run._element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
+    body = document.add_paragraph("正文样式参考")
+    body_run = body.runs[0]
+    body_run.font.name = "仿宋_GB2312"
+    body_run._element.rPr.rFonts.set(qn("w:eastAsia"), "仿宋_GB2312")
+    body_run.font.size = Pt(16)
+    stream = BytesIO()
+    document.save(stream)
+    content = stream.getvalue()
+    service = ResponseTemplateService()
+    descriptor = service.detect("投标文件格式.docx", content)
+
+    assert "仿宋_GB2312" in descriptor.font_profile["detected_fonts"]
+    assert "黑体" in descriptor.font_profile["detected_fonts"]
+
+    output = tmp_path / "font-preserved.docx"
+    service.fill_docx(
+        template_content=content,
+        output_path=output,
+        descriptor=descriptor,
+        field_values={},
+        sections=[{"title": "技术方案", "content": "一、实施思路\n这是新生成的正文。"}],
+    )
+    result = Document(output)
+    generated_body = next(
+        item for item in result.paragraphs if item.text == "这是新生成的正文。"
+    )
+    fonts = generated_body.runs[0]._element.rPr.rFonts
+    assert fonts.get(qn("w:eastAsia")) == "仿宋_GB2312"
+    assert generated_body.runs[0].font.size.pt == 16
+
+
+def test_table_fill_preserves_existing_target_font():
+    document = Document()
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "供应商名称"
+    target = table.cell(0, 1)
+    run = target.paragraphs[0].add_run("{{bidder_name}}")
+    run.font.name = "仿宋_GB2312"
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), "仿宋_GB2312")
+
+    ResponseTemplateService._set_cell_text_preserving_style(
+        target, "已核验企业"
+    )
+
+    assert target.text == "已核验企业"
+    assert target.paragraphs[0].runs[0]._element.rPr.rFonts.get(
+        qn("w:eastAsia")
+    ) == "仿宋_GB2312"
 
 
 def test_fills_visible_blank_label_paragraphs():

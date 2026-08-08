@@ -66,7 +66,9 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /生成本章/);
   assert.match(page, /校核并生成 Word/);
   assert.doesNotMatch(page, /执行交付审查/);
-  assert.match(page, /一次完成来源校核、真实性检查、自动清理和 Word 生成/);
+  assert.match(page, /阻断问题必须处理后才能正式导出/);
+  assert.match(page, /已自动继承原模板字体/);
+  assert.match(page, /不再强制替换为系统默认字体/);
   assert.match(page, /下载可读 Review/);
   assert.match(page, /recommended_for_delivery/);
   assert.doesNotMatch(page, /createProject|创建项目/);
