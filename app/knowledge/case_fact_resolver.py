@@ -8,6 +8,7 @@ from uuid import UUID
 
 from psycopg.rows import dict_row
 
+from app.core.strict_fill import StrictFillDecisionEngine
 from app.database.db import connect
 
 
@@ -101,6 +102,10 @@ class CaseFactResolver:
                     for found in re.finditer(pattern, text, re.IGNORECASE):
                         value = cls._clean(found.group(1))
                         if not cls._usable(value):
+                            continue
+                        if not StrictFillDecisionEngine.value_matches_field_type(
+                            key, value
+                        ):
                             continue
                         start = max(0, found.start() - 90)
                         end = min(len(text), found.end() + 130)
