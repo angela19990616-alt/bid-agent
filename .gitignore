@@ -50,3 +50,4 @@ dist/
 .vscode/
 *.swp
 artifacts/qa/
+.codex-qa/
