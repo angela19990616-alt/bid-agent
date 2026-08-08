@@ -8,6 +8,7 @@ def test_ecs_deploy_script_has_safety_and_recovery_gates():
     content = SCRIPT.read_text(encoding="utf-8")
 
     assert 'EXPECTED_DIR="${BID_AGENT_DIR:-/opt/bid-agent}"' in content
+    assert 'DEPLOY_BRANCH="${BID_AGENT_BRANCH:-codex/v2-response-map}"' in content
     assert "git status --porcelain" in content
     assert "git pull --ff-only" in content
     assert "git switch --track -c" in content

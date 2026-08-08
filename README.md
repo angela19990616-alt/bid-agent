@@ -339,7 +339,7 @@ python scripts/acceptance_mvp.py \
 
 ```bash
 cd /opt/bid-agent
-BID_AGENT_BRANCH=codex/feat-frontend-integration \
+BID_AGENT_BRANCH=codex/v2-response-map \
   bash scripts/deploy_ecs.sh
 ```
 
