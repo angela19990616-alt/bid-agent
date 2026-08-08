@@ -117,3 +117,36 @@ def test_confirmed_manual_value_becomes_traceable_auto_fill():
 
     assert decision["status"] == "AUTO_FILL"
     assert decision["source_type"] == "manual_verified"
+
+
+def test_confirmed_case_value_keeps_business_readable_original_evidence():
+    profile = GenerationProfile(
+        project_id=uuid4(),
+        generation_mode="strict_template",
+        historical_case_mode="closest_case",
+        template_descriptor={"field_labels": ["供应商名称"]},
+        template_field_values={"bidder_name": "北京大岳咨询有限责任公司"},
+        last_fill_report={
+            "field_reviews": {
+                "bidder_name": {
+                    "status": "confirmed",
+                    "value": "北京大岳咨询有限责任公司",
+                    "source_reference": "自贡项目中标投标文件.docx",
+                    "evidence_title": "自贡项目中标投标文件.docx",
+                    "evidence_excerpt": "供应商名称：北京大岳咨询有限责任公司",
+                    "evidence_location": "机构私有案例库",
+                    "evidence_match_count": 3,
+                }
+            }
+        },
+    )
+
+    decision = GenerationProfileService.template_field_decisions(profile)[0]
+
+    assert decision["status"] == "AUTO_FILL"
+    assert decision["source_reference"] == "自贡项目中标投标文件.docx"
+    assert decision["evidence_title"] == "自贡项目中标投标文件.docx"
+    assert decision["evidence_excerpt"] == "供应商名称：北京大岳咨询有限责任公司"
+    assert decision["evidence_location"] == "机构私有案例库"
+    assert decision["evidence_match_count"] == 3
+    assert "current_project" not in decision["source_reference"]

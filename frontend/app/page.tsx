@@ -345,6 +345,23 @@ function sourceLabel(source: Source) {
   return `第 ${start === end ? start : `${start}-${end}`} 段`;
 }
 
+function isInternalEvidenceLabel(value: string | null | undefined) {
+  return Boolean(value && /^(?:current_project|manual_verified|historical_case|tender_document|custom_)/i.test(value));
+}
+
+function visibleEvidenceSource(item: Workspace["template_field_decisions"][number]) {
+  if (item.evidence_title && !isInternalEvidenceLabel(item.evidence_title)) return item.evidence_title;
+  if (item.source_type === "tender_document") return "当前采购文件";
+  if (item.source_type === "manual_verified") return "人工已确认的机构私有资料";
+  if (item.source_type === "historical_case") return "大岳五案例私有库";
+  return "机构私有资料库";
+}
+
+function visibleEvidenceLocation(item: Workspace["template_field_decisions"][number]) {
+  if (item.evidence_location && !isInternalEvidenceLabel(item.evidence_location)) return item.evidence_location;
+  return item.source_type === "tender_document" ? "当前采购文件原文" : "机构私有资料库原文";
+}
+
 function estimateLabel(item: Workspace) {
   const low = item.estimated_remaining_seconds_low;
   const high = item.estimated_remaining_seconds_high;
@@ -1360,13 +1377,13 @@ export default function Home() {
                           </div>
                           <p>{item.value || "尚未提供"}</p>
                           <small>{item.reason}</small>
-                          {item.source_reference && <small>来源：{item.source_reference}</small>}
+                          {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)}</small>}
                           {item.evidence_title && (
                             <details className="field-evidence">
-                              <summary>查看匹配依据</summary>
-                              <strong>{item.evidence_title}</strong>
+                              <summary>打开原文依据</summary>
+                              <strong>{visibleEvidenceSource(item)}</strong>
                               {item.evidence_excerpt && <blockquote>{item.evidence_excerpt}</blockquote>}
-                              <small>{item.evidence_location}{item.evidence_match_count > 1 ? ` · ${item.evidence_match_count} 处一致匹配` : ""}</small>
+                              <small>{visibleEvidenceLocation(item)}{item.evidence_match_count > 1 ? ` · ${item.evidence_match_count} 处一致匹配` : ""}</small>
                             </details>
                           )}
                           {item.status === "REVIEW_REQUIRED" && item.value && (

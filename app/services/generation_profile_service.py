@@ -260,7 +260,8 @@ class GenerationProfileService:
                     source_reference=(
                         profile.template_filename or "uploaded_tender"
                         if procurement_fact
-                        else "current_project_manual_archive"
+                        else review.get("source_reference")
+                        or "本项目已审核资料"
                     ),
                     confidence=1.0 if procurement_fact or confirmed else 0.8,
                     verified=procurement_fact or confirmed,
@@ -310,10 +311,20 @@ class GenerationProfileService:
                 "status": decision.status.value,
                 "reason": decision.reason,
                 "required": field.required,
-                "evidence_title": decision.source_reference,
-                "evidence_excerpt": None,
-                "evidence_location": decision.source_type,
-                "evidence_match_count": 1 if decision.value else 0,
+                "evidence_title": (
+                    reviews.get(key, {}).get("evidence_title")
+                    or decision.source_reference
+                ),
+                "evidence_excerpt": reviews.get(key, {}).get(
+                    "evidence_excerpt"
+                ),
+                "evidence_location": (
+                    reviews.get(key, {}).get("evidence_location")
+                    or decision.source_type
+                ),
+                "evidence_match_count": reviews.get(key, {}).get(
+                    "evidence_match_count", 1 if decision.value else 0
+                ),
             })
         return decisions
 
@@ -325,6 +336,7 @@ class GenerationProfileService:
     ) -> GenerationProfile:
         profile = GenerationProfileService.get(project_id)
         key = field_key.strip()
+        evidence: dict[str, Any] = {}
         if key not in profile.template_field_values:
             decisions = GenerationProfileService.template_field_decisions(
                 profile,
@@ -342,6 +354,13 @@ class GenerationProfileService:
             )
             if candidate is None:
                 raise ValueError("模板字段不存在或尚未匹配到候选值。")
+            evidence = {
+                "source_reference": candidate.get("source_reference"),
+                "evidence_title": candidate.get("evidence_title"),
+                "evidence_excerpt": candidate.get("evidence_excerpt"),
+                "evidence_location": candidate.get("evidence_location"),
+                "evidence_match_count": candidate.get("evidence_match_count", 0),
+            }
             values = dict(profile.template_field_values)
             values[key] = candidate["value"]
             GenerationProfileService.update_template_fields(project_id, values)
@@ -354,6 +373,7 @@ class GenerationProfileService:
                 "value": profile.template_field_values[key],
                 "reviewed_by": "current_session",
                 "reviewed_at": datetime.now().astimezone().isoformat(),
+                **{name: value for name, value in evidence.items() if value},
             }
         elif action == "reset":
             reviews.pop(key, None)
