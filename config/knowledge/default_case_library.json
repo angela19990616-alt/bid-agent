@@ -1,5 +1,8 @@
 {
   "version": "1.0.0",
+  "library_key": "dayue-five-case-demo",
+  "name": "大岳五案例示例库",
+  "purpose": "historical_proposal_reference",
   "organization_key": "default",
   "permission_scope": "organization_private",
   "fact_usage": "prohibited",

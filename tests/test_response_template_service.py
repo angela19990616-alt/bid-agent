@@ -188,6 +188,12 @@ def test_technical_solution_does_not_match_short_table_label():
     assert target._p is expected._p
 
 
+def test_form_control_prefix_is_hidden_from_user_facing_outline():
+    assert ResponseTemplateService._display_heading(
+        "5.格式13 项目实施方案"
+    ) == "项目实施方案"
+
+
 def test_inserted_content_does_not_inherit_heading_page_break():
     document = Document()
     anchor = document.add_paragraph("项目实施方案")

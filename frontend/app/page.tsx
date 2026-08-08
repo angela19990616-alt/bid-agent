@@ -132,6 +132,7 @@ type Workspace = {
     required: boolean;
   }>;
   case_library_count: number;
+  case_library_name: string;
   case_library_scope: string;
   case_library_fact_usage: string;
   template_outline: Array<{
@@ -305,14 +306,6 @@ const importanceRank: Record<Requirement["importance"], number> = {
   medium: 2,
   low: 3,
 };
-const templateFieldLabels: Record<string, string> = {
-  project_name: "项目名称",
-  project_number: "项目编号",
-  bidder_name: "供应商名称",
-  legal_representative: "法定代表人",
-  authorized_representative: "授权代表",
-  date: "日期",
-};
 const fillStatusLabels = {
   AUTO_FILL: "可自动填写",
   REVIEW_REQUIRED: "待人工确认",
@@ -377,7 +370,6 @@ export default function Home() {
   const [exportItem, setExportItem] = useState<ExportItem | null>(null);
   const [proposalReview, setProposalReview] = useState<ProposalReview | null>(null);
   const [responseSupport, setResponseSupport] = useState<ResponseSupport | null>(null);
-  const [templateFieldValues, setTemplateFieldValues] = useState<Record<string, string>>({});
   const [caseReferenceMode, setCaseReferenceMode] = useState<"balanced" | "closest_case" | "structure_only" | "current_only">("balanced");
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
@@ -417,11 +409,8 @@ export default function Home() {
     );
   }, [requirements, requirementView]);
   const progress = workspace ? Math.max(20, (steps.findIndex((item) => item.id === step) + 1) * 20) : 0;
-  const editableTemplateFields = (workspace?.template_required_fields ?? []).filter(
-    (field) => field !== "project_name",
-  );
-  const missingTemplateFields = editableTemplateFields.filter(
-    (field) => !templateFieldValues[field]?.trim(),
+  const missingTemplateDecisions = (workspace?.template_field_decisions ?? []).filter(
+    (item) => item.required && item.status === "MISSING",
   );
 
   useEffect(() => {
@@ -441,10 +430,6 @@ export default function Home() {
       active = false;
     };
   }, []);
-
-  useEffect(() => {
-    setTemplateFieldValues(workspace?.template_field_values ?? {});
-  }, [workspace?.id]);
 
   async function authorizeInvite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -830,23 +815,6 @@ export default function Home() {
   async function createExport() {
     if (!workspace) return;
     await run("正在校核并生成 Word", async () => {
-      if (workspace.generation_mode === "strict_template") {
-        const verifiedValues = Object.fromEntries(
-          Object.entries(templateFieldValues).filter(([, value]) => value.trim()),
-        );
-        if (Object.keys(verifiedValues).length > 0) {
-          const updated = await request<Workspace>(
-            `/workspaces/${workspace.id}/template-fields`,
-            {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ values: verifiedValues }),
-            },
-          );
-          setWorkspace(updated);
-          setTemplateFieldValues(updated.template_field_values ?? {});
-        }
-      }
       const created = await request<ExportItem>(`/workspaces/${workspace.id}/exports`, {
         method: "POST",
       });
@@ -860,30 +828,12 @@ export default function Home() {
       setProposalReview(review);
       setResponseSupport(support);
       setNotice(
-        workspace.generation_mode === "strict_template" && missingTemplateFields.length > 0
-          ? `Word 已生成；模板中的${missingTemplateFields.map((field) => templateFieldLabels[field] ?? field).join("、")}保持待填写，未由 AI 猜写。`
+        workspace.generation_mode === "strict_template" && missingTemplateDecisions.length > 0
+          ? `Word 已生成；${missingTemplateDecisions.length} 项资料需在企业数据库补齐，系统未猜写。`
           : review.overall.recommended_for_delivery
           ? "校核完成，Word 文件已经生成。"
           : `Word 已生成，有 ${review.overall.blocking_risk_count} 项建议人工留意。`,
       );
-    });
-  }
-
-  async function saveTemplateFields() {
-    if (!workspace) return;
-    await run("正在保存已核验模板信息", async () => {
-      const updated = await request<Workspace>(
-        `/workspaces/${workspace.id}/template-fields`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ values: templateFieldValues }),
-        },
-      );
-      setWorkspace(updated);
-      setTemplateFieldValues(updated.template_field_values ?? {});
-      setResponseSupport(await request<ResponseSupport>(`/workspaces/${workspace.id}/response-support`));
-      setNotice("模板字段已保存，导出时只会回填这些已核验信息。");
     });
   }
 
@@ -899,7 +849,6 @@ export default function Home() {
         },
       );
       setWorkspace(updated);
-      setTemplateFieldValues(updated.template_field_values ?? {});
       setNotice(action === "confirm" ? "字段已确认并记录来源。" : "字段已恢复为待审核状态。");
     });
   }
@@ -1304,14 +1253,14 @@ export default function Home() {
               </div>
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
-                <p>一次完成来源校核、真实性检查、自动清理和 Word 生成；检查结果仅作提醒，不会阻断导出。</p>
+                <p>一次完成来源校核、真实性检查和 Word 生成；阻断问题必须处理后才能正式导出。</p>
                 {responseSupport?.manual_action_archive && (
                   <details className="manual-archive" open={responseSupport.manual_action_archive.pending > 0}>
                     <summary>
                       人工事项档案
                       <b>{responseSupport.manual_action_archive.pending} 项待处理</b>
                     </summary>
-                    <p>系统集中记录需要人工填写或审核的内容；变量填写一次后，本项目后续生成和导出统一使用。</p>
+                    <p>系统集中记录需要补充到企业数据库或人工审核的内容；业务人员只审核，不在此页重复录入。</p>
                     <div>
                       {responseSupport.manual_action_archive.items.map((item) => (
                         <article key={item.key} className={item.status}>
@@ -1328,40 +1277,17 @@ export default function Home() {
                   <div className="template-fields">
                     <strong>原响应模板保真回填</strong>
                     <span>{workspace.template_filename}</span>
-                    <p>系统已自动识别原文模板和采购事实；企业信息只接受人工核验，不会由 AI 猜测。</p>
+                    <p>系统已自动识别原文模板，并从采购文件与企业私有数据库匹配字段；业务人员只审核匹配结果。</p>
                     <div className="case-library-note">
-                      <b>默认企业知识库：{workspace.case_library_count} 组真实案例</b>
+                      <b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b>
                       <span>机构私有，仅参考目录与写法；案例事实禁止直接自动回填。</span>
                     </div>
-                    {editableTemplateFields.map((field) => (
-                      <label className="field" key={field}>
-                        <span>{templateFieldLabels[field] ?? field}</span>
-                        <input
-                          value={templateFieldValues[field] ?? ""}
-                          onChange={(event) => setTemplateFieldValues((values) => ({
-                            ...values,
-                            [field]: event.target.value,
-                          }))}
-                          maxLength={500}
-                          required
-                        />
-                      </label>
-                    ))}
-                    {missingTemplateFields.length > 0 ? (
+                    {missingTemplateDecisions.length > 0 ? (
                       <p className="template-field-warning">
-                        待人工填写：{missingTemplateFields.map((field) => templateFieldLabels[field] ?? field).join("、")}。现在也可生成，Word 中会保留原模板空位，不会由 AI 猜写。
+                        企业资料库缺少 {missingTemplateDecisions.length} 项资料。系统保留模板空位并进入补库清单，不允许 AI 猜写。
                       </p>
                     ) : (
-                      <p className="template-field-ready">模板必填信息已齐全，可直接生成。</p>
-                    )}
-                    {editableTemplateFields.length > 0 && (
-                      <button
-                        className="secondary"
-                        disabled={!Object.values(templateFieldValues).some((value) => value.trim()) || Boolean(busy)}
-                        onClick={saveTemplateFields}
-                      >
-                        保存已核验模板信息
-                      </button>
+                      <p className="template-field-ready">模板字段已由采购文件与企业数据库完成匹配，请审核后导出。</p>
                     )}
                     <div className="fill-decision-list">
                       {(workspace.template_field_decisions ?? []).map((item) => (

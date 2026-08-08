@@ -30,6 +30,8 @@ def load_default_case_library() -> dict[str, Any]:
 def default_case_library_summary() -> dict[str, Any]:
     data = load_default_case_library()
     return {
+        "key": data["library_key"],
+        "name": data["name"],
         "count": len(data["cases"]),
         "scope": data["permission_scope"],
         "fact_usage": data["fact_usage"],

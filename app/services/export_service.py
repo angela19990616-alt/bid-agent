@@ -17,6 +17,7 @@ from app.services.proposal_review_service import (
     ProposalReviewService,
 )
 from app.services.generation_profile_service import GenerationProfileService
+from app.knowledge.enterprise_fact_resolver import EnterpriseFactResolver
 from app.services.response_template_service import ResponseTemplateService
 from app.services.section_service import SectionService
 from app.workflows.controlled_pipeline import ControlledPipeline
@@ -75,6 +76,7 @@ class ExportService:
                 field_decisions = profile_service.template_field_decisions(
                     profile,
                     {"project_name": data["project_name"]},
+                    EnterpriseFactResolver().resolve(project_id),
                 )
                 approved_values = {
                     item["field_key"]: item["value"]

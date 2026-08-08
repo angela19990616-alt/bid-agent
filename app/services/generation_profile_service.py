@@ -194,6 +194,7 @@ class GenerationProfileService:
     def template_field_decisions(
         profile: GenerationProfile,
         fallback_values: dict[str, str] | None = None,
+        enterprise_facts: list[EnterpriseFact] | None = None,
     ) -> list[dict[str, Any]]:
         required = ResponseTemplateService.required_fields(
             profile.template_descriptor
@@ -220,7 +221,11 @@ class GenerationProfileService:
                 or fallback_values.get(key)
                 or ""
             ).strip()
-            facts: list[EnterpriseFact] = []
+            facts: list[EnterpriseFact] = [
+                fact
+                for fact in (enterprise_facts or [])
+                if fact.canonical_key == key
+            ]
             if value:
                 review = reviews.get(key, {})
                 confirmed = (

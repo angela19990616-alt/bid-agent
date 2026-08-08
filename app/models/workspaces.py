@@ -70,6 +70,7 @@ class WorkspaceResponse(BaseModel):
         default_factory=list
     )
     case_library_count: int = 5
+    case_library_name: str = "大岳五案例示例库"
     case_library_scope: str = "organization_private"
     case_library_fact_usage: str = "prohibited"
     template_outline: list[TemplateOutlineItem] = Field(default_factory=list)

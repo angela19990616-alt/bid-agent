@@ -361,7 +361,8 @@ class ResponseTemplateService:
                 continue
             items.append(
                 {
-                    "title": title,
+                    "title": cls._display_heading(title),
+                    "source_title": title,
                     "level": min(5, max(1, level)),
                     "order": len(items) + 1,
                     "source": source,
@@ -369,6 +370,16 @@ class ResponseTemplateService:
                 }
             )
         return tuple(items)
+
+    @staticmethod
+    def _display_heading(title: str) -> str:
+        """Remove Word form-control numbering noise from user-facing titles."""
+        cleaned = re.sub(
+            r"^\s*\d+[.．、]?\s*格式\s*\d+\s*",
+            "",
+            title,
+        ).strip()
+        return cleaned or title
 
     @staticmethod
     def _heading_level(

@@ -111,6 +111,15 @@ def test_final_review_blocks_internal_database_fields():
     )
 
 
+def test_final_review_blocks_generated_custom_field_keys():
+    report = final_review(
+        proposal("字段 custom_311bb313fdec 不应出现在交付正文。")
+    )
+
+    assert report["overall"]["internal_identifier_leak_count"] == 1
+    assert report["overall"]["recommended_for_delivery"] is False
+
+
 def test_unverified_enterprise_facts_cannot_enter_final_document():
     content = "我公司成立于2001年，已完成项目数量超过300个。"
     provenance = [

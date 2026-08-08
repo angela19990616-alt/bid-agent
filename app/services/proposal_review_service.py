@@ -27,7 +27,8 @@ UUID_PATTERN = re.compile(
 )
 INTERNAL_PATTERN = re.compile(
     r"\b(requirement_id|section_id|project_id|database_id|"
-    r"source_chunk_id|workflow_run_id|debug|traceback)\b",
+    r"source_chunk_id|workflow_run_id|debug|traceback|"
+    r"custom_[0-9a-f]{8,})\b",
     re.IGNORECASE,
 )
 SECRET_PATTERN = re.compile(
