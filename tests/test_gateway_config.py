@@ -65,6 +65,8 @@ def test_host_gateway_enforces_domain_tls_and_safe_limits():
     assert "zone=bid_invite" in host_config
     assert "Strict-Transport-Security" in host_config
     assert "/etc/nginx/proxy_params" not in host_config
+    assert "ssl_protocols TLSv1.2 TLSv1.3" in host_config
+    assert "options-ssl-nginx.conf" not in host_config
 
 
 def test_bootstrap_gateway_rejects_raw_ip_and_serves_acme_challenges():
