@@ -54,16 +54,13 @@ class ProposalReviewService:
         initial = self.review(initial_input, rules, phase="initial")
         self._persist_review(project_id, initial)
         pipeline.record(run_id, "auto_fix")
-        fixed_sections = {
-            item["section_id"]: self.auto_fix(
-                item["content"],
-                item.get("provenance", []),
-                rules,
-            )
-            for item in initial_input["sections"]
-        }
-        self._persist_auto_fixes(project_id, initial_input, fixed_sections)
-        final_input = self._load_review_input(project_id)
+        # Delivery review is intentionally read-only. Auto-fix remains a
+        # reusable helper for the explicit editing flow, but the delivery
+        # phase must never replace content that a human already approved.
+        # The gate evaluates the exact approved content that would be
+        # exported, not an in-memory cleaned candidate. This prevents a clean
+        # report from authorising a different, still-risky stored version.
+        final_input = initial_input
         pipeline.record(run_id, "final_review")
         final = self.review(final_input, rules, phase="final")
         pending_conflicts = ConflictService.pending_true_conflict_count(

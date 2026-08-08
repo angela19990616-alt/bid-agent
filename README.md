@@ -150,6 +150,7 @@ GET  /api/v1/workspaces/{workspace_id}/requirements?view=all|proposal|scoring|co
 PATCH /api/v1/workspaces/{workspace_id}/requirements/{requirement_id}/strategy
 PUT  /api/v1/workspaces/{workspace_id}/outline
 POST /api/v1/workspaces/{workspace_id}/sections/{section_id}/generate
+POST /api/v1/workspaces/{workspace_id}/generate-draft
 PUT  /api/v1/workspaces/{workspace_id}/sections/{section_id}/content
 POST /api/v1/workspaces/{workspace_id}/sections/{section_id}/approve
 POST /api/v1/workspaces/{workspace_id}/review
@@ -169,6 +170,10 @@ Requirement 提取、知识匹配和推荐目录规划在受控后台任务中�
 `processing_jobs` 持久队列，由独立 `worker` 容器领取执行；Web 容器始终只负责
 短请求。Worker 重启会恢复超时未完成任务，多个 Worker 领取任务时使用数据库锁
 避免重复执行。
+目录确认后可调用 `POST /generate-draft`，把“一章一章点击”改为持久任务：Worker
+顺序生成全部未完成且无冲突的章节，并在每章完成后保存版本和校核结果。HTTP 只负责
+入队和查询进度，浏览器断开不会丢失任务；整本初稿完成后仍停在人工确认前，不会自动
+批准或正式导出。
 处理失败时 workspace 回到 `draft`，前端可调用 `POST /retry`，复用已保存的有效
 文档、Requirement 指纹去重和工作流快照，从中断后的提取/规划阶段继续执行。
 
@@ -312,9 +317,11 @@ python scripts/acceptance_mvp.py \
   --output acceptance_reports/real-sample.json
 ```
 
-验收脚本会实际执行上传、解析、Requirement 提取、目录规划和逐章模型生成。
+验收脚本会实际执行上传、解析、Requirement 提取、目录规划和后台整本初稿生成。
 报告只记录状态、数量、ID、字符数和校核严重级别，不记录招标原文、生成正文、
 企业知识、文件名或模型密钥。章节仍必须经过人工编辑和确认后才能整本导出。
+在专门的受控验收环境中，可增加 `--approve-and-export`：脚本会明确批准当前生成版本、
+执行只读整本 Review、通过交付门禁后导出，并用 `python-docx` 重新打开产物验证非空。
 脚本使用同一 Cookie 会话完成上传后的轮询；若本地启用了邀请码，可在当前终端临时
 注入 `BID_AGENT_INVITE_CODE` 环境变量，脚本会先授权且不会把邀请码写入报告。
 
@@ -368,12 +375,12 @@ BID_AGENT_BRANCH=codex/feat-frontend-integration \
 
 报告分别列出 Requirement Coverage、Scoring Coverage、Knowledge Usage、
 Truth and Privacy Review、Language and AI Style Review 以及每一项交付检查。
-检查会自动清理可确定修复的问题，其余结果作为人工提醒，不阻断章节确认或 Word 导出。
+交付审查只读取已保存且已确认的版本，不会在导出时偷偷改写正文。任何阻断级真实性、
+隐私、覆盖或追溯问题都会阻止正式 Word 导出；用户应先按报告修改并重新确认章节。
 用户可见报告不展示 Requirement UUID、数据库 ID 或其他内部标识。
 
-Auto Fix 只执行可确定的安全修复：删除内部标识、敏感字段、未经核验的高风险
-企业事实和无依据的政策/机构/时间承诺，清理 Markdown 装饰、Emoji、箭头及
-口号化表达。无法确认的评分缺口或事实不会被补造，而是保留为 Review 风险项。
+生成和人工保存阶段可执行确定性文本清理；正式导出阶段不再 Auto Fix。无法确认的
+评分缺口或事实不会被补造，而是保留为 Review 风险项。
 
 门禁阈值位于 `config/rules/compliance.default.json` 的
 `deliverability_gate`，不是写死在 Prompt 中。只有最终复检完成且真实性、

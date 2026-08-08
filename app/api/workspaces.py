@@ -81,6 +81,7 @@ from app.services.workspace_access_service import (
 from app.services.workspace_job_service import WorkspaceJobService
 from app.services.response_support_service import ResponseSupportService
 from app.services.generation_profile_service import GenerationProfileService
+from app.config.settings import settings
 
 
 router = APIRouter(prefix="/workspaces", tags=["proposal-workspaces"])
@@ -136,6 +137,13 @@ async def create_workspace(
         raise AppError(415, "DOCUMENT_UNSUPPORTED", "仅支持 PDF 或 DOCX 文件。")
     try:
         content = await file.read()
+        max_bytes = settings.max_upload_size_mb * 1024 * 1024
+        if len(content) > max_bytes:
+            raise AppError(
+                413,
+                "DOCUMENT_TOO_LARGE",
+                f"文件超过 {settings.max_upload_size_mb}MB 上限。",
+            )
         access = access_service.session(request)
         if not hasattr(service, "prepare_from_upload"):
             workspace = service.create_from_upload(
@@ -475,6 +483,22 @@ def generate_section(
             str(exc),
             {"job_id": str(exc.job_id), "retryable": True},
         ) from exc
+
+
+@router.post(
+    "/{workspace_id}/generate-draft",
+    response_model=WorkspaceResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def generate_complete_draft(
+    workspace_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
+    sections = SectionService().list(workspace_id)
+    if not sections:
+        raise AppError(422, "OUTLINE_REQUIRED", "请先确认方案目录。")
+    WorkspaceJobService().enqueue_autonomous_draft(workspace_id)
+    return WorkspaceService().get(workspace_id)
 
 
 @router.put(

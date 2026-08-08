@@ -307,6 +307,9 @@ class WorkspaceService:
             "processing_retryable": bool(
                 job and job["status"] == "failed" and documents
             ),
+            "processing_job_status": job["status"] if job else None,
+            "processing_job_progress": job["progress"] if job else 0,
+            "processing_job_type": job["job_type"] if job else None,
             "generation_mode": profile.generation_mode,
             "historical_case_mode": profile.historical_case_mode,
             "template_filename": profile.template_filename,

@@ -42,6 +42,7 @@ flowchart TB
     WS --> FS["DOCX / PDF 文件存储"]
     WS --> JOB["processing_jobs 持久任务"]
     JOB --> WK["Workspace Worker"]
+    WK --> DRAFT["整本初稿任务：逐章生成 + 逐章校核"]
     WK --> PIPE["Controlled Pipeline"]
 
     PIPE --> RULE["Rule Engine"]
@@ -311,7 +312,7 @@ erDiagram
 ## 10. 当前需要特别关注的架构债务
 
 1. **任务队列**：当前 Worker 从 PostgreSQL `processing_jobs` 通过 `SKIP LOCKED` 取任务，Redis 还没有真正承接队列。单机 MVP 可用，多 Worker 并发前应评估 Redis Queue / Celery / RabbitMQ。
+   上传解析和整本初稿均已采用持久任务；初稿只生成和校核，不自动批准。Worker 常驻期间周期恢复超时任务，浏览器断开不影响继续运行。
 2. **目录层级持久化**：模板能识别五级标题，但当前生成任务的 Section 模型仍偏扁平，父子节点编辑需后续迁移。
 3. **企业权威事实**：严格回填决策已存在，但真实企业数据接口未打通前，不能大规模自动回填。
 4. **扫描件保真**：需要 OCR、表格坐标、图片槽位和版式渲染对比后，才能对扫描 PDF 宣称自动保真回填。
-

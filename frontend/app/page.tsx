@@ -107,6 +107,9 @@ type Workspace = {
   processing_error_code: string | null;
   processing_error_message: string | null;
   processing_retryable: boolean;
+  processing_job_status: "queued" | "running" | "succeeded" | "failed" | null;
+  processing_job_progress: number;
+  processing_job_type: string | null;
   model_calls_used: number;
   model_calls_limit: number;
   model_tokens_used: number;
@@ -761,6 +764,37 @@ export default function Home() {
     });
   }
 
+  async function generateCompleteDraft() {
+    if (!workspace) return;
+    await run("正在后台生成整本初稿", async () => {
+      let current = await request<Workspace>(
+        `/workspaces/${workspace.id}/generate-draft`,
+        { method: "POST" },
+      );
+      while (
+        current.processing_job_type === "autonomous_draft"
+        && ["queued", "running"].includes(current.processing_job_status ?? "")
+      ) {
+        setBusy(`正在后台生成整本初稿 · ${current.processing_job_progress}%`);
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        current = await request<Workspace>(`/workspaces/${workspace.id}`);
+      }
+      if (current.processing_job_status === "failed") {
+        throw new Error(
+          current.processing_error_message
+          ?? "整本初稿生成失败，已保留成功章节，可继续重试。",
+        );
+      }
+      setWorkspace(current);
+      setSections(current.outline);
+      const selected = current.outline.find((item) => !item.current_version)
+        ?? current.outline[0];
+      setActiveSectionId(selected?.id ?? "");
+      setEditorContent(selected?.current_version?.content ?? "");
+      setNotice("整本初稿已生成并完成自动校核，请逐章人工确认后导出。");
+    });
+  }
+
   async function saveSection() {
     if (!workspace || !activeSection?.current_version) return;
     await run("正在保存人工修改", async () => {
@@ -1204,6 +1238,12 @@ export default function Home() {
               <aside className="panel writer-sidebar">
                 <span className="panel-label">CHAPTERS</span>
                 <h3>技术方案目录</h3>
+                <button
+                  className="primary"
+                  disabled={Boolean(busy) || sections.length === 0}
+                  onClick={generateCompleteDraft}
+                >一键生成整本初稿</button>
+                <p>后台按章生成和校核，断线不丢失；不会自动代替人工确认。</p>
                 <div className="saved-sections">
                   {sections.map((section, index) => (
                     <button key={section.id} className={section.id === activeSectionId ? "active" : ""} onClick={() => selectSection(section)}>

@@ -1,7 +1,10 @@
 from datetime import timedelta
 from uuid import uuid4
 
-from app.services.workspace_job_service import WorkspaceJobService
+from app.services.workspace_job_service import (
+    AUTONOMOUS_DRAFT_JOB,
+    WorkspaceJobService,
+)
 
 
 class Cursor:
@@ -67,6 +70,7 @@ def test_claim_uses_skip_locked_for_single_worker_job(monkeypatch):
         {
             "id": uuid4(),
             "project_id": workspace_id,
+            "job_type": "workspace_pipeline",
             "input_snapshot": {
                 "document_id": str(document_id),
                 "workflow_run_id": str(run_id),
@@ -84,6 +88,22 @@ def test_claim_uses_skip_locked_for_single_worker_job(monkeypatch):
     assert job.workspace_id == workspace_id
     assert job.document_id == document_id
     assert "FOR UPDATE SKIP LOCKED" in cursor.executed[0][0]
+
+
+def test_autonomous_draft_enqueue_is_idempotent(monkeypatch):
+    workspace_id = uuid4()
+    existing_job = uuid4()
+    cursor = Cursor({"id": existing_job})
+    monkeypatch.setattr(
+        "app.services.workspace_job_service.connect",
+        lambda: Connection(cursor),
+    )
+
+    job_id = WorkspaceJobService().enqueue_autonomous_draft(workspace_id)
+
+    assert job_id == existing_job
+    assert cursor.executed[0][1] == (workspace_id, AUTONOMOUS_DRAFT_JOB)
+    assert len(cursor.executed) == 1
 
 
 def test_recover_stale_only_requeues_workspace_jobs(monkeypatch):

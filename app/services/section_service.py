@@ -539,7 +539,15 @@ class SectionService:
                 cursor.execute(
                     """
                     UPDATE projects
-                    SET status = 'ready_to_export', updated_at = NOW()
+                    SET status = CASE
+                            WHEN NOT EXISTS (
+                                SELECT 1 FROM sections
+                                WHERE sections.project_id = projects.id
+                                  AND sections.status <> 'approved'
+                            ) THEN 'ready_to_export'
+                            ELSE 'writing'
+                        END,
+                        updated_at = NOW()
                     WHERE id = %s
                     """,
                     (project_id,),

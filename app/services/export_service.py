@@ -32,7 +32,11 @@ class ExportValidationError(Exception):
 
 class ExportService:
     def create_full(self, project_id: UUID) -> dict:
-        ProposalReviewService().prepare_for_export(project_id)
+        review = ProposalReviewService().prepare_for_export(project_id)
+        if not review["overall"]["recommended_for_delivery"]:
+            raise ExportValidationError(
+                "整本交付审查未通过。请先处理阻断风险并重新确认相关章节。"
+            )
         data = self._load_full_export_input(project_id)
         profile_service = GenerationProfileService()
         profile = profile_service.get(project_id)

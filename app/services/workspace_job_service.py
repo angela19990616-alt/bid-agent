@@ -11,14 +11,25 @@ from app.database.db import connect
 
 
 WORKSPACE_PIPELINE_JOB = "workspace_pipeline"
+AUTONOMOUS_DRAFT_JOB = "autonomous_draft"
 
 
 @dataclass(frozen=True)
 class WorkspaceJob:
     id: UUID
     workspace_id: UUID
-    document_id: UUID
-    workflow_run_id: UUID
+    job_type: str
+    input_snapshot: dict
+
+    @property
+    def document_id(self) -> UUID | None:
+        value = self.input_snapshot.get("document_id")
+        return UUID(value) if value else None
+
+    @property
+    def workflow_run_id(self) -> UUID | None:
+        value = self.input_snapshot.get("workflow_run_id")
+        return UUID(value) if value else None
 
 
 class WorkspaceJobService:
@@ -56,6 +67,41 @@ class WorkspaceJobService:
                 )
         return job_id
 
+    def enqueue_autonomous_draft(self, workspace_id: UUID) -> UUID:
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id FROM processing_jobs
+                    WHERE project_id = %s AND job_type = %s
+                      AND status IN ('queued', 'running')
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (workspace_id, AUTONOMOUS_DRAFT_JOB),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    return existing["id"]
+                job_id = uuid4()
+                cursor.execute(
+                    """
+                    INSERT INTO processing_jobs (
+                        id, project_id, job_type, status, progress,
+                        input_snapshot
+                    )
+                    VALUES (%s, %s, %s, 'queued', 0, '{}'::jsonb)
+                    """,
+                    (job_id, workspace_id, AUTONOMOUS_DRAFT_JOB),
+                )
+                cursor.execute(
+                    """
+                    UPDATE projects SET status = 'writing', updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (workspace_id,),
+                )
+        return job_id
+
     def claim_next(self) -> WorkspaceJob | None:
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
@@ -64,7 +110,7 @@ class WorkspaceJobService:
                     WITH candidate AS (
                         SELECT id
                         FROM processing_jobs
-                        WHERE job_type = %s AND status = 'queued'
+                        WHERE job_type = ANY(%s) AND status = 'queued'
                         ORDER BY created_at
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
@@ -74,10 +120,10 @@ class WorkspaceJobService:
                         updated_at = NOW()
                     FROM candidate
                     WHERE jobs.id = candidate.id
-                    RETURNING jobs.id, jobs.project_id,
+                    RETURNING jobs.id, jobs.project_id, jobs.job_type,
                               jobs.input_snapshot
                     """,
-                    (WORKSPACE_PIPELINE_JOB,),
+                    ([WORKSPACE_PIPELINE_JOB, AUTONOMOUS_DRAFT_JOB],),
                 )
                 row = cursor.fetchone()
         if row is None:
@@ -86,9 +132,22 @@ class WorkspaceJobService:
         return WorkspaceJob(
             id=row["id"],
             workspace_id=row["project_id"],
-            document_id=UUID(snapshot["document_id"]),
-            workflow_run_id=UUID(snapshot["workflow_run_id"]),
+            job_type=row["job_type"],
+            input_snapshot=snapshot,
         )
+
+    @staticmethod
+    def update_progress(job_id: UUID, progress: int) -> None:
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET progress = %s, updated_at = NOW()
+                    WHERE id = %s AND status = 'running'
+                    """,
+                    (max(5, min(95, progress)), job_id),
+                )
 
     def succeed(self, job_id: UUID) -> None:
         with connect() as conn:
@@ -123,13 +182,18 @@ class WorkspaceJobService:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
                     """
-                    SELECT status, error_code, error_message
+                    SELECT status, progress, job_type,
+                           error_code, error_message
                     FROM processing_jobs
-                    WHERE project_id = %s AND job_type = %s
+                    WHERE project_id = %s
+                      AND job_type = ANY(%s)
                     ORDER BY created_at DESC
                     LIMIT 1
                     """,
-                    (workspace_id, WORKSPACE_PIPELINE_JOB),
+                    (
+                        workspace_id,
+                        [WORKSPACE_PIPELINE_JOB, AUTONOMOUS_DRAFT_JOB],
+                    ),
                 )
                 row = cursor.fetchone()
         return dict(row) if row is not None else None
@@ -143,10 +207,10 @@ class WorkspaceJobService:
                     SET status = 'queued', progress = 0,
                         error_code = NULL, error_message = NULL,
                         updated_at = NOW()
-                    WHERE job_type = %s
+                    WHERE job_type = ANY(%s)
                       AND status = 'running'
                       AND updated_at < NOW() - %s
                     """,
-                    (WORKSPACE_PIPELINE_JOB, after),
+                    ([WORKSPACE_PIPELINE_JOB, AUTONOMOUS_DRAFT_JOB], after),
                 )
                 return cursor.rowcount

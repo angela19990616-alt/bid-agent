@@ -12,10 +12,13 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from io import BytesIO
 from http.cookiejar import CookieJar
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
+
+from docx import Document
 
 
 def build_multipart(path: Path) -> tuple[bytes, str]:
@@ -128,6 +131,48 @@ class AcceptanceClient:
         )
         return self._json(request)
 
+    def generate_draft(self, workspace_id: str) -> dict:
+        request = urllib.request.Request(
+            f"{self.base_url}/api/v1/workspaces/{workspace_id}/generate-draft",
+            data=b"",
+            method="POST",
+        )
+        return self._json(request)
+
+    def approve(self, workspace_id: str, section_id: str) -> dict:
+        request = urllib.request.Request(
+            f"{self.base_url}/api/v1/workspaces/{workspace_id}"
+            f"/sections/{section_id}/approve",
+            data=b"",
+            method="POST",
+        )
+        return self._json(request)
+
+    def review(self, workspace_id: str) -> dict:
+        request = urllib.request.Request(
+            f"{self.base_url}/api/v1/workspaces/{workspace_id}/review",
+            data=b"",
+            method="POST",
+        )
+        return self._json(request)
+
+    def export(self, workspace_id: str) -> dict:
+        request = urllib.request.Request(
+            f"{self.base_url}/api/v1/workspaces/{workspace_id}/exports",
+            data=b"",
+            method="POST",
+        )
+        return self._json(request)
+
+    def download_export(self, workspace_id: str, export_id: str) -> bytes:
+        request = urllib.request.Request(
+            f"{self.base_url}/api/v1/workspaces/{workspace_id}"
+            f"/exports/{export_id}/download",
+            method="GET",
+        )
+        with self.opener.open(request, timeout=self.timeout) as response:
+            return response.read()
+
     def workspace(self, workspace_id: str) -> dict:
         request = urllib.request.Request(
             f"{self.base_url}/api/v1/workspaces/{workspace_id}",
@@ -160,6 +205,31 @@ class AcceptanceClient:
             )
         return current
 
+    def wait_until_draft_ready(
+        self,
+        workspace_id: str,
+        *,
+        poll_interval: float = 2.0,
+    ) -> dict:
+        deadline = time.monotonic() + self.timeout
+        current = self.workspace(workspace_id)
+        while (
+            current.get("processing_job_type") == "autonomous_draft"
+            and current.get("processing_job_status") in {"queued", "running"}
+        ):
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"workspace {workspace_id} draft generation timed out"
+                )
+            time.sleep(poll_interval)
+            current = self.workspace(workspace_id)
+        if current.get("processing_job_status") == "failed":
+            raise RuntimeError(
+                current.get("processing_error_message")
+                or f"workspace {workspace_id} draft generation failed"
+            )
+        return current
+
     def _json(self, request: urllib.request.Request) -> dict:
         with self.opener.open(
             request, timeout=self.timeout
@@ -167,14 +237,48 @@ class AcceptanceClient:
             return json.load(response)
 
 
-def run(path: Path, client: AcceptanceClient) -> dict:
+def inspect_docx(content: bytes) -> dict:
+    document = Document(BytesIO(content))
+    return {
+        "size_bytes": len(content),
+        "paragraph_count": len(document.paragraphs),
+        "table_count": len(document.tables),
+        "nonempty_paragraph_count": sum(
+            1 for paragraph in document.paragraphs if paragraph.text.strip()
+        ),
+        "can_open": True,
+    }
+
+
+def run(
+    path: Path,
+    client: AcceptanceClient,
+    *,
+    approve_and_export: bool = False,
+) -> dict:
     workspace = client.wait_until_ready(client.upload(path))
+    client.generate_draft(workspace["id"])
+    workspace = client.wait_until_draft_ready(workspace["id"])
     summary = summarize_workspace(workspace)
-    generated = []
-    for section in workspace.get("outline", []):
-        result = client.generate(workspace["id"], section["id"])
-        generated.append(summarize_section(result))
+    generated = [
+        summarize_section(section)
+        for section in workspace.get("outline", [])
+    ]
     blocking = sum(1 for item in generated if item["blocking"])
+    review = None
+    export = None
+    docx = None
+    if approve_and_export:
+        for section in workspace.get("outline", []):
+            if not section.get("current_version"):
+                raise RuntimeError("存在未生成章节，不允许自动确认。")
+            client.approve(workspace["id"], section["id"])
+        review = client.review(workspace["id"])
+        if review.get("overall", {}).get("recommended_for_delivery"):
+            export = client.export(workspace["id"])
+            docx = inspect_docx(
+                client.download_export(workspace["id"], export["id"])
+            )
     return {
         "schema_version": 1,
         "started_at": datetime.now(UTC).isoformat(),
@@ -185,6 +289,24 @@ def run(path: Path, client: AcceptanceClient) -> dict:
         },
         "workspace": summary,
         "generation": generated,
+        "review": (
+            {
+                "recommended_for_delivery": review["overall"].get(
+                    "recommended_for_delivery", False
+                ),
+                "blocking_risk_count": review["overall"].get(
+                    "blocking_risk_count", 0
+                ),
+                "traceability_rate": review["overall"].get(
+                    "traceability_rate", 0
+                ),
+            }
+            if review else None
+        ),
+        "export": (
+            {"status": export.get("status"), "docx": docx}
+            if export else None
+        ),
         "gates": {
             "all_requirements_traceable": (
                 summary["technical_requirement_count"]
@@ -197,6 +319,13 @@ def run(path: Path, client: AcceptanceClient) -> dict:
             "blocking_section_count": blocking,
             "ready_for_human_edit": bool(generated),
             "ready_for_approval": bool(generated) and blocking == 0,
+            "delivery_review_passed": bool(
+                review
+                and review.get("overall", {}).get(
+                    "recommended_for_delivery"
+                )
+            ),
+            "docx_opened": bool(docx and docx["can_open"]),
         },
         "privacy": {
             "contains_source_text": False,
@@ -222,6 +351,11 @@ def parse_args() -> argparse.Namespace:
         help="单次上传或章节生成超时秒数，默认 900",
     )
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--approve-and-export",
+        action="store_true",
+        help="明确授权验收脚本确认章节并尝试导出整本 Word",
+    )
     return parser.parse_args()
 
 
@@ -241,6 +375,7 @@ def main() -> int:
         report = run(
             args.file,
             client,
+            approve_and_export=args.approve_and_export,
         )
     except urllib.error.HTTPError as exc:
         error_code = f"HTTP_{exc.code}"
@@ -256,7 +391,10 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(output + "\n", encoding="utf-8")
     print(output)
-    return 0 if report["gates"]["ready_for_human_edit"] else 1
+    expected_gate = (
+        "docx_opened" if args.approve_and_export else "ready_for_human_edit"
+    )
+    return 0 if report["gates"][expected_gate] else 1
 
 
 if __name__ == "__main__":

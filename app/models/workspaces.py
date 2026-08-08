@@ -57,6 +57,9 @@ class WorkspaceResponse(BaseModel):
     processing_error_code: str | None = None
     processing_error_message: str | None = None
     processing_retryable: bool = False
+    processing_job_status: str | None = None
+    processing_job_progress: int = 0
+    processing_job_type: str | None = None
     generation_mode: str = "planned"
     historical_case_mode: str = "closest_case"
     template_filename: str | None = None
