@@ -40,6 +40,7 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 
 | run_at | trigger | overall_health | checked_items | incidents_changed | fixes | evidence | blockers | next_action |
 |---|---|---|---|---|---|---|---|---|
+| 2026-08-09 | V4 整合前生产审计与备份 | maintenance | PF-001, PF-002, PF-004, PF-005, PF-006 | none | 只读核对 ECS Git/容器/迁移；备份源码、PostgreSQL、文件卷、Compose、Nginx、环境变量与应用镜像；建立本地整合分支 | 生产 `ce0a1b6e` 比 GitHub 候选仅少 1 个文档提交，无未提交或独有代码；8 项 SHA256 通过，DB dump 209 个恢复对象；276 项后端、2 项前端、build、新库与升级迁移通过 | 公开仓库仍暴露生产 IP/域名/部署拓扑；上传异常边界测试和完整 Mock 业务验收未完成 | 用户确认后补齐缺失门禁、完整验收，再建 PR；未满足合并 main 条件 |
 | 2026-08-09 | 重复模板标题与本地旧镜像修复 | healthy | PF-004, PF-005 | INC-011 closed | 正式响应章节优先选择后部正文；Word XML标题去重；重建Backend/Worker；原失败项目本地恢复 | 同一真实DOCX识别17表格、28字段，正式起点496；项目outline_ready/strict_template；17项模板测试通过，服务健康 | 未调用外部模型；未部署ECS | 刷新本地页面审核字段来源与实际Word预览 |
 | 2026-08-08 | 字段型表格模板误判修复 | healthy | PF-004, PF-005 | INC-008 closed | 有字段/表格模板即严格回填；零写作章节不再失败或生成虚构目录；无模板分支保持Requirement目录规划 | 最新DOCX识别6标题、36字段；267项测试和完整门禁通过；ECS `563addaf` 部署后自动恢复原失败项目，状态outline_ready且队列成功 | none | 业务人员刷新页面后审核字段来源并导出原格式Word |
 | 2026-08-08 | 504 与 ETA 历史污染修复 | healthy | PF-001, PF-002 | INC-007 closed | 单章生成从同步 HTTP 改为可恢复后台队列；ETA 排除任何失败/超时项目，只取近30天最多12个干净成功样本 | 生产任务从34个成功历史中筛出10个干净样本；ECS `da6fa7f4` 五服务健康，部署后日志无504或应用错误；265项测试与完整门禁通过 | none | 持续记录后续干净成功样本并滚动替换旧数据 |
