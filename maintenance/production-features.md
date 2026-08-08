@@ -29,6 +29,7 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 
 | run_at | trigger | overall_health | checked_items | incidents_changed | fixes | evidence | blockers | next_action |
 |---|---|---|---|---|---|---|---|---|
+| 2026-08-08 | 项目级子智能体分工 | maintenance | PF-001, PF-002, PF-004, PF-005 | none | 配置运维、代码、测试、安全隐私、投标业务、前端体验和发布审计 7 个只读专业 Agent；将调用路由和 Token 边界写入 AGENTS.md | 配置遵循 Codex 项目级 `.codex/agents/*.toml` 格式；并行上限 4；所有 Agent 为只读、职责单一 | 子智能体会增加 Token 消耗，不适合每次全员运行 | 在下一次真实代码变更中选 2-3 个角色试运行并评估产出/成本 |
 | 2026-08-08 | 当前架构盘点与知识图谱预案 | maintenance | PF-001, PF-002, PF-004, PF-005 | none | 新增可对外评审的全景架构文档，分开已实现、部分实现与未实现能力，增加企业知识图谱实体、关系、权限和演进顺序 | 已核对 Controlled Pipeline、Workspace Worker、Rule/Knowledge/Memory Engine、Strict Fill、Model Router、PostgreSQL/Redis 和 Docker Compose 真实实现 | 图谱尚未开发；真实企业 API 、目录树迁移和扫描 PDF 回填待后续 | 优先定义企业实体 ID、来源、权限和证据契约，再决定是否需要独立图数据库 |
 | 2026-08-08 | 模板驱动生成骨架修正 | healthy | PF-004, PF-005 | INC-006 fixing | strict_template 停止调用通用 Planner；表格原位回填，写作任务仅按模板已有标题建立；无模板仍使用 Requirement 推荐目录 | 后端全量 252 项通过；模板章节过滤、Requirement 映射、规则校验和 DOCX 保真回填聚焦测试通过 | 企业真实数据 API 和扫描 PDF 坐标回填尚未接入 | 用新项目模板本地人工确认后再决定 ECS 部署 |
 | 2026-08-08 | 企业严格回填MVP本地实现 | healthy | PF-004, PF-005 | INC-006 fixing | 限定响应格式章节边界；识别段落/表格空位；字段来源与三态审核；导出仅接收AUTO_FILL；五案例默认私有配置；前端审核卡片 | 后端全量测试、pyflakes、前端生产构建通过；真实自贡模板识别10类必填字段，排除合同附件噪音，回填演示21页；本地容器健康 | 企业真实数据库接口尚未接通；扫描PDF坐标级回填与OCR仍未进入本增量 | 在ECS运行真实大文件解析和整本集成测试，之后再接企业基础信息API |
