@@ -132,6 +132,10 @@ type Workspace = {
     status: "AUTO_FILL" | "REVIEW_REQUIRED" | "MISSING";
     reason: string;
     required: boolean;
+    evidence_title: string | null;
+    evidence_excerpt: string | null;
+    evidence_location: string | null;
+    evidence_match_count: number;
   }>;
   case_library_count: number;
   case_library_name: string;
@@ -263,6 +267,10 @@ const steps: Array<{ id: Step; title: string; subtitle: string }> = [
   { id: "outline", title: "推荐目录", subtitle: "确认章节结构" },
   { id: "writer", title: "章节写作", subtitle: "生成、编辑、校核" },
   { id: "export", title: "导出 Word", subtitle: "交付技术方案" },
+];
+const templateSteps: Array<{ id: Step; title: string; subtitle: string }> = [
+  { id: "upload", title: "上传文件", subtitle: "自动识别格式" },
+  { id: "export", title: "回填与审核", subtitle: "查看依据并导出" },
 ];
 const typeLabels: Record<Requirement["type"], string> = {
   technical_requirement: "技术要求",
@@ -410,7 +418,12 @@ export default function Home() {
       }),
     );
   }, [requirements, requirementView]);
-  const progress = workspace ? Math.max(20, (steps.findIndex((item) => item.id === step) + 1) * 20) : 0;
+  const visibleSteps = !workspace
+    ? [templateSteps[0]]
+    : workspace.generation_mode === "strict_template" ? templateSteps : steps;
+  const progress = workspace
+    ? Math.max(20, ((visibleSteps.findIndex((item) => item.id === step) + 1) / visibleSteps.length) * 100)
+    : 0;
   const missingTemplateDecisions = (workspace?.template_field_decisions ?? []).filter(
     (item) => item.required && item.status === "MISSING",
   );
@@ -466,7 +479,7 @@ export default function Home() {
     setSections(completed.outline);
     setActiveSectionId(completed.outline[0]?.id ?? "");
     setEditorContent(completed.outline[0]?.current_version?.content ?? "");
-    setStep("requirements");
+    setStep(completed.generation_mode === "strict_template" ? "export" : "requirements");
     setNotice(
       message
       ?? `处理完成，已分析 ${completed.response_summary.total} 条响应事项。`,
@@ -528,10 +541,29 @@ export default function Home() {
       form.append("file", file);
       const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
       setWorkspace(created);
-      const completed = await waitForWorkspace(created.id, created);
+      let completed = await waitForWorkspace(created.id, created);
+      if (completed.generation_mode === "strict_template") {
+        completed = await request<Workspace>(
+          `/workspaces/${completed.id}/generate-draft`,
+          { method: "POST" },
+        );
+        while (
+          completed.processing_job_type === "autonomous_draft"
+          && ["queued", "running"].includes(completed.processing_job_status ?? "")
+        ) {
+          setBusy(`正在按原格式自动生成 · ${completed.processing_job_progress}%`);
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          completed = await request<Workspace>(`/workspaces/${completed.id}`);
+        }
+        if (completed.processing_job_status === "failed") {
+          throw new Error(completed.processing_error_message ?? "自动生成失败，已保留成功结果。");
+        }
+      }
       await openCompletedWorkspace(
         completed,
-        `已识别《${completed.document?.filename}》，分析 ${completed.response_summary.total} 条响应事项。`,
+        completed.generation_mode === "strict_template"
+          ? "已识别原响应格式并完成自动预填，请审核候选值及来源。"
+          : `已识别《${completed.document?.filename}》，分析 ${completed.response_summary.total} 条响应事项。`,
       );
     });
   }
@@ -839,6 +871,29 @@ export default function Home() {
     });
   }
 
+  async function approveTemplateAndExport() {
+    if (!workspace) return;
+    await run("正在确认预填结果并生成 Word", async () => {
+      let currentSections = [...sections];
+      for (const section of currentSections) {
+        if (section.current_version && section.status !== "approved") {
+          const approved = await request<SectionItem>(
+            `/workspaces/${workspace.id}/sections/${section.id}/approve`,
+            { method: "POST" },
+          );
+          currentSections = currentSections.map((item) => item.id === approved.id ? approved : item);
+        }
+      }
+      setSections(currentSections);
+      const created = await request<ExportItem>(
+        `/workspaces/${workspace.id}/exports`,
+        { method: "POST" },
+      );
+      setExportItem(created);
+      setNotice("审核结果已记录，原格式 Word 已生成。");
+    });
+  }
+
   async function reviewTemplateField(fieldKey: string, action: "confirm" | "reset") {
     if (!workspace) return;
     await run(action === "confirm" ? "正在确认字段" : "正在恢复审核", async () => {
@@ -916,7 +971,7 @@ export default function Home() {
             <i><em style={{ width: `${progress}%` }} /></i>
           </div>
           <nav>
-            {steps.map((item, index) => (
+            {visibleSteps.map((item, index) => (
               <button
                 key={item.id}
                 className={step === item.id ? "active" : ""}
@@ -938,8 +993,8 @@ export default function Home() {
           <div className="stage-header">
             <div>
               <span className="eyebrow">CONTROLLED PROPOSAL WORKFLOW</span>
-              <h2>{steps.find((item) => item.id === step)?.title}</h2>
-              <p>系统按固定步骤处理，不会自由对话或无限循环。</p>
+              <h2>{visibleSteps.find((item) => item.id === step)?.title}</h2>
+              <p>{!workspace ? "上传后自动判断是否存在响应模板，无需人工选流程。" : workspace.generation_mode === "strict_template" ? "已检测到原响应模板：系统自动预填，业务人员只审核。" : "未检测到完整模板：系统才进入目录与方案生成。"}</p>
             </div>
             {busy && <div className="busy-pill" role="status" aria-live="polite"><i />{busy}</div>}
           </div>
@@ -956,15 +1011,15 @@ export default function Home() {
           {step === "upload" && (
             <div className="upload-hero">
               <span className="panel-label">START FROM THE TENDER</span>
-              <h3>上传招标文件，直接生成技术方案框架</h3>
-              <p>无需先建项目。系统会自动判断文件是否有效，解析技术要求与评分点，并推荐写作目录。</p>
+              <h3>只需上传招标文件</h3>
+              <p>有“投标文件格式”就继承原标题、表格、顺序和字体直接预填；没有格式才进入目录与方案生成。</p>
               <label className={`upload-zone hero ${busy ? "disabled" : ""}`}>
                 <input type="file" accept=".pdf,.docx" disabled={Boolean(busy)} onChange={upload} />
                 <strong>选择 PDF 或 DOCX 招标文件</strong>
                 <span>文件仅在机构私有环境中处理</span>
               </label>
               <div className="pipeline">
-                {["有效性检查", "文档解析", "技术要求提取", "质量复核", "目录规划"].map((item, index) => (
+                {["文件检查", "格式识别", "数据匹配", "自动预填", "人工审核"].map((item, index) => (
                   <div key={item}><b>{index + 1}</b><span>{item}</span></div>
                 ))}
               </div>
@@ -1256,7 +1311,7 @@ export default function Home() {
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
                 <p>一次完成来源校核、真实性检查和 Word 生成；阻断问题必须处理后才能正式导出。</p>
-                {responseSupport?.manual_action_archive && (
+                {responseSupport?.manual_action_archive && workspace?.generation_mode !== "strict_template" && (
                   <details className="manual-archive" open={responseSupport.manual_action_archive.pending > 0}>
                     <summary>
                       人工事项档案
@@ -1287,7 +1342,7 @@ export default function Home() {
                     </div>
                     <div className="case-library-note">
                       <b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b>
-                      <span>机构私有，仅参考目录与写法；案例事实禁止直接自动回填。</span>
+                      <span>机构私有；可自动提取回填候选值并展示原文依据，人工确认后才进入正式文件。</span>
                     </div>
                     {missingTemplateDecisions.length > 0 ? (
                       <p className="template-field-warning">
@@ -1306,6 +1361,14 @@ export default function Home() {
                           <p>{item.value || "尚未提供"}</p>
                           <small>{item.reason}</small>
                           {item.source_reference && <small>来源：{item.source_reference}</small>}
+                          {item.evidence_title && (
+                            <details className="field-evidence">
+                              <summary>查看匹配依据</summary>
+                              <strong>{item.evidence_title}</strong>
+                              {item.evidence_excerpt && <blockquote>{item.evidence_excerpt}</blockquote>}
+                              <small>{item.evidence_location}{item.evidence_match_count > 1 ? ` · ${item.evidence_match_count} 处一致匹配` : ""}</small>
+                            </details>
+                          )}
                           {item.status === "REVIEW_REQUIRED" && item.value && (
                             <button
                               className="secondary compact"
@@ -1324,6 +1387,13 @@ export default function Home() {
                       ))}
                     </div>
                   </div>
+                )}
+                {workspace?.generation_mode === "strict_template" && !exportItem && (
+                  <button
+                    className="primary"
+                    disabled={Boolean(busy)}
+                    onClick={approveTemplateAndExport}
+                  >审核已匹配内容并生成原格式 Word</button>
                 )}
                 {proposalReview && (
                   <div className="review-summary ready">

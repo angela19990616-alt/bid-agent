@@ -54,7 +54,9 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /Requirement/);
   assert.match(page, /Section/);
   assert.match(page, /API_BASE/);
-  assert.match(page, /无需先建项目/);
+  assert.match(page, /只需上传招标文件/);
+  assert.match(page, /有“投标文件格式”.*没有格式才进入目录与方案生成/);
+  assert.match(page, /查看匹配依据/);
   assert.match(page, /响应事项分析/);
   assert.match(page, /技术方案事项/);
   assert.match(page, /评分响应/);

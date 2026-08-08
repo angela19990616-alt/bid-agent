@@ -194,10 +194,13 @@ class EnterpriseKnowledgeEngine:
         *,
         source_role: str = "response_content",
         organization_key: str = "default",
+        max_size_bytes: int = 20 * 1024 * 1024,
     ) -> dict:
         clean_filename = Path(filename).name
-        if len(content) > 20 * 1024 * 1024:
-            raise KnowledgeValidationError("历史知识文件超过20MB。")
+        if len(content) > max_size_bytes:
+            raise KnowledgeValidationError(
+                f"历史知识文件超过{max_size_bytes // 1024 // 1024}MB。"
+            )
         source_sha256 = hashlib.sha256(content).hexdigest()
         segments = parse_document(clean_filename, content)
         text = extract_text(clean_filename, content)

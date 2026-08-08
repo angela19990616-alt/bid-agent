@@ -50,6 +50,8 @@ def test_workspace_summary_loads_requirements_once(monkeypatch):
                 template_field_values={},
             )
         ),
+        enterprise_fact_resolver=SimpleNamespace(resolve=lambda _workspace_id: []),
+        case_fact_resolver=SimpleNamespace(resolve=lambda _workspace_id: {}),
     )
     workspace = SimpleNamespace(
         id=workspace_id,

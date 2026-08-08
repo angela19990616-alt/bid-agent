@@ -18,6 +18,9 @@ from app.core.strict_fill import (
     StrictFillDecisionEngine,
     TemplateField,
 )
+from app.knowledge.case_fact_resolver import CaseFactCandidate
+from app.knowledge.case_fact_resolver import CaseFactResolver
+from app.knowledge.enterprise_fact_resolver import EnterpriseFactResolver
 
 
 TEMPLATE_FIELD_LABELS = {
@@ -27,6 +30,15 @@ TEMPLATE_FIELD_LABELS = {
     "legal_representative": "法定代表人",
     "authorized_representative": "授权代表",
     "date": "日期",
+    "registered_address": "注册地址",
+    "postal_code": "邮政编码",
+    "contact_person": "联系人",
+    "contact_phone": "联系电话",
+    "fax": "传真",
+    "website": "网址",
+    "enterprise_qualification": "企业资质等级",
+    "bank_account": "银行账号",
+    "bid_round": "报价轮次",
 }
 
 
@@ -195,6 +207,7 @@ class GenerationProfileService:
         profile: GenerationProfile,
         fallback_values: dict[str, str] | None = None,
         enterprise_facts: list[EnterpriseFact] | None = None,
+        case_candidates: dict[str, CaseFactCandidate] | None = None,
     ) -> list[dict[str, Any]]:
         required = ResponseTemplateService.required_fields(
             profile.template_descriptor
@@ -269,6 +282,24 @@ class GenerationProfileService:
                 source_location=metadata.get("source_location") or "原响应模板",
             )
             decision = engine.decide(field, facts)
+            candidate = (case_candidates or {}).get(key)
+            if decision.status.value == "MISSING" and candidate is not None:
+                decisions.append({
+                    "field_key": key,
+                    "label": field.label,
+                    "value": candidate.value,
+                    "source_type": "historical_case",
+                    "source_reference": candidate.source_title,
+                    "confidence": candidate.confidence,
+                    "status": "REVIEW_REQUIRED",
+                    "reason": "从五份机构私有案例中匹配到候选值，确认后才可用于正式交付。",
+                    "required": field.required,
+                    "evidence_title": candidate.source_title,
+                    "evidence_excerpt": candidate.source_excerpt,
+                    "evidence_location": "机构私有案例库",
+                    "evidence_match_count": candidate.match_count,
+                })
+                continue
             decisions.append({
                 "field_key": key,
                 "label": field.label,
@@ -279,6 +310,10 @@ class GenerationProfileService:
                 "status": decision.status.value,
                 "reason": decision.reason,
                 "required": field.required,
+                "evidence_title": decision.source_reference,
+                "evidence_excerpt": None,
+                "evidence_location": decision.source_type,
+                "evidence_match_count": 1 if decision.value else 0,
             })
         return decisions
 
@@ -291,7 +326,26 @@ class GenerationProfileService:
         profile = GenerationProfileService.get(project_id)
         key = field_key.strip()
         if key not in profile.template_field_values:
-            raise ValueError("模板字段不存在或尚未填写。")
+            decisions = GenerationProfileService.template_field_decisions(
+                profile,
+                enterprise_facts=EnterpriseFactResolver().resolve(project_id),
+                case_candidates=CaseFactResolver().resolve(project_id),
+            )
+            candidate = next(
+                (
+                    item for item in decisions
+                    if item["field_key"] == key
+                    and item["status"] == "REVIEW_REQUIRED"
+                    and item["value"]
+                ),
+                None,
+            )
+            if candidate is None:
+                raise ValueError("模板字段不存在或尚未匹配到候选值。")
+            values = dict(profile.template_field_values)
+            values[key] = candidate["value"]
+            GenerationProfileService.update_template_fields(project_id, values)
+            profile = GenerationProfileService.get(project_id)
         report = dict(profile.last_fill_report or {})
         reviews = dict(report.get("field_reviews") or {})
         if action == "confirm":

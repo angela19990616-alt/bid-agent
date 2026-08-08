@@ -36,3 +36,7 @@ class TemplateFieldDecisionResponse(BaseModel):
     status: Literal["AUTO_FILL", "REVIEW_REQUIRED", "MISSING"]
     reason: str
     required: bool = True
+    evidence_title: str | None = None
+    evidence_excerpt: str | None = None
+    evidence_location: str | None = None
+    evidence_match_count: int = 0

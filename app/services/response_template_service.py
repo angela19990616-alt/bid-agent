@@ -33,6 +33,15 @@ FIELD_ALIASES = {
     "legal_representative": ("法定代表人",),
     "authorized_representative": ("授权代表", "委托代理人"),
     "date": ("日期", "响应日期", "投标日期"),
+    "registered_address": ("注册地址", "供应商地址", "投标人地址"),
+    "postal_code": ("邮政编码", "邮编"),
+    "contact_person": ("联系人", "项目联系人"),
+    "contact_phone": ("联系电话", "手机", "电话"),
+    "fax": ("传真",),
+    "website": ("网址", "网站"),
+    "enterprise_qualification": ("企业资质等级", "企业资质", "资质等级"),
+    "bank_account": ("银行账号", "账号"),
+    "bid_round": ("报价轮次", "轮次"),
 }
 PLACEHOLDER_RE = re.compile(
     r"\{\{\s*([\w\u4e00-\u9fff.-]+)\s*\}\}"
@@ -580,6 +589,7 @@ class ResponseTemplateService:
             normalized_values,
             filled,
         )
+        self._replace_legacy_x_placeholders(document, normalized_values, filled)
         descriptor_labels = set(data.get("field_labels") or ())
         for key, aliases in FIELD_ALIASES.items():
             if any(alias in descriptor_labels for alias in aliases):
@@ -795,6 +805,41 @@ class ResponseTemplateService:
                 )
                 if count:
                     filled.add(key)
+            if updated != original:
+                ResponseTemplateService._replace_paragraph_text(paragraph, updated)
+
+    @staticmethod
+    def _replace_legacy_x_placeholders(
+        document: DocumentType,
+        values: dict[str, str],
+        filled: set[str],
+    ) -> None:
+        """Replace legacy XXX blanks without flattening the source layout."""
+        for paragraph in ResponseTemplateService._all_paragraphs(document):
+            original = paragraph.text
+            updated = original
+            for key, aliases in FIELD_ALIASES.items():
+                value = values.get(key)
+                if not value:
+                    continue
+                alias_pattern = "|".join(
+                    sorted((re.escape(alias) for alias in aliases), key=len, reverse=True)
+                )
+                pattern = re.compile(
+                    rf"(?P<label>(?:{alias_pattern})(?:\s*[（(][^）)]{{0,24}}[）)])?\s*[:：]?)"
+                    r"\s*[Xx]{2,}"
+                )
+                updated, count = pattern.subn(
+                    lambda match: f"{match.group('label')} {value}", updated
+                )
+                if count:
+                    filled.add(key)
+            updated = re.sub(
+                r"[Xx]{2,4}年[Xx]{1,4}月[Xx]{1,4}日",
+                "【待审核日期】",
+                updated,
+            )
+            updated = re.sub(r"[Xx]{3,}", "【待审核】", updated)
             if updated != original:
                 ResponseTemplateService._replace_paragraph_text(paragraph, updated)
 

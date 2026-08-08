@@ -29,6 +29,7 @@ Allowed incident statuses: `new`, `triaging`, `confirmed`, `fixing`, `monitoring
 
 | run_at | trigger | overall_health | checked_items | incidents_changed | fixes | evidence | blockers | next_action |
 |---|---|---|---|---|---|---|---|---|
+| 2026-08-08 | 业务人员两分支严格回填验收 | healthy | PF-004, PF-005 | INC-006 fixing | 模板项目只保留上传与回填审核；独立导入五案例证据库；字段候选值带可读原文依据；过滤内部字段与 XXX 占位符 | 真实自贡 DOCX 完成上传、DeepSeek 生成、候选确认、导出与 python-docx 反向打开；267 段、6 表格、7186 非空字符，custom/XXX 均为 0；后端全量与前端 2 项通过 | 企业正式基础信息 API 尚未接入，4 类值仍以待审核标记保留；扫描 PDF 坐标级回填待后续 | 本地继续实际试用；确认后再部署 ECS |
 | 2026-08-08 | 模板字体保真回填 | healthy | PF-004, PF-005 | none | 检测模板响应区域字体档案；表格字段保留原 run 样式；生成正文继承模板字体/字号；前端展示检测结果 | 后端 260 项、前端生产构建通过；真实自贡模板响应区检测宋体，重新导出 20 页，新增正文宋体 12pt | 本地 LibreOffice 无微软宋体授权，不能作为中文字形像素级验收环境；导出文件保留原字体名称 | 在安装企业授权字体的 Windows Office 做最终像素对比 |
 | 2026-08-08 | 项目级子智能体分工 | maintenance | PF-001, PF-002, PF-004, PF-005 | none | 配置运维、代码、测试、安全隐私、投标业务、前端体验和发布审计 7 个只读专业 Agent；将调用路由和 Token 边界写入 AGENTS.md | 配置遵循 Codex 项目级 `.codex/agents/*.toml` 格式；并行上限 4；所有 Agent 为只读、职责单一 | 子智能体会增加 Token 消耗，不适合每次全员运行 | 在下一次真实代码变更中选 2-3 个角色试运行并评估产出/成本 |
 | 2026-08-08 | 当前架构盘点与知识图谱预案 | maintenance | PF-001, PF-002, PF-004, PF-005 | none | 新增可对外评审的全景架构文档，分开已实现、部分实现与未实现能力，增加企业知识图谱实体、关系、权限和演进顺序 | 已核对 Controlled Pipeline、Workspace Worker、Rule/Knowledge/Memory Engine、Strict Fill、Model Router、PostgreSQL/Redis 和 Docker Compose 真实实现 | 图谱尚未开发；真实企业 API 、目录树迁移和扫描 PDF 回填待后续 | 优先定义企业实体 ID、来源、权限和证据契约，再决定是否需要独立图数据库 |

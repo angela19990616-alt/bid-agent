@@ -15,6 +15,7 @@ from app.services.section_service import SectionService
 from app.services.workspace_job_service import WorkspaceJobService
 from app.knowledge.default_case_library import default_case_library_summary
 from app.knowledge.enterprise_fact_resolver import EnterpriseFactResolver
+from app.knowledge.case_fact_resolver import CaseFactResolver
 from app.services.generation_profile_service import GenerationProfileService
 from app.services.response_template_service import ResponseTemplateService
 from app.workflows.controlled_pipeline import ControlledPipeline
@@ -39,6 +40,8 @@ class WorkspaceService:
         plan_service: ProposalPlanService | None = None,
         rule_engine: RuleEngine | None = None,
         generation_profile_service: GenerationProfileService | None = None,
+        enterprise_fact_resolver: EnterpriseFactResolver | None = None,
+        case_fact_resolver: CaseFactResolver | None = None,
     ):
         self.document_service = document_service or ProjectDocumentService()
         self.requirement_service = requirement_service or RequirementService()
@@ -47,6 +50,10 @@ class WorkspaceService:
         self.generation_profile_service = (
             generation_profile_service or GenerationProfileService()
         )
+        self.enterprise_fact_resolver = (
+            enterprise_fact_resolver or EnterpriseFactResolver()
+        )
+        self.case_fact_resolver = case_fact_resolver or CaseFactResolver()
 
     def create_from_upload(
         self,
@@ -275,7 +282,7 @@ class WorkspaceService:
         budget = ModelBudgetService.summary_for_project(workspace_id)
         profile = self.generation_profile_service.get(workspace_id)
         case_library = default_case_library_summary()
-        enterprise_facts = EnterpriseFactResolver().resolve(workspace_id)
+        enterprise_facts = self.enterprise_fact_resolver.resolve(workspace_id)
         job = WorkspaceJobService.latest_status(workspace_id)
         return {
             "id": workspace.id,
@@ -337,6 +344,7 @@ class WorkspaceService:
                     profile,
                     {"project_name": workspace.name},
                     enterprise_facts,
+                    self.case_fact_resolver.resolve(workspace_id),
                 )
             ),
             "case_library_count": case_library["count"],
