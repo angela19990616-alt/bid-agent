@@ -26,3 +26,14 @@ def test_rejects_placeholders():
     ])
     assert "bidder_name" not in candidates
     assert "legal_representative" not in candidates
+
+
+def test_rejects_person_field_label_as_a_case_candidate():
+    candidates = CaseFactResolver.extract([
+        {
+            "title": "响应格式模板",
+            "content": "法定代表人：法人或授权代表",
+        }
+    ])
+
+    assert "legal_representative" not in candidates

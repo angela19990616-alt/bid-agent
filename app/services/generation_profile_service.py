@@ -346,6 +346,10 @@ class GenerationProfileService:
             raise ValueError("模板字段不存在，不能新增未识别字段。")
         if manual_value and action != "confirm":
             raise ValueError("只有确认操作可以保存人工修改值。")
+        if manual_value and not StrictFillDecisionEngine.value_matches_field_type(
+            key, manual_value
+        ):
+            raise ValueError("填写内容不符合该字段类型，请填写真实值。")
         if manual_value:
             previous_value = profile.template_field_values.get(key)
             values = dict(profile.template_field_values)

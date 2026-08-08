@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -55,13 +56,34 @@ class StrictFillDecisionEngine:
         "proposal_memory",
         "generated_proposal",
     }
+    PERSON_FIELDS = {
+        "legal_representative",
+        "authorized_representative",
+        "contact_person",
+    }
+    PERSON_LABEL_TOKENS = (
+        "法人", "法定代表人", "授权代表", "委托代理人",
+        "代表人", "联系人", "姓名", "签字", "签名", "或",
+    )
+
+    @classmethod
+    def value_matches_field_type(cls, canonical_key: str, value: str) -> bool:
+        """Reject labels/instructions that only look like field values."""
+        cleaned = re.sub(r"\s+", "", value or "").strip(":：|_-")
+        if not cleaned:
+            return False
+        if canonical_key in cls.PERSON_FIELDS:
+            if any(token in cleaned for token in cls.PERSON_LABEL_TOKENS):
+                return False
+            return bool(re.fullmatch(r"[一-鿿·]{2,20}", cleaned))
+        return True
 
     def decide(
         self,
         field: TemplateField,
         facts: list[EnterpriseFact],
     ) -> FillDecision:
-        candidates = [
+        authoritative = [
             fact
             for fact in facts
             if (
@@ -70,6 +92,10 @@ class StrictFillDecisionEngine:
                 and fact.source_type not in self.NON_AUTHORITATIVE_FACT_SOURCES
             )
         ]
+        candidates = [
+            fact for fact in authoritative
+            if self.value_matches_field_type(field.canonical_key, fact.value)
+        ]
         if not candidates:
             reference_only = any(
                 fact.canonical_key == field.canonical_key
@@ -77,6 +103,15 @@ class StrictFillDecisionEngine:
                 and fact.source_type in self.NON_AUTHORITATIVE_FACT_SOURCES
                 for fact in facts
             )
+            if authoritative:
+                missing_reason = "匹配内容不符合字段类型，已拒绝自动回填。"
+            elif reference_only:
+                missing_reason = (
+                    "历史案例仅可参考写法，不能作为企业事实自动回填；"
+                    "请从已授权企业数据库补充并核验。"
+                )
+            else:
+                missing_reason = "当前企业资料库不存在该信息，请补充后继续。"
             return FillDecision(
                 field=field,
                 value=None,
@@ -84,12 +119,7 @@ class StrictFillDecisionEngine:
                 source_reference=None,
                 confidence=0.0,
                 status=FillStatus.MISSING,
-                reason=(
-                    "历史案例仅可参考写法，不能作为企业事实自动回填；"
-                    "请从已授权企业数据库补充并核验。"
-                    if reference_only
-                    else "当前企业资料库不存在该信息，请补充后继续。"
-                ),
+                reason=missing_reason,
             )
 
         distinct_values = {fact.value.strip() for fact in candidates}

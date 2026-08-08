@@ -36,6 +36,32 @@ def test_verified_enterprise_fact_can_be_auto_filled():
     assert decision.source_reference == "工商信息快照-2026-08-08"
 
 
+def test_person_field_rejects_a_label_as_the_value():
+    decision = StrictFillDecisionEngine().decide(
+        FIELD,
+        [
+            EnterpriseFact(
+                canonical_key="legal_representative",
+                value="法人或授权代表",
+                source_type="company_profile",
+                source_reference="企业资料库",
+                confidence=1.0,
+                verified=True,
+            )
+        ],
+    )
+
+    assert decision.status == FillStatus.MISSING
+    assert decision.value is None
+    assert "不符合字段类型" in decision.reason
+
+
+def test_person_field_accepts_a_real_name_with_middle_dot():
+    assert StrictFillDecisionEngine.value_matches_field_type(
+        "authorized_representative", "阿依古丽·艾力"
+    ) is True
+
+
 def test_missing_fact_is_never_invented():
     decision = StrictFillDecisionEngine().decide(FIELD, [])
 
