@@ -78,6 +78,11 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /阻断问题必须处理后才能正式导出/);
   assert.match(page, /已自动继承原模板字体/);
   assert.match(page, /不再强制替换为系统默认字体/);
+  assert.match(page, /保存并确认/);
+  assert.match(page, /人工确认来源/);
+  assert.match(page, /ResizeObserver/);
+  assert.match(page, /--word-preview-scale/);
+  assert.match(css, /zoom: var\(--word-preview-scale/);
   assert.match(page, /下载可读 Review/);
   assert.match(page, /recommended_for_delivery/);
   assert.doesNotMatch(page, /createProject|创建项目/);
