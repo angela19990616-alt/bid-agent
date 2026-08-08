@@ -18,7 +18,7 @@ def test_ecs_deploy_script_has_safety_and_recovery_gates():
     assert "docker compose build backend worker frontend" in content
     assert "docker compose logs --tail=200 worker" in content
     assert "curl --fail" in content
-    assert "http://127.0.0.1/api/v1/access/status" in content
+    assert "http://127.0.0.1:8080/api/v1/access/status" in content
     assert "代码回滚点" in content
     assert "rm -rf" not in content
     assert "git reset --hard" not in content

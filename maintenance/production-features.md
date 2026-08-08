@@ -12,12 +12,15 @@
 
 | PF-006 | 正式域名与 HTTPS 边界网关 | maintenance | critical | bid-agent | https://bid.angela-tech.com | `docker-compose.yml`, `deploy/nginx-bid.conf`, `frontend/nginx.conf` | TLS、HTTP 跳转、裸 IP 拒绝、邀请码状态、核心 API 401、容器健康 | 正式域名 HTTPS 200；可信证书自动续期；裸 IP 不展示业务；上传与长任务保留 25m/300s；数据卷不变 | 本文件 | release | 2026-08-09 | 本次发布后 | degraded | DNS 已指向 ECS；当前 frontend 仍直接占用公网 80，宿主无 Nginx/Certbot，443 未监听 | 80 端口移交有短暂切换；需确认 443 安全组可达 |
 
+| PF-006 | 正式域名与 HTTPS 边界网关 | maintenance | critical | bid-agent | https://bid.angela-tech.com | `docker-compose.yml`, `deploy/nginx-bid.conf`, `frontend/nginx.conf` | TLS、HTTP 跳转、裸 IP 拒绝、邀请码状态、核心 API 401、容器健康 | 正式域名 HTTPS 200；可信证书自动续期；裸 IP 不展示业务；上传与长任务保留 25m/300s；数据卷不变 | 本文件 | release | 2026-08-09 | 本次发布后 | degraded | DNS 已指向 ECS；当前 frontend 仍直接占用公网 80，宿主无 Nginx/Certbot，443 未监听 | 80 端口移交有短暂切换；需确认 443 安全组可达 |
+
 Allowed feature statuses: `discovery`, `active`, `degraded`, `maintenance`, `retired`.
 
 ## Incident and feedback queue
 
 | id | opened_at | feature_id | source | severity | symptom | affected_scope | reproduction | status | root_cause_or_hypothesis | fix | verification | owner | next_action | updated_at |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| INC-012 | 2026-08-09 | PF-006 | Angela | sev2 | 正式域名仅 HTTP 可用，HTTPS 不可用且裸 IP 直接展示业务系统 | Bid Agent 公网入口 | 访问 `https://bid.angela-tech.com` 与 `http://101.200.154.141` | fixing | frontend 容器直接绑定公网 80；宿主未安装 Nginx/Certbot，443 无监听，也没有基于 Host 的默认拒绝 | frontend 改绑 `127.0.0.1:8080`，宿主 Nginx 处理严格域名、TLS、默认 444、25m 上传、长任务超时与邀请码限流 | SSH、仓库、Docker、监听端口只读检查完成；17 项本地安全/鉴权测试通过；本机 vinext 构建受已知 60s 模块加载超时影响，待 ECS 构建 | Codex | 提交配置，ECS 备份后低停机切换并签发证书 | 2026-08-09 |
 | INC-012 | 2026-08-09 | PF-006 | Angela | sev2 | 正式域名仅 HTTP 可用，HTTPS 不可用且裸 IP 直接展示业务系统 | Bid Agent 公网入口 | 访问 `https://bid.angela-tech.com` 与 `http://101.200.154.141` | fixing | frontend 容器直接绑定公网 80；宿主未安装 Nginx/Certbot，443 无监听，也没有基于 Host 的默认拒绝 | frontend 改绑 `127.0.0.1:8080`，宿主 Nginx 处理严格域名、TLS、默认 444、25m 上传、长任务超时与邀请码限流 | SSH、仓库、Docker、监听端口只读检查完成；16 项本地安全/鉴权测试通过；本机 vinext 构建受已知 60s 模块加载超时影响，待 ECS 构建 | Codex | 提交配置，ECS 备份后低停机切换并签发证书 | 2026-08-09 |
 | INC-011 | 2026-08-09 | PF-004, PF-005 | 用户本地实测 | sev2 | 已有表格模板却提示未识别格式并处理失败 | 最新服务类磋商DOCX严格回填 | 上传后等待后台规划 | closed | Worker仍运行旧镜像并拒绝零写作章节；重复的“响应文件格式”标题又因空格差异误命中前部说明章节 | 重建Backend/Worker加载字段型模板修复；正式章节候选按目录/说明排除并优先后部正文；Word XML文本只读取叶节点避免标题重复 | 同一真实文件命中点由117移至496，识别17表格、28字段；项目恢复outline_ready/strict_template；17项模板测试通过，五容器和健康接口正常 | codex | 业务人员刷新后直接审核28个自动匹配字段并导出 | 2026-08-09 |
 | INC-001 | 2026-07-31 03:53 CST | PF-002 | 用户反馈与生产日志 | sev2 | “章节生成失败，请检查模型配置或稍后重试” | 天津轨道交通方案至少 3 个章节 | 点击生成章节；生产连续返回 502 | closed | `qwen3.7-plus`、`qwen-plus-2025-07-28` 无权限；`qwen-max` 输入超过 30720 | 已实现 10 模型池、高级模型优先、零消耗失败冷却、计费失败上限和 24,000 字符 Prompt 预算 | 生产真实失败章节由 qwen-max 一次成功，2,298 字，0 条校核问题；本地 164 项测试通过 | codex | 按发布周期持续监控 | 2026-07-31 |

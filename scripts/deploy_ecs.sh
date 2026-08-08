@@ -3,7 +3,7 @@ set -euo pipefail
 
 EXPECTED_DIR="${BID_AGENT_DIR:-/opt/bid-agent}"
 DEPLOY_BRANCH="${BID_AGENT_BRANCH:-codex/v2-response-map}"
-HEALTH_URL="${BID_AGENT_HEALTH_URL:-http://127.0.0.1/health}"
+HEALTH_URL="${BID_AGENT_HEALTH_URL:-http://127.0.0.1:8080/health}"
 BACKUP_DIR="${BID_AGENT_BACKUP_DIR:-$EXPECTED_DIR/backups}"
 
 if [[ "$(pwd -P)" != "$EXPECTED_DIR" ]]; then
@@ -46,7 +46,7 @@ healthy=0
 for _ in $(seq 1 30); do
   if curl --fail --silent --show-error "$HEALTH_URL" >/dev/null \
     && curl --fail --silent --show-error \
-      "http://127.0.0.1/api/v1/access/status" >/dev/null; then
+      "http://127.0.0.1:8080/api/v1/access/status" >/dev/null; then
     healthy=1
     break
   fi

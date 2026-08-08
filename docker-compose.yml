@@ -114,7 +114,7 @@ services:
     environment:
       NGINX_ENVSUBST_FILTER: BID_AGENT_EDGE_SECRET
     ports:
-      - "80:80"
+      - "127.0.0.1:8080:80"
 
 volumes:
   postgres_data:

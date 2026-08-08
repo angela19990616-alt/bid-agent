@@ -45,3 +45,34 @@ def test_ecs_gateway_rate_limits_reads_and_paid_writes_per_ip():
     assert "zone=bid_api_per_ip" in CONFIG
     assert "zone=bid_writes_per_ip" in CONFIG
     assert "limit_req_status 429" in CONFIG
+
+
+def test_frontend_is_only_published_on_the_host_loopback():
+    assert '"127.0.0.1:8080:80"' in COMPOSE
+    assert '"80:80"' not in COMPOSE
+
+
+def test_host_gateway_enforces_domain_tls_and_safe_limits():
+    host_config = (
+        Path(__file__).parents[1] / "deploy" / "nginx-bid.conf"
+    ).read_text(encoding="utf-8")
+    assert "server_name bid.angela-tech.com" in host_config
+    assert "listen 80 default_server" in host_config
+    assert "listen 443 ssl http2 default_server" in host_config
+    assert "return 444" in host_config
+    assert "client_max_body_size 25m" in host_config
+    assert "proxy_read_timeout 300s" in host_config
+    assert "zone=bid_invite" in host_config
+    assert "Strict-Transport-Security" in host_config
+    assert "/etc/nginx/proxy_params" not in host_config
+
+
+def test_bootstrap_gateway_rejects_raw_ip_and_serves_acme_challenges():
+    bootstrap = (
+        Path(__file__).parents[1] / "deploy" / "nginx-bid-bootstrap.conf"
+    ).read_text(encoding="utf-8")
+    assert "listen 80 default_server" in bootstrap
+    assert "return 444" in bootstrap
+    assert "server_name bid.angela-tech.com" in bootstrap
+    assert "/.well-known/acme-challenge/" in bootstrap
+    assert "proxy_pass http://127.0.0.1:8080" in bootstrap
