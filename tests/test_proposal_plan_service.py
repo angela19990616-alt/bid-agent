@@ -93,6 +93,25 @@ def test_strict_template_does_not_fall_back_to_generated_outline():
     ) == []
 
 
+def test_strict_field_only_template_is_a_valid_empty_writing_outline():
+    chapters = ProposalPlanService._template_chapters(
+        {
+            "outline": [
+                {"title": "格式1 投标函", "level": 1},
+                {"title": "格式2 法定代表人身份证明", "level": 1},
+                {"title": "格式3 报价表", "level": 1},
+            ]
+        },
+        [],
+        {
+            "writing_section_patterns": ["技术方案", "实施方案"],
+            "non_writing_section_patterns": ["投标函", "身份证明", "报价表"],
+        },
+    )
+
+    assert chapters == []
+
+
 def test_reconcile_feedback_restores_requirement_to_mapped_draft(
     monkeypatch,
 ):

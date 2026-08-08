@@ -88,11 +88,17 @@ class ProposalPlanService:
                         active_rules,
                         format_constraints=format_constraints,
                     )
-                if not chapters:
+                # A detected response template can be field/table-only. It is
+                # still a valid strict-fill project even when there is no
+                # long-form chapter for the model to write. Only the true
+                # no-template branch requires a generated writing outline.
+                if (
+                    not chapters
+                    and generation_profile.get("generation_mode")
+                    != "strict_template"
+                ):
                     raise ProposalPlanError(
-                        "未在原投标文件格式中识别到可回填的写作章节。"
-                        if generation_profile.get("generation_mode") == "strict_template"
-                        else "未提取到可用于技术方案撰写的要求。"
+                        "未提取到可用于技术方案撰写的要求。"
                     )
                 cursor.execute(
                     """

@@ -33,14 +33,22 @@ class ExportValidationError(Exception):
 
 class ExportService:
     def create_full(self, project_id: UUID) -> dict:
-        review = ProposalReviewService().prepare_for_export(project_id)
-        if not review["overall"]["recommended_for_delivery"]:
-            raise ExportValidationError(
-                "整本交付审查未通过。请先处理阻断风险并重新确认相关章节。"
-            )
-        data = self._load_full_export_input(project_id)
         profile_service = GenerationProfileService()
         profile = profile_service.get(project_id)
+        field_only_template = (
+            profile.generation_mode == "strict_template"
+            and not SectionService().list(project_id)
+        )
+        if not field_only_template:
+            review = ProposalReviewService().prepare_for_export(project_id)
+            if not review["overall"]["recommended_for_delivery"]:
+                raise ExportValidationError(
+                    "整本交付审查未通过。请先处理阻断风险并重新确认相关章节。"
+                )
+        data = self._load_full_export_input(
+            project_id,
+            allow_empty_sections=field_only_template,
+        )
         export_id = uuid4()
         safe_project = re.sub(
             r'[\\/:*?"<>|\s]+', "_", data["project_name"]
@@ -397,7 +405,11 @@ class ExportService:
                 )
 
     @staticmethod
-    def _load_full_export_input(project_id: UUID) -> dict:
+    def _load_full_export_input(
+        project_id: UUID,
+        *,
+        allow_empty_sections: bool = False,
+    ) -> dict:
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
@@ -433,7 +445,7 @@ class ExportService:
                     (project_id,),
                 )
                 sections = cursor.fetchall()
-                if not sections:
+                if not sections and not allow_empty_sections:
                     raise ExportValidationError("技术方案尚无章节。")
                 if any(
                     row["status"] != "approved" or not row["content"]

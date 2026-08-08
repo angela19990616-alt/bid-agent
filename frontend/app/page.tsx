@@ -559,7 +559,10 @@ export default function Home() {
       const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
       setWorkspace(created);
       let completed = await waitForWorkspace(created.id, created);
-      if (completed.generation_mode === "strict_template") {
+      if (
+        completed.generation_mode === "strict_template"
+        && completed.outline.length > 0
+      ) {
         completed = await request<Workspace>(
           `/workspaces/${completed.id}/generate-draft`,
           { method: "POST" },
@@ -1339,8 +1342,8 @@ export default function Home() {
             <div className="export-layout">
               <div className="delivery-card">
                 <div className="delivery-icon">W</div>
-                <div><span className="panel-label">DELIVERABLE</span><h3>{workspace?.name ?? "技术方案"}</h3><p>系统将按目录顺序合并所有已人工确认章节，并附技术要求来源总表。</p></div>
-                <span className={`approval ${sections.length > 0 && sections.every((item) => item.status === "approved") ? "ready" : ""}`}>{sections.length > 0 && sections.every((item) => item.status === "approved") ? "全部章节已确认" : "需逐章生成并确认"}</span>
+                <div><span className="panel-label">DELIVERABLE</span><h3>{workspace?.name ?? "技术方案"}</h3><p>{workspace?.generation_mode === "strict_template" && sections.length === 0 ? "系统将直接在原投标文件格式中回填已匹配字段，不额外虚构技术章节。" : "系统将按目录顺序合并所有已人工确认章节，并附技术要求来源总表。"}</p></div>
+                <span className={`approval ${(workspace?.generation_mode === "strict_template" && sections.length === 0) || (sections.length > 0 && sections.every((item) => item.status === "approved")) ? "ready" : ""}`}>{workspace?.generation_mode === "strict_template" && sections.length === 0 ? "原格式字段待审核" : sections.length > 0 && sections.every((item) => item.status === "approved") ? "全部章节已确认" : "需逐章生成并确认"}</span>
               </div>
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
