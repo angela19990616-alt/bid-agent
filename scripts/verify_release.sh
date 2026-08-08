@@ -24,6 +24,19 @@ echo "[4/7] 前端生产构建"
 npm --prefix frontend run build
 
 echo "[5/7] Docker Compose 配置检查"
+verify_env_created=0
+if [[ ! -f .env ]]; then
+  # Compose requires a service-level env_file to exist even when CI supplies
+  # every validation value. Never commit secrets: use a short-lived empty file.
+  : > .env
+  verify_env_created=1
+fi
+cleanup_verify_env() {
+  if [[ "$verify_env_created" == "1" ]]; then
+    rm -f .env
+  fi
+}
+trap cleanup_verify_env EXIT
 if docker compose version >/dev/null 2>&1; then
   POSTGRES_PASSWORD=verify-only \
   BID_AGENT_EDGE_SECRET=verify-only \
@@ -35,6 +48,8 @@ elif command -v docker-compose >/dev/null 2>&1; then
 else
   echo "跳过：本机未安装 Docker Compose；CI/ECS 必须执行此项。"
 fi
+cleanup_verify_env
+trap - EXIT
 
 echo "[6/7] 已跟踪文件敏感信息检查"
 if git grep -nI -E 'sk-[A-Za-z0-9_-]{24,}' -- \
