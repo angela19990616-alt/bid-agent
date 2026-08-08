@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from app.services.export_service import ExportService, ExportValidationError
 from app.services.response_template_service import TemplateFillReport
@@ -96,3 +97,72 @@ def test_field_only_template_skips_proposal_review_and_allows_empty_sections(
         ExportService().create_full("project")
 
     assert calls == {"review": 0, "allow_empty": True}
+
+
+def test_template_preview_builds_real_docx_without_delivery_record(
+    monkeypatch, tmp_path,
+):
+    template = tmp_path / "template.docx"
+    template.write_bytes(b"template-package")
+    captured = {}
+
+    class ProfileService:
+        def get(self, _project_id):
+            return SimpleNamespace(
+                generation_mode="strict_template",
+                template_descriptor={},
+            )
+
+        def template_path(self, _profile):
+            return template
+
+        def template_field_decisions(self, *_args):
+            return [{
+                "field_key": "bidder_name",
+                "value": "候选企业名称",
+                "status": "REVIEW_REQUIRED",
+            }]
+
+    class TemplateService:
+        def fill_docx(self, **kwargs):
+            captured.update(kwargs)
+            kwargs["output_path"].write_bytes(b"preview-docx")
+
+    monkeypatch.setattr(
+        "app.services.export_service.GenerationProfileService",
+        ProfileService,
+    )
+    monkeypatch.setattr(
+        "app.services.export_service.ResponseTemplateService",
+        TemplateService,
+    )
+    monkeypatch.setattr(
+        "app.services.export_service.EnterpriseFactResolver.resolve",
+        lambda _self, _project_id: [],
+    )
+    monkeypatch.setattr(
+        "app.services.export_service.CaseFactResolver.resolve",
+        lambda _self, _project_id: {},
+    )
+    monkeypatch.setattr(
+        ExportService,
+        "_load_full_export_input",
+        lambda _self, _project_id, **_kwargs: {
+            "project_name": "测试项目",
+            "sections": [],
+        },
+    )
+    monkeypatch.setattr(
+        ExportService,
+        "resolve_path",
+        lambda _storage_key: tmp_path / "preview.docx",
+    )
+
+    path = ExportService().create_template_preview("project")
+
+    assert path.read_bytes() == b"preview-docx"
+    assert captured["template_content"] == b"template-package"
+    assert captured["field_values"] == {
+        "bidder_name": "候选企业名称",
+        "project_name": "测试项目",
+    }

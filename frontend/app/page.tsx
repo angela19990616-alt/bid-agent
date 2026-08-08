@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Step = "upload" | "requirements" | "outline" | "writer" | "export";
 type RequirementView = "all" | "proposal" | "scoring" | "compliance" | "risk" | "conflicts";
@@ -368,6 +368,50 @@ function highlightedEvidence(text: string, value: string | null) {
   const index = text.toLocaleLowerCase().indexOf(value.toLocaleLowerCase());
   if (index < 0) return text;
   return <>{text.slice(0, index)}<mark>{text.slice(index, index + value.length)}</mark>{text.slice(index + value.length)}</>;
+}
+
+function WordDocumentPreview({ workspace }: { workspace: Workspace }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [previewState, setPreviewState] = useState<"loading" | "ready" | "error">("loading");
+  const revision = (workspace.template_field_decisions ?? [])
+    .map((item) => `${item.field_key}:${item.status}:${item.value ?? ""}`)
+    .join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    setPreviewState("loading");
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/workspaces/${workspace.id}/template-preview`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("preview unavailable");
+        const data = await response.arrayBuffer();
+        const { renderAsync } = await import("docx-preview");
+        if (cancelled || !containerRef.current) return;
+        containerRef.current.replaceChildren();
+        await renderAsync(data, containerRef.current, undefined, {
+          className: "word-page",
+          inWrapper: true,
+          breakPages: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+        });
+        if (!cancelled) setPreviewState("ready");
+      } catch {
+        if (!cancelled) setPreviewState("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [workspace.id, revision]);
+
+  return <div className="word-preview-shell">
+    {previewState === "loading" && <div className="word-preview-status">正在生成 Word 页面预览…</div>}
+    {previewState === "error" && <div className="word-preview-status error">Word 预览暂时未生成，请刷新重试；原格式导出不受影响。</div>}
+    <div ref={containerRef} className="word-preview-canvas" aria-label="实际回填 Word 文档预览" />
+  </div>;
 }
 
 function estimateLabel(item: Workspace) {
@@ -1381,20 +1425,7 @@ export default function Home() {
                     <div className="strict-fill-workbench">
                       <section className="fill-preview-pane">
                         <header><span className="panel-label">DOCUMENT PREVIEW</span><h3>回填结果预览</h3><small>{workspace.template_filename}</small></header>
-                        <div className="fill-preview-document">
-                          <h4>投标文件响应格式</h4>
-                          {workspace.template_outline?.slice(0, 12).map((item) => (
-                            <div key={`${item.order}-${item.title}`} className="preview-outline" data-level={item.level}>{item.title}</div>
-                          ))}
-                          {(workspace.template_field_decisions ?? []).map((item) => (
-                            <div key={item.field_key} className={`fill-preview-field ${item.status.toLowerCase()}`}>
-                              <span>{item.label}</span><strong>{item.value || "待企业资料库补充"}</strong>
-                            </div>
-                          ))}
-                          {sections.filter((item) => item.current_version).map((section) => (
-                            <article key={section.id} className="chapter-preview"><h4>{section.title}</h4><p>{section.current_version?.content}</p></article>
-                          ))}
-                        </div>
+                        <WordDocumentPreview workspace={workspace} />
                       </section>
                       <section className="fill-review-pane">
                         <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验来源并导出</h3><p>系统自动匹配，业务人员只需审核，不重复填写。</p></header>

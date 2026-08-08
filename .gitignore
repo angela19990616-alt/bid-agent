@@ -49,3 +49,4 @@ dist/
 .idea/
 .vscode/
 *.swp
+artifacts/qa/

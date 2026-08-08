@@ -357,19 +357,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .fill-review-pane { padding: 0 16px 16px; }
 .fill-review-pane > header { margin: 0 -16px 12px; border-radius: 12px 12px 0 0; }
 .fill-review-pane > header p { margin: 4px 0 0; }
-.fill-preview-document { max-height: 72vh; overflow: auto; margin: 16px; padding: 38px 9%; background: white; box-shadow: 0 5px 22px rgba(24, 49, 37, .09); font-family: var(--serif); }
-.fill-preview-document > h4 { margin: 0 0 24px; text-align: center; font-size: 20px; }
-.preview-outline { margin: 8px 0; color: #33443c; font-weight: 650; }
-.preview-outline[data-level="2"] { padding-left: 18px; }
-.preview-outline[data-level="3"] { padding-left: 36px; font-weight: 500; }
-.preview-outline[data-level="4"], .preview-outline[data-level="5"] { padding-left: 54px; font-weight: 400; }
-.fill-preview-field { display: grid; grid-template-columns: minmax(110px, .65fr) minmax(0, 1.35fr); gap: 12px; margin: 10px 0; padding: 10px 0; border-bottom: 1px dotted #b7c3bd; line-height: 1.6; }
-.fill-preview-field span { color: #596a62; }
-.fill-preview-field strong { overflow-wrap: anywhere; }
-.fill-preview-field.missing strong { color: #9b4a43; font-weight: 500; }
-.chapter-preview { margin-top: 28px; }
-.chapter-preview h4 { font-size: 17px; }
-.chapter-preview p { white-space: pre-wrap; line-height: 1.9; }
+.word-preview-shell { position: relative; max-height: 75vh; overflow: auto; padding: 16px; background: #dfe4e1; }
+.word-preview-status { position: sticky; z-index: 2; top: 0; padding: 10px 12px; border-radius: 8px; color: #365046; background: rgba(255, 255, 255, .94); text-align: center; box-shadow: 0 2px 10px rgba(0, 0, 0, .08); }
+.word-preview-status.error { color: #8b3f38; }
+.word-preview-canvas { min-height: 420px; }
+.word-preview-canvas .docx-wrapper { padding: 12px 0 !important; background: transparent !important; }
+.word-preview-canvas .docx-wrapper > section.docx { margin: 0 auto 16px !important; box-shadow: 0 5px 22px rgba(24, 49, 37, .16); }
 .evidence-open-button { width: fit-content; padding: 6px 9px; border: 1px solid #b8c9c0; border-radius: 6px; color: var(--green-800); background: white; font-weight: 700; }
 .strict-export-button { width: 100%; margin-top: 14px; }
 .evidence-modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(17, 31, 25, .58); backdrop-filter: blur(2px); }

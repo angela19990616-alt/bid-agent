@@ -58,6 +58,9 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /有“投标文件格式”.*没有格式才进入目录与方案生成/);
   assert.match(page, /查看原文定位/);
   assert.match(page, /回填结果预览/);
+  assert.match(page, /WordDocumentPreview/);
+  assert.match(page, /template-preview/);
+  assert.match(page, /docx-preview/);
   assert.match(page, /evidence-modal/);
   assert.match(page, /visibleEvidenceSource/);
   assert.doesNotMatch(page, /current_project_manual_archive/);

@@ -18,6 +18,7 @@ from app.services.proposal_review_service import (
 )
 from app.services.generation_profile_service import GenerationProfileService
 from app.knowledge.enterprise_fact_resolver import EnterpriseFactResolver
+from app.knowledge.case_fact_resolver import CaseFactResolver
 from app.services.response_template_service import ResponseTemplateService
 from app.services.section_service import SectionService
 from app.workflows.controlled_pipeline import ControlledPipeline
@@ -32,6 +33,53 @@ class ExportValidationError(Exception):
 
 
 class ExportService:
+    def create_template_preview(self, project_id: UUID) -> Path:
+        """Build a disposable DOCX preview without creating a delivery record."""
+        profile_service = GenerationProfileService()
+        profile = profile_service.get(project_id)
+        if profile.generation_mode != "strict_template":
+            raise ExportValidationError("当前方案未使用原投标文件格式。")
+        template_path = profile_service.template_path(profile)
+        if template_path is None or not template_path.is_file():
+            raise ExportValidationError("响应模板原文件不存在。")
+        data = self._load_full_export_input(
+            project_id,
+            allow_empty_sections=True,
+            allow_draft_sections=True,
+        )
+        decisions = profile_service.template_field_decisions(
+            profile,
+            {"project_name": data["project_name"]},
+            EnterpriseFactResolver().resolve(project_id),
+            CaseFactResolver().resolve(project_id),
+        )
+        preview_values = {
+            item["field_key"]: item["value"]
+            for item in decisions
+            if item["status"] != "MISSING" and item["value"]
+        }
+        destination = self.resolve_path(f"{project_id}/strict-fill-preview.docx")
+        temporary = destination.with_name(
+            f"strict-fill-preview-{uuid4().hex}.tmp"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            ResponseTemplateService().fill_docx(
+                template_content=template_path.read_bytes(),
+                output_path=temporary,
+                descriptor=profile.template_descriptor,
+                field_values={
+                    **preview_values,
+                    "project_name": data["project_name"],
+                },
+                sections=data["sections"],
+            )
+            temporary.replace(destination)
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            raise ExportValidationError("Word 审阅稿预览生成失败。") from exc
+        return destination
+
     def create_full(self, project_id: UUID) -> dict:
         profile_service = GenerationProfileService()
         profile = profile_service.get(project_id)
@@ -409,6 +457,7 @@ class ExportService:
         project_id: UUID,
         *,
         allow_empty_sections: bool = False,
+        allow_draft_sections: bool = False,
     ) -> dict:
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
@@ -447,7 +496,7 @@ class ExportService:
                 sections = cursor.fetchall()
                 if not sections and not allow_empty_sections:
                     raise ExportValidationError("技术方案尚无章节。")
-                if any(
+                if not allow_draft_sections and any(
                     row["status"] != "approved" or not row["content"]
                     for row in sections
                 ):
@@ -512,6 +561,7 @@ class ExportService:
                     ),
                 }
                 for row in sections
+                if row["content"]
             ],
             "requirements": list(grouped.values()),
         }

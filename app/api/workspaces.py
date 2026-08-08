@@ -558,6 +558,25 @@ def export_full_proposal(
         raise AppError(409, "CONFLICT_PENDING", str(exc)) from exc
 
 
+@router.get("/{workspace_id}/template-preview")
+def preview_strict_template(
+    workspace_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
+    try:
+        path = ExportService().create_template_preview(workspace_id)
+    except ExportValidationError as exc:
+        raise AppError(422, "TEMPLATE_PREVIEW_FAILED", str(exc)) from exc
+    return FileResponse(
+        path,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
+        headers={"Cache-Control": "no-store, private"},
+    )
+
+
 @router.get("/{workspace_id}/review")
 def get_proposal_review(
     workspace_id: UUID,
