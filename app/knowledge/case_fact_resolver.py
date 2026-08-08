@@ -17,6 +17,7 @@ class CaseFactCandidate:
     value: str
     source_title: str
     source_excerpt: str
+    source_location: str
     confidence: float
     match_count: int
     alternatives: tuple[str, ...] = ()
@@ -91,7 +92,7 @@ class CaseFactResolver:
 
     @classmethod
     def extract(cls, entries: list[dict[str, Any]]) -> dict[str, CaseFactCandidate]:
-        matches: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+        matches: dict[str, list[tuple[str, str, str, str]]] = defaultdict(list)
         for entry in entries:
             text = str(entry.get("content") or "")
             title = str(entry.get("title") or "历史投标案例")
@@ -101,13 +102,20 @@ class CaseFactResolver:
                         value = cls._clean(found.group(1))
                         if not cls._usable(value):
                             continue
-                        start = max(0, found.start() - 45)
-                        end = min(len(text), found.end() + 75)
+                        start = max(0, found.start() - 90)
+                        end = min(len(text), found.end() + 130)
                         excerpt = re.sub(r"\s+", " ", text[start:end]).strip()
-                        matches[key].append((value, title, excerpt))
+                        paragraph_start = text.count("\n", 0, found.start()) + 1
+                        paragraph_end = text.count("\n", 0, found.end()) + 1
+                        location = (
+                            f"原文第 {paragraph_start} 段"
+                            if paragraph_start == paragraph_end
+                            else f"原文第 {paragraph_start}-{paragraph_end} 段"
+                        )
+                        matches[key].append((value, title, excerpt, location))
         result: dict[str, CaseFactCandidate] = {}
         for key, items in matches.items():
-            counts = Counter(value for value, _, _ in items)
+            counts = Counter(value for value, _, _, _ in items)
             value, count = counts.most_common(1)[0]
             source = next(item for item in items if item[0] == value)
             alternatives = tuple(item for item, _ in counts.most_common()[1:4])
@@ -116,6 +124,7 @@ class CaseFactResolver:
                 value=value,
                 source_title=source[1],
                 source_excerpt=source[2],
+                source_location=source[3],
                 confidence=min(0.92, 0.55 + count * 0.08),
                 match_count=count,
                 alternatives=alternatives,

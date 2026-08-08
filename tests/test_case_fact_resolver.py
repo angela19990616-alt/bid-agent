@@ -17,6 +17,7 @@ def test_extracts_review_candidates_with_readable_evidence():
     assert candidates["bidder_name"].match_count == 2
     assert candidates["legal_representative"].value == "金永祥"
     assert "法定代表人" in candidates["legal_representative"].source_excerpt
+    assert candidates["legal_representative"].source_location == "原文第 2 段"
 
 
 def test_rejects_placeholders():

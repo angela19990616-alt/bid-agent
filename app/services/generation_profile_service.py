@@ -297,7 +297,7 @@ class GenerationProfileService:
                     "required": field.required,
                     "evidence_title": candidate.source_title,
                     "evidence_excerpt": candidate.source_excerpt,
-                    "evidence_location": "机构私有案例库",
+                    "evidence_location": candidate.source_location,
                     "evidence_match_count": candidate.match_count,
                 })
                 continue

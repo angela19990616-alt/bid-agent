@@ -149,6 +149,7 @@ type Workspace = {
   }>;
 };
 type ExportItem = { id: string; status: string; filename?: string | null };
+type TemplateFieldDecision = Workspace["template_field_decisions"][number];
 type ProposalReview = {
   overall: {
     recommended_for_delivery: boolean;
@@ -349,7 +350,7 @@ function isInternalEvidenceLabel(value: string | null | undefined) {
   return Boolean(value && /^(?:current_project|manual_verified|historical_case|tender_document|custom_)/i.test(value));
 }
 
-function visibleEvidenceSource(item: Workspace["template_field_decisions"][number]) {
+function visibleEvidenceSource(item: TemplateFieldDecision) {
   if (item.evidence_title && !isInternalEvidenceLabel(item.evidence_title)) return item.evidence_title;
   if (item.source_type === "tender_document") return "当前采购文件";
   if (item.source_type === "manual_verified") return "人工已确认的机构私有资料";
@@ -357,9 +358,16 @@ function visibleEvidenceSource(item: Workspace["template_field_decisions"][numbe
   return "机构私有资料库";
 }
 
-function visibleEvidenceLocation(item: Workspace["template_field_decisions"][number]) {
+function visibleEvidenceLocation(item: TemplateFieldDecision) {
   if (item.evidence_location && !isInternalEvidenceLabel(item.evidence_location)) return item.evidence_location;
   return item.source_type === "tender_document" ? "当前采购文件原文" : "机构私有资料库原文";
+}
+
+function highlightedEvidence(text: string, value: string | null) {
+  if (!value) return text;
+  const index = text.toLocaleLowerCase().indexOf(value.toLocaleLowerCase());
+  if (index < 0) return text;
+  return <>{text.slice(0, index)}<mark>{text.slice(index, index + value.length)}</mark>{text.slice(index + value.length)}</>;
 }
 
 function estimateLabel(item: Workspace) {
@@ -401,6 +409,7 @@ export default function Home() {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [evidenceItem, setEvidenceItem] = useState<TemplateFieldDecision | null>(null);
 
   const activeSection = sections.find((item) => item.id === activeSectionId);
   const feedbackSummary = useMemo(() => ({
@@ -1339,7 +1348,7 @@ export default function Home() {
           )}
 
           {step === "export" && (
-            <div className="export-layout">
+            <div className={`export-layout ${workspace?.generation_mode === "strict_template" ? "strict-export" : ""}`}>
               <div className="delivery-card">
                 <div className="delivery-icon">W</div>
                 <div><span className="panel-label">DELIVERABLE</span><h3>{workspace?.name ?? "技术方案"}</h3><p>{workspace?.generation_mode === "strict_template" && sections.length === 0 ? "系统将直接在原投标文件格式中回填已匹配字段，不额外虚构技术章节。" : "系统将按目录顺序合并所有已人工确认章节，并附技术要求来源总表。"}</p></div>
@@ -1369,68 +1378,49 @@ export default function Home() {
                 )}
                 {workspace?.generation_mode === "strict_template" && (
                   <div className="template-fields">
-                    <strong>原响应模板保真回填</strong>
-                    <span>{workspace.template_filename}</span>
-                    <p>系统已自动识别原文模板，并从采购文件与企业私有数据库匹配字段；业务人员只审核匹配结果。</p>
-                    <div className="font-fidelity-note">
-                      <b>已自动继承原模板字体</b>
-                      <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>
-                      <small>回填字段和生成正文均继承所在模板样式，不再强制替换为系统默认字体。</small>
-                    </div>
-                    <div className="case-library-note">
-                      <b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b>
-                      <span>机构私有；可自动提取回填候选值并展示原文依据，人工确认后才进入正式文件。</span>
-                    </div>
-                    {missingTemplateDecisions.length > 0 ? (
-                      <p className="template-field-warning">
-                        企业资料库缺少 {missingTemplateDecisions.length} 项资料。系统保留模板空位并进入补库清单，不允许 AI 猜写。
-                      </p>
-                    ) : (
-                      <p className="template-field-ready">模板字段已由采购文件与企业数据库完成匹配，请审核后导出。</p>
-                    )}
-                    <div className="fill-decision-list">
-                      {(workspace.template_field_decisions ?? []).map((item) => (
-                        <article key={item.field_key} className={`fill-decision ${item.status.toLowerCase()}`}>
-                          <div>
-                            <strong>{item.label}</strong>
-                            <span>{fillStatusLabels[item.status]}</span>
-                          </div>
-                          <p>{item.value || "尚未提供"}</p>
-                          <small>{item.reason}</small>
-                          {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)}</small>}
-                          {item.evidence_title && (
-                            <details className="field-evidence">
-                              <summary>打开原文依据</summary>
-                              <strong>{visibleEvidenceSource(item)}</strong>
-                              {item.evidence_excerpt && <blockquote>{item.evidence_excerpt}</blockquote>}
-                              <small>{visibleEvidenceLocation(item)}{item.evidence_match_count > 1 ? ` · ${item.evidence_match_count} 处一致匹配` : ""}</small>
-                            </details>
-                          )}
-                          {item.status === "REVIEW_REQUIRED" && item.value && (
-                            <button
-                              className="secondary compact"
-                              disabled={Boolean(busy)}
-                              onClick={() => reviewTemplateField(item.field_key, "confirm")}
-                            >确认该字段</button>
-                          )}
-                          {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && (
-                            <button
-                              className="text-button"
-                              disabled={Boolean(busy)}
-                              onClick={() => reviewTemplateField(item.field_key, "reset")}
-                            >重新审核</button>
-                          )}
-                        </article>
-                      ))}
+                    <div className="strict-fill-workbench">
+                      <section className="fill-preview-pane">
+                        <header><span className="panel-label">DOCUMENT PREVIEW</span><h3>回填结果预览</h3><small>{workspace.template_filename}</small></header>
+                        <div className="fill-preview-document">
+                          <h4>投标文件响应格式</h4>
+                          {workspace.template_outline?.slice(0, 12).map((item) => (
+                            <div key={`${item.order}-${item.title}`} className="preview-outline" data-level={item.level}>{item.title}</div>
+                          ))}
+                          {(workspace.template_field_decisions ?? []).map((item) => (
+                            <div key={item.field_key} className={`fill-preview-field ${item.status.toLowerCase()}`}>
+                              <span>{item.label}</span><strong>{item.value || "待企业资料库补充"}</strong>
+                            </div>
+                          ))}
+                          {sections.filter((item) => item.current_version).map((section) => (
+                            <article key={section.id} className="chapter-preview"><h4>{section.title}</h4><p>{section.current_version?.content}</p></article>
+                          ))}
+                        </div>
+                      </section>
+                      <section className="fill-review-pane">
+                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验来源并导出</h3><p>系统自动匹配，业务人员只需审核，不重复填写。</p></header>
+                        <div className="font-fidelity-note">
+                          <b>已自动继承原模板字体</b>
+                          <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>
+                          <small>回填字段和生成正文均继承所在模板样式，不再强制替换为系统默认字体。</small>
+                        </div>
+                        <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；候选值确认后才进入正式文件。</span></div>
+                        {missingTemplateDecisions.length > 0 ? <p className="template-field-warning">企业资料库缺少 {missingTemplateDecisions.length} 项资料。系统保留空位，不允许 AI 猜写。</p> : <p className="template-field-ready">全部字段已匹配，请审核后导出。</p>}
+                        <div className="fill-decision-list">
+                          {(workspace.template_field_decisions ?? []).map((item) => (
+                            <article key={item.field_key} className={`fill-decision ${item.status.toLowerCase()}`}>
+                              <div><strong>{item.label}</strong><span>{fillStatusLabels[item.status]}</span></div>
+                              <p>{item.value || "尚未提供"}</p><small>{item.reason}</small>
+                              {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)}</small>}
+                              {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
+                              {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "confirm")}>确认该字段</button>}
+                              {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "reset")}>重新审核</button>}
+                            </article>
+                          ))}
+                        </div>
+                        {!exportItem && <button className="primary strict-export-button" disabled={Boolean(busy)} onClick={approveTemplateAndExport}>审核已匹配内容并生成原格式 Word</button>}
+                      </section>
                     </div>
                   </div>
-                )}
-                {workspace?.generation_mode === "strict_template" && !exportItem && (
-                  <button
-                    className="primary"
-                    disabled={Boolean(busy)}
-                    onClick={approveTemplateAndExport}
-                  >审核已匹配内容并生成原格式 Word</button>
                 )}
                 {proposalReview && (
                   <div className="review-summary ready">
@@ -1479,7 +1469,7 @@ export default function Home() {
                     </details>
                   </details>
                 )}
-                <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>
+                {workspace?.generation_mode !== "strict_template" && <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>}
                 {exportItem?.status === "succeeded" && workspace && (
                   <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
                 )}
@@ -1488,6 +1478,16 @@ export default function Home() {
           )}
         </section>
       </div>
+      {evidenceItem && (
+        <div className="evidence-modal-backdrop" role="presentation" onMouseDown={() => setEvidenceItem(null)}>
+          <section className="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header><div><span className="panel-label">SOURCE EVIDENCE</span><h3 id="evidence-modal-title">{evidenceItem.label} · 原文依据</h3></div><button aria-label="关闭原文依据" onClick={() => setEvidenceItem(null)}>×</button></header>
+            <dl><div><dt>来源文件</dt><dd>{visibleEvidenceSource(evidenceItem)}</dd></div><div><dt>原文位置</dt><dd>{visibleEvidenceLocation(evidenceItem)}</dd></div>{evidenceItem.evidence_match_count > 1 && <div><dt>一致匹配</dt><dd>{evidenceItem.evidence_match_count} 处</dd></div>}</dl>
+            <div className="evidence-context"><strong>原文上下文</strong><blockquote>{highlightedEvidence(evidenceItem.evidence_excerpt || evidenceItem.value || "当前来源记录暂无可展示的上下文。", evidenceItem.value)}</blockquote></div>
+            <p>黄色标记为本次自动匹配内容。仅展示该项目已获授权的原文片段，不暴露内部路径和系统字段。</p>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
