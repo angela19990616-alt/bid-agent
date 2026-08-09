@@ -133,6 +133,9 @@ python scripts/import_historical_case_pairs.py /path/to/private/pairs.json
 
 严格回填在原模板槽位与 Word 渲染之间使用独立的业务变量层：
 
+- 变量按“同一实体 + 同一属性”收敛；109 个待回填事实不等于 109 个实体，同一人的姓名、职务和证书号仍是不同事实。
+- 审核区可一键定位到 Word 预览中的对应表格或段落并高亮；自动结果需要纠正时，可在预览中作仅当前项目生效的留痕修改并同步全部关联位置。
+
 ```text
 Document Slot → Semantic Variable → Entity/Role Binding
   → Verified Value Resolution → Strict Template Render

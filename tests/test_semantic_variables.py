@@ -42,6 +42,14 @@ def _decision(field_key: str, slot, value: str = "张三") -> dict:
     }
 
 
+def _resolved_decision(field_key: str, slot, entity_id, value: str) -> dict:
+    return {
+        **_decision(field_key, slot, value),
+        "resolved_entity_type": "Person",
+        "resolved_entity_id": str(entity_id),
+    }
+
+
 def _slot(
     label: str,
     context: str,
@@ -165,3 +173,105 @@ def test_entity_change_updates_every_slot_bound_to_the_variable():
         item["value"]
         for item in SlotDeduplicationEngine.fan_out(after)
     } == {"李四"}
+
+
+def test_same_bound_person_attribute_collapses_across_role_aliases():
+    person_id = uuid4()
+    legal = _slot("法定代表人姓名", "法定代表人：___", "第3页")
+    signatory = SlotContextClassifier.classify(
+        label="签署人姓名",
+        surrounding_text="签署人姓名：___",
+        source_location="第8页",
+        document_section="投标函",
+    )
+
+    variables = SlotDeduplicationEngine.group_decisions([
+        _resolved_decision("legal_representative", legal, person_id, "张三"),
+        _resolved_decision("signatory_name", signatory, person_id, "张三"),
+    ])
+
+    assert len(variables) == 1
+    assert variables[0]["slot_count"] == 2
+    assert set(variables[0]["target_relations"]) == {
+        "LEGAL_REPRESENTATIVE", "SIGNATORY",
+    }
+
+
+def test_equal_text_from_different_people_does_not_collapse():
+    first = _slot("法定代表人姓名", "法定代表人：___", "第3页")
+    second = SlotContextClassifier.classify(
+        label="授权代表姓名",
+        surrounding_text="授权代表姓名：___",
+        source_location="第4页",
+        document_section="授权委托书",
+    )
+
+    variables = SlotDeduplicationEngine.group_decisions([
+        _resolved_decision("legal_representative", first, uuid4(), "张三"),
+        _resolved_decision("authorized_representative", second, uuid4(), "张三"),
+    ])
+
+    assert len(variables) == 2
+
+
+def test_bound_entity_variable_key_never_exposes_internal_identifier():
+    person_id = uuid4()
+    slot = _slot("法定代表人姓名", "法定代表人：___", "第3页")
+
+    variable = SlotDeduplicationEngine.group_decisions([
+        _resolved_decision("legal_representative", slot, person_id, "张三"),
+    ])[0]
+
+    assert str(person_id) not in variable["variable_key"]
+    assert "custom_" not in variable["variable_key"]
+    assert variable["variable_key"].startswith("entity_fact.person.")
+
+
+def test_preview_manual_override_is_project_scoped_and_wins_for_rendering():
+    project_id = uuid4()
+    organization_id = uuid4()
+    legal_id = uuid4()
+    slot = _slot("法定代表人姓名", "法定代表人：___", "第3页")
+    profile = GenerationProfile(
+        project_id=project_id,
+        generation_mode="strict_template",
+        historical_case_mode="closest_case",
+        template_descriptor={
+            "fields": [{
+                "field_key": "legal_representative",
+                "label": slot.display_name,
+                **slot.snapshot(),
+            }]
+        },
+        template_field_values={"legal_representative": "李四"},
+        last_fill_report={
+            "field_reviews": {
+                "legal_representative": {
+                    "status": "confirmed",
+                    "value": "李四",
+                    "source_reference": "本项目人工修正",
+                    "evidence_excerpt": "本项目人工修正：李四",
+                    "evidence_location": "严格回填预览人工审核",
+                }
+            }
+        },
+    )
+    context = EntityResolutionContext(
+        project_id=project_id,
+        organization=Organization(
+            id=organization_id,
+            full_name="测试公司",
+            legal_representative_person_id=legal_id,
+        ),
+        people=(Person(id=legal_id, name="张三"),),
+    )
+
+    variables = GenerationProfileService.template_variable_decisions(
+        profile, entity_context=context
+    )
+
+    assert variables[0]["value"] == "李四"
+    assert variables[0]["source_type"] == "manual_verified"
+    assert variables[0]["status"] == "AUTO_FILL"
+    assert variables[0]["evidence_excerpt"] == "本项目人工修正：李四"
+    assert variables[0]["evidence_location"] == "严格回填预览人工审核"

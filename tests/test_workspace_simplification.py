@@ -51,7 +51,8 @@ def test_workspace_summary_loads_requirements_once(monkeypatch):
                 writer_strategy="planned_proposal_writer",
                 template_conversion_status="not_required",
                 template_conversion_report={},
-            )
+            ),
+            template_variable_decisions=lambda *_args: [],
         ),
         enterprise_fact_resolver=SimpleNamespace(resolve=lambda _workspace_id: []),
         case_fact_resolver=SimpleNamespace(resolve=lambda _workspace_id: {}),

@@ -21,6 +21,7 @@ class VariableDefinition:
     target_relation: str | None
     expected_value_type: str
     source_priority: tuple[str, ...]
+    entity_scope_label: str
 
 
 class VariableDictionary:
@@ -44,9 +45,42 @@ class VariableDictionary:
         return str(cls._content().get("version") or "unknown")
 
     @classmethod
-    def resolve(cls, slot: DocumentSlot) -> VariableDefinition:
+    def resolve(
+        cls,
+        slot: DocumentSlot,
+        *,
+        resolved_entity_type: str | None = None,
+        resolved_entity_id: str | None = None,
+    ) -> VariableDefinition:
         content = cls._content()
         priorities = tuple(content.get("source_priority") or ())
+        if resolved_entity_type and resolved_entity_id:
+            entity_token = hashlib.sha256(
+                f"{resolved_entity_type}:{resolved_entity_id}".encode("utf-8")
+            ).hexdigest()[:16]
+            attribute = slot.semantic_field.rsplit(".", 1)[-1]
+            return VariableDefinition(
+                variable_key=(
+                    f"entity_fact.{resolved_entity_type.lower()}."
+                    f"{entity_token}.{attribute}"
+                ),
+                standard_name=slot.display_name or "已绑定实体属性",
+                aliases=(slot.canonical_key, slot.display_name),
+                semantic_field=slot.semantic_field,
+                target_entity_type=resolved_entity_type,
+                target_relation=(
+                    slot.expected_role.value if slot.expected_role else None
+                ),
+                expected_value_type=slot.expected_value_type,
+                source_priority=priorities,
+                entity_scope_label=(
+                    "已绑定人员"
+                    if resolved_entity_type == "Person"
+                    else "当前投标人"
+                    if resolved_entity_type == "Organization"
+                    else "当前项目"
+                ),
+            )
         if slot.expected_role is not None and slot.semantic_field.startswith(
             "person."
         ):
@@ -71,6 +105,7 @@ class VariableDictionary:
                         or slot.expected_value_type
                     ),
                     source_priority=priorities,
+                    entity_scope_label=str(role["standard_name"]),
                 )
 
         for item in content.get("variables", ()):  # configured exact facts
@@ -91,6 +126,10 @@ class VariableDictionary:
                         or slot.expected_value_type
                     ),
                     source_priority=priorities,
+                    entity_scope_label=str(
+                        item.get("entity_scope_label")
+                        or cls._scope_label(item.get("target_relation"))
+                    ),
                 )
 
         # Never merge two unresolved people merely because both say "姓名".
@@ -130,7 +169,29 @@ class VariableDictionary:
             ),
             expected_value_type=slot.expected_value_type,
             source_priority=priorities,
+            entity_scope_label=VariableDictionary._fallback_scope_label(slot),
         )
+
+    @staticmethod
+    def _scope_label(relation: Any) -> str:
+        return {
+            "CURRENT_PROJECT": "当前项目",
+            "BIDDER_ORGANIZATION": "当前投标人",
+            "BID_RESPONSE_DOCUMENT": "本次投标文件",
+        }.get(str(relation or ""), "待确认业务对象")
+
+    @staticmethod
+    def _fallback_scope_label(slot: DocumentSlot) -> str:
+        if (
+            slot.expected_entity_type
+            and slot.expected_entity_type.value == "Person"
+        ):
+            if slot.table_index is not None and slot.row is not None:
+                return f"人员表第 {slot.row + 1} 行候选人员"
+            return "待绑定人员"
+        if slot.expected_entity_type:
+            return f"待绑定{slot.expected_entity_type.value}"
+        return "本次投标文件"
 
 
 class SlotDeduplicationEngine:
@@ -156,7 +217,11 @@ class SlotDeduplicationEngine:
                 "surrounding_text": decision.get("label"),
                 "fill_strategy": decision.get("fill_strategy") or FillStrategy.UNRESOLVED.value,
             })
-            definition = VariableDictionary.resolve(slot)
+            definition = VariableDictionary.resolve(
+                slot,
+                resolved_entity_type=decision.get("resolved_entity_type"),
+                resolved_entity_id=decision.get("resolved_entity_id"),
+            )
             if definition.variable_key not in grouped:
                 grouped[definition.variable_key] = []
                 order.append(definition.variable_key)
@@ -199,15 +264,24 @@ class SlotDeduplicationEngine:
             if item.get("display_name") or item.get("label")
         ))
         slots = [cls._slot_snapshot(item) for item in decisions]
+        target_relations = list(dict.fromkeys(
+            item[0].target_relation
+            for item in items if item[0].target_relation
+        ))
+        standard_name = definition.standard_name
+        if definition.target_entity_type == "Person" and len(target_relations) > 1:
+            standard_name = f"同一已绑定人员{primary.get('expected_value_type_label', '属性')}"
         return {
             "variable_key": definition.variable_key,
             "dictionary_version": VariableDictionary.version(),
-            "standard_name": definition.standard_name,
-            "label": definition.standard_name,
+            "standard_name": standard_name,
+            "label": standard_name,
             "aliases": aliases,
             "semantic_field": definition.semantic_field,
             "target_entity_type": definition.target_entity_type,
             "target_relation": definition.target_relation,
+            "target_relations": target_relations,
+            "entity_scope_label": definition.entity_scope_label,
             "expected_value_type": definition.expected_value_type,
             "expected_value_type_label": primary.get(
                 "expected_value_type_label", "文本"

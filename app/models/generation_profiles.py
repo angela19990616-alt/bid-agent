@@ -111,6 +111,8 @@ class TemplateVariableDecisionResponse(BaseModel):
     semantic_field: str
     target_entity_type: str | None = None
     target_relation: str | None = None
+    target_relations: list[str] = Field(default_factory=list)
+    entity_scope_label: str = "待确认业务对象"
     expected_value_type: str
     expected_value_type_label: str = "文本"
     source_priority: list[str] = Field(default_factory=list)

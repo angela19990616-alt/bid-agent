@@ -1,12 +1,26 @@
 from typing import Any
 from uuid import UUID
 
-from openai import OpenAI
-
 from app.config.settings import settings
 from app.core.model_routing import ModelRoutingRules
 from app.core.privacy_sanitizer import PrivacySanitizer
 from app.services.model_budget_service import ModelBudgetService
+
+
+# The OpenAI-compatible SDK exports thousands of generated schema classes.
+# Loading all of them during ordinary service/test imports adds minutes on
+# slower filesystems, even when no model call is made.  Keep this symbol
+# patchable for tests and resolve the SDK only when a real client is needed.
+OpenAI: Any | None = None
+
+
+def _openai_client_class() -> Any:
+    global OpenAI
+    if OpenAI is None:
+        from openai import OpenAI as sdk_client
+
+        OpenAI = sdk_client
+    return OpenAI
 
 
 class ModelConfigurationError(RuntimeError):
@@ -29,8 +43,9 @@ class ModelClient:
             raise ModelConfigurationError(
                 "未配置 DEEPSEEK_API_KEY、DASHSCOPE_API_KEY 或 OPENAI_API_KEY"
             )
+        client_class = _openai_client_class()
         self.client = (
-            OpenAI(
+            client_class(
                 api_key=resolved_key,
                 base_url=base_url or settings.openai_base_url,
                 timeout=settings.model_request_timeout_seconds,
@@ -41,7 +56,7 @@ class ModelClient:
             else None
         )
         self.deepseek_client = (
-            OpenAI(
+            client_class(
                 api_key=settings.deepseek_api_key,
                 base_url=settings.deepseek_base_url,
                 timeout=settings.model_request_timeout_seconds,

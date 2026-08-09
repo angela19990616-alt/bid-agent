@@ -533,6 +533,12 @@ class GenerationProfileService:
                     or fallback_values.get("date")
                     or ""
                 ).strip()
+            slot = GenerationProfileService._slot_for_field(key, metadata)
+            entity_resolution = (
+                EntityResolutionEngine().resolve(slot, entity_context)
+                if entity_context is not None
+                else None
+            )
             facts: list[EnterpriseFact] = [
                 fact
                 for fact in (enterprise_facts or [])
@@ -552,6 +558,21 @@ class GenerationProfileService:
                     "project_name", "project_number", "project_reference",
                 }
                 expected_source = metadata.get("expected_source")
+                resolved_entity_id = (
+                    str(entity_resolution.person.id)
+                    if (
+                        confirmed
+                        and entity_resolution is not None
+                        and entity_resolution.person is not None
+                    )
+                    else str(entity_resolution.organization.id)
+                    if (
+                        confirmed
+                        and entity_resolution is not None
+                        and entity_resolution.organization is not None
+                    )
+                    else None
+                )
                 facts.append(EnterpriseFact(
                     canonical_key=canonical_key,
                     value=value,
@@ -569,6 +590,8 @@ class GenerationProfileService:
                     ),
                     confidence=1.0 if procurement_fact or confirmed else 0.8,
                     verified=procurement_fact or confirmed,
+                    entity_id=resolved_entity_id,
+                    semantic_field=slot.semantic_field,
                     sensitivity=(
                         DataSensitivity.SENSITIVE
                         if (
@@ -591,15 +614,11 @@ class GenerationProfileService:
                         or source_evidence.get("location")
                     ),
                 ))
-            slot = GenerationProfileService._slot_for_field(
-                key, metadata
-            )
-            entity_resolution = (
-                EntityResolutionEngine().resolve(slot, entity_context)
-                if entity_context is not None
-                else None
-            )
-            if entity_resolution is not None:
+            if entity_resolution is not None and not (
+                value
+                and reviews.get(key, {}).get("status") == "confirmed"
+                and reviews.get(key, {}).get("value") == value
+            ):
                 facts.extend(
                     GenerationProfileService._entity_facts(
                         canonical_key, slot, entity_resolution
@@ -908,6 +927,36 @@ class GenerationProfileService:
                 }
                 else None
             ),
+            "resolved_entity_type": (
+                "Person"
+                if (
+                    slot.expected_entity_type is EntityType.PERSON
+                    and resolution is not None
+                    and resolution.person is not None
+                )
+                else "Organization"
+                if (
+                    slot.expected_entity_type is EntityType.ORGANIZATION
+                    and resolution is not None
+                    and resolution.organization is not None
+                )
+                else None
+            ),
+            "resolved_entity_id": (
+                str(resolution.person.id)
+                if (
+                    slot.expected_entity_type is EntityType.PERSON
+                    and resolution is not None
+                    and resolution.person is not None
+                )
+                else str(resolution.organization.id)
+                if (
+                    slot.expected_entity_type is EntityType.ORGANIZATION
+                    and resolution is not None
+                    and resolution.organization is not None
+                )
+                else None
+            ),
             "match_path": (
                 list(resolution.match_path) if resolution is not None else []
             ),
@@ -1096,10 +1145,6 @@ class GenerationProfileService:
                 raise ValueError(
                     "当前业务变量没有可确认值；请先补充企业事实或建立角色绑定。"
                 )
-            if value and variable.get("fill_strategy") != "unresolved":
-                raise ValueError(
-                    "已识别业务变量不能直接输入，请更新企业事实或项目角色绑定。"
-                )
             canonical_keys = {
                 str(item.get("canonical_key") or "")
                 for item in variable.get("_field_decisions", ())
@@ -1114,11 +1159,25 @@ class GenerationProfileService:
             values = dict(profile.template_field_values)
             reviewed_at = datetime.now().astimezone().isoformat()
             evidence = {
-                "source_reference": variable.get("source_reference"),
-                "evidence_title": variable.get("evidence_title"),
-                "evidence_excerpt": variable.get("evidence_excerpt"),
-                "evidence_location": variable.get("evidence_location"),
-                "input_method": "variable_review",
+                "source_reference": (
+                    "本项目人工修正"
+                    if value else variable.get("source_reference")
+                ),
+                "evidence_title": (
+                    "本项目人工修正"
+                    if value else variable.get("evidence_title")
+                ),
+                "evidence_excerpt": (
+                    f"本项目人工修正：{selected}"
+                    if value else variable.get("evidence_excerpt")
+                ),
+                "evidence_location": (
+                    "严格回填预览人工审核"
+                    if value else variable.get("evidence_location")
+                ),
+                "input_method": (
+                    "preview_manual_override" if value else "variable_review"
+                ),
             }
             for field_key in field_keys:
                 values[field_key] = selected

@@ -202,6 +202,8 @@ type Workspace = {
     semantic_field: string;
     target_entity_type: "Organization" | "Person" | "Project" | null;
     target_relation: "LEGAL_REPRESENTATIVE" | "AUTHORIZED_REPRESENTATIVE" | "PROJECT_MANAGER" | "TECHNICAL_LEAD" | "CONTACT_PERSON" | "SIGNATORY" | string | null;
+    target_relations: string[];
+    entity_scope_label: string;
     expected_value_type: string;
     expected_value_type_label: string;
     source_priority: string[];
@@ -267,7 +269,13 @@ type Workspace = {
 type ExportItem = { id: string; status: string; filename?: string | null };
 type TemplateFieldDecision = Workspace["template_field_decisions"][number];
 type TemplateVariableDecision = Workspace["template_variable_decisions"][number];
+type TemplateVariableSlot = TemplateVariableDecision["slots"][number];
 type EvidenceItem = TemplateFieldDecision | TemplateVariableDecision;
+type PreviewTarget = {
+  variable: TemplateVariableDecision;
+  slot: TemplateVariableSlot;
+  requestId: number;
+};
 type ProposalReview = {
   overall: {
     recommended_for_delivery: boolean;
@@ -499,9 +507,20 @@ function highlightedEvidence(text: string, value: string | null) {
   return <>{text.slice(0, index)}<mark>{text.slice(index, index + value.length)}</mark>{text.slice(index + value.length)}</>;
 }
 
-function WordDocumentPreview({ workspace }: { workspace: Workspace }) {
+function WordDocumentPreview({
+  workspace,
+  target,
+  busy,
+  onSave,
+}: {
+  workspace: Workspace;
+  target: PreviewTarget | null;
+  busy: boolean;
+  onSave: (variableKey: string, value: string) => Promise<void>;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [previewState, setPreviewState] = useState<"loading" | "ready" | "error">("loading");
+  const [editValue, setEditValue] = useState("");
   const revision = (workspace.template_field_decisions ?? [])
     .map((item) => `${item.field_key}:${item.status}:${item.value ?? ""}`)
     .join("|");
@@ -554,9 +573,42 @@ function WordDocumentPreview({ workspace }: { workspace: Workspace }) {
     };
   }, [workspace.id, revision]);
 
+  useEffect(() => {
+    setEditValue(target?.variable.value ?? "");
+    if (!target || previewState !== "ready" || !containerRef.current) return;
+    const container = containerRef.current;
+    container.querySelectorAll(".word-slot-highlight").forEach((element) => {
+      element.classList.remove("word-slot-highlight");
+    });
+    const slot = target.slot;
+    let located: HTMLElement | null = null;
+    if (slot.table_index != null && slot.row != null && slot.column != null) {
+      const table = container.querySelectorAll<HTMLTableElement>("table")[slot.table_index];
+      located = table?.rows[slot.row]?.cells[slot.column] ?? null;
+    }
+    if (!located && slot.paragraph_index != null) {
+      located = container.querySelectorAll<HTMLElement>("p")[slot.paragraph_index] ?? null;
+    }
+    if (!located) {
+      const hint = (slot.label || slot.display_name || "").replace(/\s+/g, "");
+      located = [...container.querySelectorAll<HTMLElement>("td, p")].find(
+        (element) => hint && (element.textContent || "").replace(/\s+/g, "").includes(hint),
+      ) ?? null;
+    }
+    if (!located) return;
+    located.classList.add("word-slot-highlight");
+    located.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  }, [target, previewState, revision]);
+
   return <div className="word-preview-shell">
     {previewState === "loading" && <div className="word-preview-status">正在生成 Word 页面预览…</div>}
     {previewState === "error" && <div className="word-preview-status error">Word 预览暂时未生成，请刷新重试；原格式导出不受影响。</div>}
+    {target && <section className="preview-inline-editor">
+      <div><strong>{target.variable.standard_name}</strong><small>{target.slot.source_location}</small></div>
+      <input aria-label={`修改${target.variable.standard_name}`} value={editValue} maxLength={500} onChange={(event) => setEditValue(event.target.value)} placeholder="在当前项目中修正该回填值" />
+      <button className="primary compact" disabled={busy || !editValue.trim()} onClick={() => void onSave(target.variable.variable_key, editValue.trim())}>保存并同步 {target.variable.slot_count} 处</button>
+      <small>人工修正仅用于当前项目，会记录修正人、时间和原模板位置，不会改写企业知识库。</small>
+    </section>}
     <div ref={containerRef} className="word-preview-canvas" aria-label="实际回填 Word 文档预览" />
   </div>;
 }
@@ -601,6 +653,7 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [evidenceItem, setEvidenceItem] = useState<EvidenceItem | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
 
   const activeSection = sections.find((item) => item.id === activeSectionId);
   const feedbackSummary = useMemo(() => ({
@@ -1136,7 +1189,11 @@ export default function Home() {
     });
   }
 
-  async function reviewTemplateVariable(variableKey: string, action: "confirm" | "reset") {
+  async function reviewTemplateVariable(
+    variableKey: string,
+    action: "confirm" | "reset",
+    value?: string,
+  ) {
     if (!workspace) return;
     await run(action === "confirm" ? "正在确认业务变量" : "正在恢复审核", async () => {
       const updated = await request<Workspace>(
@@ -1144,12 +1201,39 @@ export default function Home() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ variable_key: variableKey, action }),
+          body: JSON.stringify({ variable_key: variableKey, action, value }),
         },
       );
       setWorkspace(updated);
-      setNotice(action === "confirm" ? "业务变量已一次确认并同步全部模板位置。" : "业务变量已恢复为待审核状态。");
+      if (previewTarget?.variable.variable_key === variableKey) {
+        const nextVariable = updated.template_variable_decisions.find(
+          (item) => item.variable_key === variableKey,
+        );
+        const nextSlot = nextVariable?.slots.find(
+          (item) => item.field_key === previewTarget.slot.field_key,
+        ) ?? nextVariable?.slots[0];
+        setPreviewTarget(
+          nextVariable && nextSlot
+            ? { variable: nextVariable, slot: nextSlot, requestId: Date.now() }
+            : null,
+        );
+      }
+      setNotice(
+        action === "confirm"
+          ? value
+            ? "已保存本项目人工修正，并同步到全部关联位置。"
+            : "业务变量已一次确认并同步全部模板位置。"
+          : "业务变量已恢复为待审核状态。",
+      );
     });
+  }
+
+  function locatePreviewSlot(
+    variable: TemplateVariableDecision,
+    slot: TemplateVariableSlot = variable.slots[0],
+  ) {
+    if (!slot) return;
+    setPreviewTarget({ variable, slot, requestId: Date.now() });
   }
 
   async function bindEntityRole(
@@ -1626,10 +1710,15 @@ export default function Home() {
                     <div className="strict-fill-workbench">
                       <section className="fill-preview-pane">
                         <header><span className="panel-label">DOCUMENT PREVIEW</span><h3>回填结果预览</h3><small>{workspace.template_filename}</small></header>
-                        <WordDocumentPreview workspace={workspace} />
+                        <WordDocumentPreview
+                          workspace={workspace}
+                          target={previewTarget}
+                          busy={Boolean(busy)}
+                          onSave={(variableKey, value) => reviewTemplateVariable(variableKey, "confirm", value)}
+                        />
                       </section>
                       <section className="fill-review-pane">
-                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验实体关系并导出</h3><p>系统先识别业务实体和项目角色，再读取对应属性；人员字段不能直接输入姓名，只允许审核或建立角色绑定。</p><a className="ontology-link" href="/ontology">打开业务关系图</a></header>
+                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验实体关系并导出</h3><p>系统先自动匹配实体和来源。点击“在预览中定位”可跳到原模板空位；仅在自动结果需要纠正时，在左侧预览中修改并留痕。</p><a className="ontology-link" href="/ontology">打开业务关系图</a></header>
                         <div className="font-fidelity-note">
                           <b>已自动继承原模板字体</b>
                           <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>
@@ -1637,20 +1726,20 @@ export default function Home() {
                         </div>
                         <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
                         {(workspace.template_actions ?? []).length > 0 && <div className="case-library-note"><b>已识别 {(workspace.template_actions ?? []).length} 项签章动作</b><span>{workspace.template_actions.map((action) => action.display_name).filter((value, index, values) => values.indexOf(value) === index).join("、")}；动作不再冒充待填文字。</span></div>}
-                        <div className="case-library-note"><b>{workspace.template_variable_decisions?.length ?? 0} 个业务变量覆盖 {workspace.template_field_decisions?.length ?? 0} 个原模板位置</b><span>相同企业事实只匹配、审核一次，确认结果自动同步到全部关联位置。</span></div>
+                        <div className="case-library-note"><b>{workspace.template_variable_decisions?.length ?? 0} 个待回填事实覆盖 {workspace.template_field_decisions?.length ?? 0} 个原模板位置</b><span>按“同一实体 + 同一属性”收敛；字段叫法不同但最终取值一致时，只匹配、审核一次。</span></div>
                         {missingTemplateDecisions.length > 0 ? <p className="template-field-warning">企业资料库缺少 {missingTemplateDecisions.length} 个业务变量。系统保留关联空位，不允许 AI 猜写。</p> : <p className="template-field-ready">全部业务变量已匹配，请审核后导出。</p>}
                         <div className="fill-decision-list">
                           {(workspace.template_variable_decisions ?? []).map((item) => (
                             <article key={item.variable_key} className={`fill-decision ${item.status.toLowerCase()}`}>
                               <div><strong>{item.standard_name}</strong><span>{fillStatusLabels[item.status]}</span></div>
                               <p>{item.value || "尚未从企业资料库获得可信值"}</p>
-                              <small>业务变量覆盖 {item.slot_count} 个原模板位置 · 应填：{item.expected_value_type_label}</small>
+                              <small>{item.entity_scope_label} · 覆盖 {item.slot_count} 个原模板位置 · 应填：{item.expected_value_type_label}</small>
                               {item.semantic_field && (
                                 <div className="entity-resolution-card">
                                   <div><span>识别结果</span><strong>{item.standard_name}</strong></div>
                                   {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
                                   <div><span>当前状态</span><strong>{item.binding_status === "resolved" ? "已确定唯一实体和角色" : item.reason}</strong></div>
-                                  <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}</article>)}</details>
+                                  <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位此处</button></article>)}</details>
                                   {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
                                     <div className="entity-candidates">
                                       <span>候选人员</span>
@@ -1671,6 +1760,7 @@ export default function Home() {
                               {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
                               {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
                               <div className="field-review-actions">
+                                {item.slots.length > 0 && <button className="secondary compact preview-locate-button" disabled={Boolean(busy)} onClick={() => locatePreviewSlot(item)}>在预览中定位</button>}
                                 {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "confirm")}>一次确认并同步 {item.slot_count} 处</button>}
                                 {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "reset")}>重新审核</button>}
                               </div>
