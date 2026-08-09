@@ -20,6 +20,11 @@ class Settings:
     redis_host: str = os.getenv("REDIS_HOST", "127.0.0.1")
     redis_port: int = int(os.getenv("REDIS_PORT", "6379"))
     redis_db: int = int(os.getenv("REDIS_DB", "0"))
+    neo4j_enabled: bool = os.getenv("NEO4J_ENABLED", "false").lower() == "true"
+    neo4j_uri: str = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
+    neo4j_user: str = os.getenv("NEO4J_USER", "neo4j")
+    neo4j_password: str = os.getenv("NEO4J_PASSWORD", "")
+    neo4j_database: str = os.getenv("NEO4J_DATABASE", "neo4j")
     dashscope_api_key: str = os.getenv("DASHSCOPE_API_KEY", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
@@ -126,6 +131,8 @@ class Settings:
             errors.append(
                 "MAX_MODEL_TOKENS_PER_WORKFLOW must be at least 1000"
             )
+        if self.neo4j_enabled and not self.neo4j_password:
+            errors.append("NEO4J_PASSWORD is required when Neo4j is enabled")
         return errors
 
 

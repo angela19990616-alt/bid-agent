@@ -397,10 +397,79 @@ def test_compound_labels_use_the_value_before_the_blank_and_skip_signatures():
     )
     by_label = {item["label"]: item["field_key"] for item in descriptor.fields}
 
-    assert by_label["项目编号/包号：_____________________ 项目名称"] == "project_number"
+    assert by_label["项目编号/包号"] == "project_number"
+    assert all("_" not in label and "＿" not in label for label in by_label)
     assert by_label["企业名称（盖章）"] == "bidder_name"
     assert "法定代表人（单位负责人）（签字或盖章）" not in by_label
     assert "附：法定代表人身份证明文件复印件" not in by_label
+
+
+def test_multiple_labeled_blanks_are_split_into_independent_business_slots(
+    tmp_path,
+):
+    document = Document()
+    document.add_heading("附件：投标文件格式", level=1)
+    document.add_paragraph("格式9供应商基本情况表")
+    document.add_paragraph(
+        "项目编号：________________ 项目名称：________________"
+    )
+    document.add_paragraph(
+        "姓名：____ 性别：____ 年龄：____ 职务：____"
+    )
+    stream = BytesIO()
+    document.save(stream)
+    content = stream.getvalue()
+
+    service = ResponseTemplateService()
+    descriptor = service.detect("投标文件格式.docx", content)
+    fields = descriptor.fields
+
+    assert [item["label"] for item in fields[:2]] == [
+        "项目编号", "项目名称",
+    ]
+    assert [item["canonical_key"] for item in fields[:2]] == [
+        "project_number", "project_name",
+    ]
+    assert all("_" not in item["label"] for item in fields)
+    assert all(
+        item["document_section"].endswith("供应商基本情况表")
+        for item in fields
+    )
+
+    output = tmp_path / "split-fields.docx"
+    service.fill_docx(
+        template_content=content,
+        output_path=output,
+        descriptor=descriptor,
+        field_values={
+            fields[0]["field_key"]: "P-001",
+            fields[1]["field_key"]: "测试项目",
+        },
+        sections=[],
+    )
+    rendered = "\n".join(item.text for item in Document(output).paragraphs)
+    assert "项目编号：P-001" in rendered
+    assert "项目名称：测试项目" in rendered
+
+
+def test_instruction_paragraph_does_not_replace_the_current_form_directory():
+    document = Document()
+    document.add_heading("附件：投标文件格式", level=1)
+    document.add_paragraph("格式10技术要求应答表")
+    document.add_paragraph("2.上述各项可另页描述。")
+    document.add_paragraph("项目名称：________________")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "投标文件格式.docx", stream.getvalue()
+    )
+
+    project_field = next(
+        item for item in descriptor.fields
+        if item["canonical_key"] == "project_name"
+    )
+    assert project_field["document_section"].endswith("技术要求应答表")
 
 
 def test_strict_fill_keeps_header_footer_and_sets_delivery_metadata(tmp_path):
@@ -504,6 +573,221 @@ def test_detects_and_fills_generic_blank_table_field(tmp_path):
     result = Document(output)
     assert result.tables[0].cell(0, 1).text == "100000.00元"
     assert field["field_key"] in report.filled_fields
+
+
+def test_detects_empty_table_cells_from_horizontal_and_vertical_labels(tmp_path):
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    horizontal = document.add_table(rows=1, cols=4)
+    horizontal.cell(0, 0).text = "姓名"
+    horizontal.cell(0, 1).text = ""
+    horizontal.cell(0, 2).text = "联系电话"
+    horizontal.cell(0, 3).text = ""
+    vertical = document.add_table(rows=3, cols=2)
+    vertical.cell(0, 0).text = "项目名称"
+    vertical.cell(0, 1).text = "项目编号"
+    vertical.cell(1, 0).text = ""
+    vertical.cell(1, 1).text = ""
+    vertical.cell(2, 0).text = ""
+    vertical.cell(2, 1).text = ""
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect("表格模板.docx", stream.getvalue())
+    fields = {(item["label"], item["source_location"]) for item in descriptor.fields}
+
+    assert any(label == "姓名" and "第1行/第2列" in location for label, location in fields)
+    assert any(label == "联系电话" and "第1行/第4列" in location for label, location in fields)
+    assert any(label == "项目名称" and "第2行/第1列" in location for label, location in fields)
+    assert any(label == "项目编号" and "第2行/第2列" in location for label, location in fields)
+    assert any(label == "项目名称" and "第3行/第1列" in location for label, location in fields)
+    assert any(label == "项目编号" and "第3行/第2列" in location for label, location in fields)
+
+
+def test_detects_colon_and_inline_cell_blanks_and_fills_each_slot(tmp_path):
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("投标人名称：")
+    table = document.add_table(rows=1, cols=1)
+    table.cell(0, 0).text = "法定代表人姓名：____  联系电话：____"
+    stream = BytesIO()
+    document.save(stream)
+    content = stream.getvalue()
+    service = ResponseTemplateService()
+    descriptor = service.detect("授权书.docx", content)
+
+    bidder = next(item for item in descriptor.fields if item["label"] == "投标人名称")
+    legal_name = next(
+        item for item in descriptor.fields if item["label"] == "法定代表人姓名"
+    )
+    phone = next(item for item in descriptor.fields if item["label"] == "联系电话")
+    assert bidder["target_mode"] == "inline_paragraph"
+    assert legal_name["target_mode"] == "inline_cell"
+    assert legal_name["expected_role"] == "LEGAL_REPRESENTATIVE"
+
+    output = tmp_path / "filled.docx"
+    service.fill_docx(
+        template_content=content,
+        output_path=output,
+        descriptor=descriptor,
+        field_values={
+            bidder["field_key"]: "北京示例咨询有限公司",
+            legal_name["field_key"]: "张三",
+            phone["field_key"]: "13800000000",
+        },
+        sections=[],
+    )
+    result = Document(output)
+    assert result.paragraphs[1].text == "投标人名称：北京示例咨询有限公司"
+    assert result.tables[0].cell(0, 0).text == (
+        "法定代表人姓名：张三  联系电话：13800000000"
+    )
+
+
+def test_standalone_parenthesized_document_title_is_not_a_fill_slot():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("响  应  文  件")
+    document.add_paragraph("（资格性响应文件）")
+    document.add_paragraph("项目名称：")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "资格性响应文件.docx", stream.getvalue()
+    )
+
+    assert [item["label"] for item in descriptor.fields] == ["项目名称"]
+
+
+def test_personnel_grid_uses_column_attribute_not_left_row_category():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    table = document.add_table(rows=3, cols=4)
+    for column, label in enumerate(("类别", "职务", "姓名", "技术职称")):
+        table.cell(0, column).text = label
+    table.cell(1, 0).text = "管理人员"
+    table.cell(2, 0).text = "技术人员"
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "项目人员情况表.docx", stream.getvalue()
+    )
+    row_two = {
+        item["column"]: item
+        for item in descriptor.fields
+        if item["row"] == 2
+    }
+
+    assert row_two[2]["label"] == "职务"
+    assert row_two[2]["semantic_field"] == "person.title"
+    assert row_two[3]["label"] == "姓名"
+    assert row_two[3]["semantic_field"] == "person.name"
+    assert row_two[4]["semantic_field"] == "person.professional_title"
+    assert all(
+        item["semantic_field"] != "project.team.members"
+        for item in descriptor.fields
+    )
+
+
+def test_remark_slot_does_not_inherit_a_person_header_from_prior_rows():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    table = document.add_table(rows=3, cols=2)
+    table.cell(0, 0).text = "姓名"
+    table.cell(0, 1).text = "联系电话"
+    table.cell(1, 0).text = ""
+    table.cell(1, 1).text = ""
+    table.cell(2, 0).text = "备注"
+    table.cell(2, 1).text = ""
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "人员信息表.docx", stream.getvalue()
+    )
+    remark = next(
+        item for item in descriptor.fields
+        if item["source_location"].endswith("第3行/第2列")
+    )
+
+    assert remark["label"] == "备注"
+    assert remark["semantic_field"] == "bid_response.content"
+    assert remark["required"] is False
+
+
+def test_signature_marks_are_actions_not_text_fields():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("投标人（盖章）：____")
+    document.add_paragraph("法定代表人（签字）：____")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect("签章模板.docx", stream.getvalue())
+
+    assert descriptor.fields == ()
+    action_names = {item["display_name"] for item in descriptor.actions}
+    assert "加盖投标人公章" in action_names
+    assert "法定代表人签字" in action_names
+
+
+def test_signature_choice_keeps_both_authorized_roles_in_the_action():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("法定代表人或其委托代理人签字：____")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "签章选择.docx", stream.getvalue()
+    )
+
+    assert descriptor.fields == ()
+    assert [item["display_name"] for item in descriptor.actions] == [
+        "法定代表人或授权代表签字"
+    ]
+
+
+def test_colon_introductions_and_section_headings_are_not_fill_slots():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("现郑重承诺如下：")
+    document.add_paragraph("一、具备本项目规定的条件：")
+    document.add_paragraph("投标人名称：")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect("承诺函.docx", stream.getvalue())
+    labels = {item["label"] for item in descriptor.fields}
+
+    assert "投标人名称" in labels
+    assert "现郑重承诺如下" not in labels
+    assert "一、具备本项目规定的条件" not in labels
+
+
+def test_new_form_directory_does_not_inherit_previous_form_subheading():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("格式3 承诺函")
+    document.add_paragraph("一、具备本项目规定的条件：")
+    document.add_paragraph("投标人名称：____")
+    document.add_paragraph("格式9 供应商基本情况表")
+    document.add_paragraph("注册地址：____")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect("目录模板.docx", stream.getvalue())
+    bidder = next(item for item in descriptor.fields if item["label"] == "投标人名称")
+    address = next(item for item in descriptor.fields if item["label"] == "注册地址")
+
+    assert bidder["document_section"].endswith(
+        "格式3 承诺函 / 一、具备本项目规定的条件："
+    )
+    assert address["document_section"] == (
+        "第七章 响应文件格式 / 格式9 供应商基本情况表"
+    )
 
 
 def test_detects_and_fills_generic_blank_paragraph_field(tmp_path):

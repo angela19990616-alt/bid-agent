@@ -5,8 +5,10 @@ from docx import Document
 
 from app.core.entity_resolution import (
     EntityCandidate,
+    EntityType,
     EntityResolutionContext,
     EntityResolutionEngine,
+    FillStrategy,
     Organization,
     Person,
     ProjectRole,
@@ -67,6 +69,12 @@ def test_authorization_template_resolves_organization_and_distinct_roles():
     )
     assert all(item["surrounding_text"] for item in slots)
     assert all(item["paragraph_index"] for item in slots)
+    person_slots = [
+        item for item in slots if item["semantic_field"] == "person.name"
+    ]
+    assert [item["expected_role"] for item in person_slots] == [
+        "LEGAL_REPRESENTATIVE", "AUTHORIZED_REPRESENTATIVE",
+    ]
     organization_slot = next(
         item for item in slots
         if item["semantic_field"] == "organization.full_name"
@@ -269,3 +277,53 @@ def test_unknown_slot_never_exposes_custom_internal_identifier():
     assert slot.canonical_key == "unmapped_field"
     assert "custom_" not in slot.canonical_key
     assert slot.display_name == "尚未识别的业务槽位"
+
+
+def test_table_columns_bind_to_business_objects_without_guessing_a_person():
+    person = SlotContextClassifier.classify(
+        label="证书名称",
+        surrounding_text="项目团队人员表 | 【当前空位：证书名称】",
+        source_location="表格4/第3行/第6列",
+        document_section="响应文件格式 / 项目团队表",
+    )
+    organization = SlotContextClassifier.classify(
+        label="营业执照号",
+        surrounding_text="供应商基本情况 | 【当前空位：营业执照号】",
+        source_location="表格1/第10行/第2列",
+        document_section="响应文件格式 / 供应商基本情况表",
+    )
+
+    assert person.expected_entity_type is EntityType.PERSON
+    assert person.expected_role is None
+    assert person.fill_strategy is FillStrategy.UNRESOLVED
+    assert person.ontology_concept == "Person[UNBOUND_ROW].certificate_name"
+    assert organization.expected_entity_type is EntityType.ORGANIZATION
+    assert organization.ontology_concept.endswith(".business_license_number")
+
+
+def test_role_attribute_and_staffing_total_are_not_misread_as_person_names():
+    professional_title = SlotContextClassifier.classify(
+        label="技术职称",
+        surrounding_text=(
+            "法定代表人 | 姓名 | 技术职称 | 联系电话 | "
+            "【当前空位：技术职称】"
+        ),
+        source_location="表格1/第6行/第6列",
+        document_section="响应文件格式 / 供应商基本情况表",
+    )
+    project_manager_total = SlotContextClassifier.classify(
+        label="项目经理",
+        surrounding_text=(
+            "员工总人数 | 其中 | 高级职称人员 | 项目经理 | "
+            "【当前空位：项目经理】"
+        ),
+        source_location="表格1/第9行/第10列",
+        document_section="响应文件格式 / 供应商基本情况表",
+    )
+
+    assert professional_title.expected_role is ProjectRole.LEGAL_REPRESENTATIVE
+    assert professional_title.semantic_field == "person.professional_title"
+    assert professional_title.canonical_key == "person_professional_title"
+    assert project_manager_total.expected_role is None
+    assert project_manager_total.expected_entity_type is EntityType.ORGANIZATION
+    assert project_manager_total.semantic_field == "organization.project_manager_count"

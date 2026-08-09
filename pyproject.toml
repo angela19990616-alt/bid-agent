@@ -11,6 +11,7 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
     "fastapi>=0.115,<1",
     "langgraph>=1.0,<2",
+    "neo4j>=5.28,<7",
     "openai>=1.100,<3",
     "pdf2docx>=0.5.13,<0.6",
     "psycopg[binary]>=3.2,<4",

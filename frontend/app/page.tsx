@@ -1583,7 +1583,7 @@ export default function Home() {
                         <WordDocumentPreview workspace={workspace} />
                       </section>
                       <section className="fill-review-pane">
-                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验实体关系并导出</h3><p>系统先识别业务实体和项目角色，再读取对应属性；人员字段不能直接输入姓名，只允许审核或建立角色绑定。</p></header>
+                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验实体关系并导出</h3><p>系统先识别业务实体和项目角色，再读取对应属性；人员字段不能直接输入姓名，只允许审核或建立角色绑定。</p><a className="ontology-link" href="/ontology">打开业务关系图</a></header>
                         <div className="font-fidelity-note">
                           <b>已自动继承原模板字体</b>
                           <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>

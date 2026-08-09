@@ -63,6 +63,15 @@ PLACEHOLDER_RE = re.compile(
     r"|\$\{\s*([\w\u4e00-\u9fff.-]+)\s*\}"
     r"|[\[\uff3b]\s*([\w\u4e00-\u9fff.-]+)\s*[\]\uff3d]"
 )
+BLANK_TOKEN_RE = re.compile(r"(?:[_＿]{1,}|…{2,}|\.{3,})")
+LABELED_BLANK_RE = re.compile(
+    r"(?P<label>[\u4e00-\u9fffA-Za-z0-9（）()、/·\s]{1,32}?)[：:]\s*"
+    r"(?P<blank>[_＿]{1,}|…{2,}|\.{3,}|(?=$))"
+)
+PAREN_LABEL_BLANK_RE = re.compile(
+    r"[（(](?P<label>[\u4e00-\u9fffA-Za-z0-9、/·\s]{1,24})[）)]\s*"
+    r"(?P<blank>[_＿]{1,}|…{2,}|\.{3,})"
+)
 
 
 @dataclass(frozen=True)
@@ -491,6 +500,7 @@ class ResponseTemplateService:
             paragraph_index: int | None = None,
             row: int | None = None,
             column: int | None = None,
+            target_mode: str = "empty_cell",
         ) -> None:
             display_label = re.sub(r"\s+", " ", label).strip().strip("：:")
             semantic_label = re.split(
@@ -503,11 +513,7 @@ class ResponseTemplateService:
                 return
             if re.search(r"身份证明|复印件|扫描件|护照|附件", clean):
                 return
-            if not re.search(
-                r"名称|姓名|编号|代表|日期|金额|报价|地址|电话|手机|邮箱|联系人|"
-                r"职务|职位|身份证号|证书|资质|签字|盖章|账号|开户行|工期|期限",
-                clean,
-            ):
+            if not cls._looks_like_field_label(clean):
                 return
             canonical = None
             candidates = [
@@ -570,9 +576,13 @@ class ResponseTemplateService:
                 "field_key": field_key,
                 "canonical_key": canonical_key,
                 "label": display_label,
-                "required": not bool(re.search(r"可选|如有|若有", clean)),
+                "required": not bool(
+                    re.search(r"可选|如有|若有", clean)
+                    or clean in {"备注", "偏离说明"}
+                ),
                 "expected_source": source_type,
                 "source_location": location,
+                "target_mode": target_mode,
                 **slot.snapshot(),
             })
 
@@ -580,46 +590,125 @@ class ResponseTemplateService:
         table_index = 0
         paragraph_index = 0
         current_section: str | None = None
+        section_stack: dict[int, str] = {}
         for block in blocks[start_block:end_block]:
             if block.tag.endswith("}tbl"):
                 table_index += 1
                 table = Table(block, document)
                 for row_index, row in enumerate(table.rows, start=1):
-                    row_context = " | ".join(
-                        cell.text.strip() for cell in row.cells
-                        if cell.text.strip()
-                    )
-                    for cell_index, cell in enumerate(row.cells[:-1], start=1):
-                        target = row.cells[cell_index].text.strip()
-                        if target and not PLACEHOLDER_RE.search(target):
+                    cell_texts = [cell.text.strip() for cell in row.cells]
+                    seen_cell_nodes: set[int] = set()
+                    for cell_index, cell in enumerate(row.cells, start=1):
+                        cell_node_id = id(cell._tc)
+                        if cell_node_id in seen_cell_nodes:
                             continue
-                        append(
-                            cell.text,
-                            f"表格{table_index}/第{row_index}行/第{cell_index + 1}列",
-                            surrounding_text=row_context,
-                            document_section=current_section,
-                            table_index=table_index,
-                            row=row_index,
-                            column=cell_index + 1,
+                        seen_cell_nodes.add(cell_node_id)
+                        target = cell_texts[cell_index - 1]
+                        location = (
+                            f"表格{table_index}/第{row_index}行/第{cell_index}列"
                         )
+                        # Empty table cells are real slots when a nearby label
+                        # tells us what belongs there. Support both horizontal
+                        # label/value pairs and vertical header/value layouts.
+                        if cls._is_blank_target(target):
+                            label = cls._table_slot_label(
+                                table, row_index, cell_index
+                            )
+                            if label:
+                                append(
+                                    label,
+                                    location,
+                                    surrounding_text=cls._table_slot_context(
+                                        table, row_index, cell_index, label
+                                    ),
+                                    document_section=current_section,
+                                    table_index=table_index,
+                                    row=row_index,
+                                    column=cell_index,
+                                    target_mode="empty_cell",
+                                )
+                                continue
+
+                        # A form cell may contain its own label and blank, e.g.
+                        # “法定代表人姓名：____”. Treat the blank as the target,
+                        # not the whole cell or the underscore characters.
+                        for paragraph_in_cell in cell.paragraphs:
+                            cell_line = paragraph_in_cell.text.strip()
+                            matches = list(LABELED_BLANK_RE.finditer(cell_line))
+                            matches.extend(PAREN_LABEL_BLANK_RE.finditer(cell_line))
+                            matches.sort(key=lambda item: item.start())
+                            for slot_index, labeled in enumerate(matches, start=1):
+                                label = cls._clean_labeled_field(
+                                    labeled.group("label")
+                                )
+                                if not label:
+                                    continue
+                                append(
+                                    label,
+                                    f"{location}/第{slot_index}个字段",
+                                    surrounding_text=cls._marked_context(
+                                        cell_line, labeled.start(), labeled.end(), label
+                                    ),
+                                    document_section=current_section,
+                                    table_index=table_index,
+                                    row=row_index,
+                                    column=cell_index,
+                                    target_mode="inline_cell",
+                                )
             elif block.tag.endswith("}p"):
                 paragraph_index += 1
                 paragraph = Paragraph(block, document)
                 text = paragraph.text.strip()
-                heading_level, _ = cls._heading_level(paragraph, text)
-                if heading_level is not None and len(text) <= 120:
-                    current_section = cls._display_heading(text)
-                match = re.match(
-                    r"^(.{2,40}?)[：:]\s*(?:[_＿]{2,}|…+|\.{3,})?\s*$",
-                    text,
+                heading_level, heading_source = cls._heading_level(
+                    paragraph, text
                 )
-                if match:
+                compact_heading = re.sub(r"\s+", "", text)
+                if (
+                    heading_source == "numbering"
+                    and re.match(r"^[一二三四五六七八九十百]+、", compact_heading)
+                    and 2 in section_stack
+                ):
+                    heading_level = 3
+                if heading_source == "form_numbering":
+                    section_stack = {
+                        level: title for level, title in section_stack.items()
+                        if level == 1
+                    }
+                is_structural_heading = cls._is_structural_heading(
+                    text, heading_level, heading_source
+                )
+                if is_structural_heading:
+                    assert heading_level is not None
+                    section_stack = {
+                        level: title for level, title in section_stack.items()
+                        if level < heading_level
+                    }
+                    section_stack[heading_level] = cls._display_heading(text)
+                    current_section = " / ".join(
+                        section_stack[level] for level in sorted(section_stack)
+                    )
+                if is_structural_heading:
+                    continue
+                labeled_matches = list(LABELED_BLANK_RE.finditer(text))
+                labeled_matches.extend(PAREN_LABEL_BLANK_RE.finditer(text))
+                labeled_matches.sort(key=lambda item: item.start())
+                for slot_index, labeled in enumerate(
+                    labeled_matches, start=1
+                ):
+                    label = cls._clean_labeled_field(
+                        labeled.group("label")
+                    )
+                    if not label:
+                        continue
                     append(
-                        match.group(1),
-                        f"第{paragraph_index}段",
-                        surrounding_text=text,
+                        label,
+                        f"第{paragraph_index}段/第{slot_index}个字段",
+                        surrounding_text=cls._marked_context(
+                            text, labeled.start(), labeled.end(), label
+                        ),
                         document_section=current_section,
                         paragraph_index=paragraph_index,
+                        target_mode="inline_paragraph",
                     )
                 inline_matches = list(re.finditer(
                     r"(?:[_＿]{2,}|…+|\.{3,})\s*[（(]([^）)]{1,30})[）)]",
@@ -635,6 +724,7 @@ class ResponseTemplateService:
                         surrounding_text=local_context,
                         document_section=current_section,
                         paragraph_index=paragraph_index,
+                        target_mode="inline_paragraph",
                     )
         unique_actions = {
             item["action_id"]: item for item in actions
@@ -655,9 +745,169 @@ class ResponseTemplateService:
         right = len(text) if index == len(matches) - 1 else (
             current.end() + matches[index + 1].start()
         ) // 2
-        # Keep enough text on both sides to capture patterns such as
-        # “系投标人的法定代表人” and “现委托…为我方代理人”.
-        return text[max(0, left - 24):min(len(text), right + 48)]
+        return ResponseTemplateService._marked_context(
+            text, current.start(), current.end(), current.group(1),
+            left=max(0, left - 28),
+            right=min(len(text), right + 48),
+        )
+
+    @staticmethod
+    def _marked_context(
+        text: str,
+        start: int,
+        end: int,
+        label: str,
+        *,
+        left: int | None = None,
+        right: int | None = None,
+    ) -> str:
+        """Preserve local syntax while marking exactly which blank is active."""
+        left = max(0, start - 40) if left is None else left
+        right = min(len(text), end + 64) if right is None else right
+        return (
+            text[left:start]
+            + f"【当前空位：{label}】"
+            + text[end:right]
+        )
+
+    @staticmethod
+    def _clean_labeled_field(label: str) -> str:
+        cleaned = re.sub(r"\s+", " ", label).strip()
+        cleaned = re.split(r"[。；;，,]", cleaned)[-1].strip()
+        return cleaned
+
+    @staticmethod
+    def _is_blank_target(value: str) -> bool:
+        text = value.strip()
+        return (
+            not text
+            or bool(PLACEHOLDER_RE.search(text))
+            or bool(BLANK_TOKEN_RE.search(text))
+        )
+
+    @staticmethod
+    def _looks_like_field_label(value: str) -> bool:
+        """Reject layout noise while retaining unknown but explicit form fields."""
+        compact = re.sub(r"[：:_＿()（）\s]", "", value)
+        if not 2 <= len(compact) <= 40:
+            return False
+        if re.search(r"身份证明|复印件|扫描件|护照|附件", compact):
+            return False
+        if re.search(r"请|应当|须|不得|^(?:说明|注)$|注[：:]", compact):
+            return False
+        if re.search(
+            r"如下$|承诺$|具备.*条件$|详见|根据.*要求$|参与.*项目$",
+            compact,
+        ):
+            return False
+        known = re.search(
+            r"名称|姓名|编号|代表|日期|时间|金额|报价|地址|电话|手机|邮箱|"
+            r"联系人|职务|职位|岗位|身份证号|证书|资质|签字|盖章|账号|开户行|"
+            r"工期|期限|性别|年龄|传真|邮编|网址|法定|代理人|负责人",
+            compact,
+        )
+        # Explicit short labels are retained even before the ontology knows
+        # their domain type; they are surfaced as unresolved for review rather
+        # than silently dropped.
+        return bool(known) or (
+            len(compact) <= 12
+            and not re.search(r"[。；，,;！？!?]", compact)
+        )
+
+    @classmethod
+    def _table_slot_label(
+        cls,
+        table: Table,
+        row_index: int,
+        column_index: int,
+    ) -> str | None:
+        row = table.rows[row_index - 1]
+        # A horizontal label/value pair must be adjacent. Looking farther left
+        # makes every layout cell in a wide table look like the same field.
+        if column_index > 1:
+            candidate = row.cells[column_index - 2].text.strip()
+            if (
+                candidate
+                and not BLANK_TOKEN_RE.search(candidate)
+                and cls._looks_like_field_label(candidate)
+            ):
+                generic = SlotContextClassifier._generic_business_slot(
+                    candidate
+                )
+                # In a personnel grid the first column is a row category
+                # (for example "管理人员"), not the value expected by the
+                # next cell.  Continue upward to the real column header.
+                if not generic or generic[1] != "project.team.members":
+                    return candidate
+        # A real grid header applies to all following blank data rows, not just
+        # the first one. Propagate it only when its row contains at least two
+        # semantic column labels; this avoids carrying arbitrary prose through
+        # layout tables.
+        for above in range(row_index - 2, -1, -1):
+            candidate = table.rows[above].cells[column_index - 1].text.strip()
+            if not candidate:
+                continue
+            if (
+                not BLANK_TOKEN_RE.search(candidate)
+                and cls._looks_like_field_label(candidate)
+                and cls._semantic_label_count(table.rows[above]) >= 2
+            ):
+                return candidate
+            break
+        return None
+
+    @classmethod
+    def _semantic_label_count(cls, row) -> int:
+        labels: set[str] = set()
+        seen_nodes: set[int] = set()
+        for cell in row.cells:
+            node_id = id(cell._tc)
+            if node_id in seen_nodes:
+                continue
+            seen_nodes.add(node_id)
+            text = cell.text.strip()
+            if (
+                text
+                and not BLANK_TOKEN_RE.search(text)
+                and cls._looks_like_field_label(text)
+            ):
+                labels.add(re.sub(r"\s+", "", text))
+        return len(labels)
+
+    @classmethod
+    def _table_slot_context(
+        cls,
+        table: Table,
+        row_index: int,
+        column_index: int,
+        label: str,
+    ) -> str:
+        row_text = " | ".join(
+            cell.text.strip() for cell in table.rows[row_index - 1].cells
+            if cell.text.strip()
+        )
+        header_text = ""
+        if row_index > 1:
+            header_text = table.rows[row_index - 2].cells[column_index - 1].text.strip()
+        context = " | ".join(item for item in (header_text, row_text) if item)
+        return f"{context} | 【当前空位：{label}】" if context else f"【当前空位：{label}】"
+
+    @staticmethod
+    def _is_structural_heading(
+        title: str,
+        level: int | None,
+        source: str,
+    ) -> bool:
+        if level is None:
+            return False
+        compact = re.sub(r"\s+", "", title)
+        if source == "paragraph_style":
+            return len(compact) <= 120
+        return (
+            len(compact) <= 60
+            and not BLANK_TOKEN_RE.search(compact)
+            and not re.search(r"[。；，]$", compact)
+        )
 
     @classmethod
     def _extract_outline(
@@ -669,6 +919,7 @@ class ResponseTemplateService:
         if start_block is None:
             return ()
         items: list[dict[str, Any]] = []
+        seen_form_heading = False
         blocks = list(document.element.body.iterchildren())
         for block_index, block in enumerate(blocks[start_block:], start=start_block):
             if not block.tag.endswith("}p"):
@@ -691,6 +942,16 @@ class ResponseTemplateService:
             level, source = cls._heading_level(paragraph, title)
             if level is None:
                 continue
+            if source == "form_numbering":
+                seen_form_heading = True
+            elif (
+                seen_form_heading
+                and source == "numbering"
+                and re.match(
+                    r"^[一二三四五六七八九十百]+、", compact
+                )
+            ):
+                level = 3
             items.append(
                 {
                     "title": cls._display_heading(title),
@@ -731,6 +992,8 @@ class ResponseTemplateService:
             return 1, "numbering"
         if re.match(r"^第[一二三四五六七八九十百零〇\d]+节", compact):
             return 2, "numbering"
+        if re.match(r"^格式\s*\d+", compact, re.I):
+            return 2, "form_numbering"
         decimal = re.match(r"^(\d+(?:[.．]\d+){1,4})(?:[\s、.]|$)", compact)
         if decimal:
             return decimal.group(1).replace("．", ".").count(".") + 1, "numbering"
@@ -967,7 +1230,9 @@ class ResponseTemplateService:
                             continue
                         value = values.get(key)
                         target = row.cells[index + 1]
-                        if value and (not target.text.strip() or PLACEHOLDER_RE.search(target.text)):
+                        if value and ResponseTemplateService._is_blank_target(
+                            target.text
+                        ):
                             ResponseTemplateService._set_cell_text_preserving_style(
                                 target, value, source_cell=cell
                             )
@@ -1002,7 +1267,26 @@ class ResponseTemplateService:
                 except (IndexError, TypeError):
                     unresolved_entries.append((str(item.get("label") or ""), key))
                     continue
-                if not target.text.strip() or PLACEHOLDER_RE.search(target.text):
+                if item.get("target_mode") == "inline_cell":
+                    replaced = False
+                    for paragraph in target.paragraphs:
+                        updated, count = ResponseTemplateService._replace_text_slot(
+                            paragraph.text,
+                            str(item.get("label") or ""),
+                            value,
+                        )
+                        if count:
+                            ResponseTemplateService._replace_paragraph_text(
+                                paragraph, updated
+                            )
+                            filled.add(key)
+                            replaced = True
+                            break
+                    if not replaced:
+                        unresolved_entries.append(
+                            (str(item.get("label") or ""), key)
+                        )
+                elif ResponseTemplateService._is_blank_target(target.text):
                     ResponseTemplateService._set_cell_text_preserving_style(
                         target, value, source_cell=source
                     )
@@ -1017,19 +1301,9 @@ class ResponseTemplateService:
                     continue
                 original = paragraph.text
                 label = str(item.get("label") or "").strip()
-                inline_pattern = re.compile(
-                    rf"(?:[_＿]{{2,}}|…+|\.{{3,}})\s*[（(]{re.escape(label)}[）)]"
+                updated, count = ResponseTemplateService._replace_text_slot(
+                    original, label, value
                 )
-                updated, count = inline_pattern.subn(value, original, count=1)
-                if not count:
-                    label_pattern = re.compile(
-                        rf"^(?P<label>{re.escape(label)}\s*[:：])"
-                        r"[ \t]*(?:[_＿]{2,}|…+|\.{3,})?[ \t]*$"
-                    )
-                    updated, count = label_pattern.subn(
-                        lambda match: f"{match.group('label')} {value}",
-                        original,
-                    )
                 if count:
                     ResponseTemplateService._replace_paragraph_text(
                         paragraph, updated
@@ -1078,6 +1352,48 @@ class ResponseTemplateService:
                     filled.add(key)
             if updated != original:
                 ResponseTemplateService._replace_paragraph_text(paragraph, updated)
+
+    @staticmethod
+    def _replace_text_slot(
+        text: str,
+        label: str,
+        value: str,
+    ) -> tuple[str, int]:
+        """Fill exactly one semantic blank while preserving its label text."""
+        escaped = re.escape(label.strip())
+        patterns = (
+            # 姓名：____ / 姓名： (end of paragraph or cell)
+            re.compile(
+                rf"(?P<prefix>{escaped}\s*[:：]\s*)"
+                r"(?:[_＿]{1,}|…{2,}|\.{3,})?(?=$|\s)"
+            ),
+            # （姓名）____
+            re.compile(
+                rf"(?P<prefix>[（(]{escaped}[）)]\s*)"
+                r"(?:[_＿]{1,}|…{2,}|\.{3,})"
+            ),
+            # ____（姓名）
+            re.compile(
+                rf"(?:[_＿]{{1,}}|…{{2,}}|\.{{3,}})\s*"
+                rf"(?P<suffix>[（(]{escaped}[）)])"
+            ),
+        )
+        for index, pattern in enumerate(patterns):
+            if index == 2:
+                updated, count = pattern.subn(
+                    lambda match: f"{value}{match.group('suffix')}",
+                    text,
+                    count=1,
+                )
+            else:
+                updated, count = pattern.subn(
+                    lambda match: f"{match.group('prefix')}{value}",
+                    text,
+                    count=1,
+                )
+            if count:
+                return updated, count
+        return text, 0
 
     @staticmethod
     def _fill_label_paragraphs(

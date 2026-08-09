@@ -91,6 +91,32 @@ class WorkspaceAccessService:
         if not hmac.compare_digest(row[1], expected_ip):
             raise WorkspaceAccessDeniedError
 
+    @classmethod
+    def current_workspace_id(cls, request: Request) -> UUID:
+        """Return the newest workspace owned by this exact session and IP."""
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token or len(token) < 32:
+            raise WorkspaceAccessDeniedError
+        token_hash = cls.token_hash(token)
+        ip_hash = cls.ip_hash(token, _client_ip(request))
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM projects
+                    WHERE access_token_hash = %s
+                      AND client_ip_hash = %s
+                    ORDER BY access_bound_at DESC NULLS LAST, created_at DESC
+                    LIMIT 1
+                    """,
+                    (token_hash, ip_hash),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            raise WorkspaceAccessDeniedError
+        return row[0]
+
     @staticmethod
     def token_hash(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()

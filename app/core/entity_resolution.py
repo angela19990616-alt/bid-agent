@@ -353,10 +353,14 @@ class SlotContextClassifier:
             r"姓名|身份证|职务|职位|电话|手机|代表|代理人|负责人|联系人",
             label,
         ))
+        marker_index = slot_context.find("【当前空位")
+        nearest_role = cls._nearest_role(slot_context, marker_index)
+        if person_value_slot and nearest_role is not None:
+            role_matches = {nearest_role}
         # Resolve the relationship nearest to the blank.  An authorization
         # sentence commonly mentions both the legal representative and the
         # agent; the verb phrase around the blank is authoritative.
-        if person_value_slot and re.search(
+        elif person_value_slot and re.search(
             r"(?:现|兹)?委托.{0,18}(?:姓名|代理人)", slot_context,
         ):
             role_matches = {ProjectRole.AUTHORIZED_REPRESENTATIVE}
@@ -369,7 +373,7 @@ class SlotContextClassifier:
         role = next(iter(role_matches)) if len(role_matches) == 1 else None
         compact_label = re.sub(r"\s+", "", label)
         required_actions = cls._required_actions(
-            f"{compact_label}{surrounding_text}"
+            f"{compact_label}{surrounding_text}", role=role
         )
         if cls._is_action_only(compact_label):
             return cls._build_slot(
@@ -432,11 +436,27 @@ class SlotContextClassifier:
                 ontology_concept, display_name, subject_role,
                 relation_path, value_expression, fill_strategy,
             ) = cls._non_person_ontology(canonical_key)
+        elif aggregate := cls._aggregate_staffing_slot(
+            compact_label, surrounding_text
+        ):
+            (
+                canonical_key, semantic_field, entity_type, value_type,
+                ontology_concept, display_name, subject_role,
+                relation_path,
+            ) = aggregate
+            role = None
+            confidence = 0.94
+            value_expression = None
+            fill_strategy = FillStrategy.UNRESOLVED
         elif role is not None:
             if re.search(r"身份证(?:号码|号)", compact_label):
                 canonical_key = "person_id_number"
                 semantic_field = "person.id_number"
                 value_type = "identity_number"
+            elif re.search(r"技术职称|职称", compact_label):
+                canonical_key = "person_professional_title"
+                semantic_field = "person.professional_title"
+                value_type = "professional_title"
             elif re.search(r"职务|职位|岗位", compact_label):
                 canonical_key = "person_title"
                 semantic_field = "person.title"
@@ -487,6 +507,15 @@ class SlotContextClassifier:
             relation_path = ("当前项目", "待确认人员角色", "姓名")
             value_expression = None
             fill_strategy = FillStrategy.UNRESOLVED
+        elif generic := cls._generic_business_slot(compact_label):
+            (
+                canonical_key, semantic_field, entity_type, value_type,
+                ontology_concept, display_name, subject_role,
+                relation_path,
+            ) = generic
+            confidence = 0.9
+            value_expression = None
+            fill_strategy = FillStrategy.UNRESOLVED
         else:
             canonical_key, semantic_field, entity_type, value_type = (
                 cls._non_person_field(label, context, canonical_hint)
@@ -520,6 +549,124 @@ class SlotContextClassifier:
             fill_strategy=fill_strategy,
             required_actions=required_actions,
         )
+
+    @staticmethod
+    def _generic_business_slot(
+        label: str,
+    ) -> tuple[
+        str, str, EntityType | None, str, str, str,
+        SubjectRole | None, tuple[str, ...],
+    ] | None:
+        """Bind common form columns to an object even before one row is chosen."""
+        person_attributes = {
+            "姓名": ("name", "姓名"),
+            "性别": ("gender", "性别"),
+            "年龄": ("age", "年龄"),
+            "职务": ("title", "职务"),
+            "职称": ("professional_title", "职称"),
+            "技术职称": ("professional_title", "技术职称"),
+            "常住地": ("residence", "常住地"),
+            "证书名称": ("certificate_name", "证书名称"),
+            "级别": ("certificate_level", "证书级别"),
+            "证号": ("certificate_number", "证书编号"),
+            "专业": ("specialty", "专业"),
+        }
+        normalized = re.sub(r"\s+", "", label)
+        if normalized in person_attributes:
+            attribute, display = person_attributes[normalized]
+            return (
+                f"person_{attribute}", f"person.{attribute}",
+                EntityType.PERSON, attribute,
+                f"Person[UNBOUND_ROW].{attribute}", f"待绑定人员{display}",
+                SubjectRole.CURRENT_PROJECT,
+                ("当前项目", "人员清单", display),
+            )
+        organization_attributes = {
+            "组织结构": ("organization_structure", "组织结构"),
+            "成立时间": ("established_date", "成立时间"),
+            "员工总人数": ("employee_count", "员工总人数"),
+            "营业执照号": ("business_license_number", "营业执照编号"),
+            "注册资金": ("registered_capital", "注册资金"),
+            "开户银行": ("bank_name", "开户银行"),
+            "经营范围": ("business_scope", "经营范围"),
+            "高级职称人员": ("senior_staff_count", "高级职称人员数量"),
+            "中级职称人员": ("intermediate_staff_count", "中级职称人员数量"),
+            "初级职称人员": ("junior_staff_count", "初级职称人员数量"),
+            "技工": ("skilled_worker_count", "技工数量"),
+        }
+        if normalized in organization_attributes:
+            attribute, display = organization_attributes[normalized]
+            return (
+                attribute, f"organization.{attribute}",
+                EntityType.ORGANIZATION, attribute,
+                f"Organization[BIDDER_ORGANIZATION].{attribute}",
+                f"当前项目投标人{display}", SubjectRole.BIDDER_ORGANIZATION,
+                ("当前项目", "投标人", display),
+            )
+        team_groups = {
+            "管理人员": ("management_staff", "管理人员"),
+            "技术人员": ("technical_staff", "技术人员"),
+            "售后服务人员": ("after_sales_staff", "售后服务人员"),
+        }
+        if normalized in team_groups:
+            key, display = team_groups[normalized]
+            return (
+                f"project_team_{key}", "project.team.members",
+                EntityType.PERSON, "person_collection",
+                f"ProjectTeam.{normalized}", f"项目团队{display}",
+                SubjectRole.CURRENT_PROJECT,
+                ("当前项目", "项目团队", display),
+            )
+        document_fields = {
+            "资格性响应文件": ("qualification_response_materials", "资格响应材料"),
+            "其他响应文件/电子档": ("other_response_materials", "其他响应材料"),
+            "谈判采购文件要求": ("tender_requirement_text", "采购文件要求原文"),
+            "响应文件的应答": ("response_content", "投标响应内容"),
+            "响应文件的应答情况": ("response_status", "投标响应情况"),
+            "项目内容": ("pricing_item_content", "报价项目内容"),
+            "不含税总价（元）": ("total_price_excluding_tax", "不含税报价总额"),
+            "含税总价（元）": ("total_price_including_tax", "含税报价总额"),
+            "备注": ("notes", "备注"),
+            "偏离说明": ("deviation_notes", "偏离说明"),
+        }
+        if normalized in document_fields:
+            key, display = document_fields[normalized]
+            return (
+                key,
+                "bid_response.content", None, "response_content",
+                "BidResponseDocument.content", display,
+                SubjectRole.BID_RESPONSE_DOCUMENT,
+                ("当前项目", "投标文件", display),
+            )
+        return None
+
+    @staticmethod
+    def _aggregate_staffing_slot(
+        label: str,
+        surrounding_text: str,
+    ) -> tuple[
+        str, str, EntityType, str, str, str,
+        SubjectRole, tuple[str, ...],
+    ] | None:
+        """Recognize staffing totals without turning a role name into a person."""
+        normalized = re.sub(r"\s+", "", label)
+        context = re.sub(r"\s+", "", surrounding_text)
+        if (
+            normalized in {"项目经理", "项目负责人"}
+            and "其中" in context
+            and re.search(r"员工总人数|职称人员|技工", context)
+        ):
+            return (
+                "project_manager_count",
+                "organization.project_manager_count",
+                EntityType.ORGANIZATION,
+                "count",
+                "Organization[BIDDER_ORGANIZATION].project_manager_count",
+                "当前项目投标人项目经理人数",
+                SubjectRole.BIDDER_ORGANIZATION,
+                ("当前项目", "投标人", "项目经理人数"),
+            )
+        return None
 
     @staticmethod
     def _build_slot(
@@ -573,8 +720,43 @@ class SlotContextClassifier:
         return alias in context
 
     @classmethod
-    def _required_actions(cls, text: str) -> tuple[str, ...]:
+    def _nearest_role(
+        cls,
+        context: str,
+        marker_index: int,
+    ) -> ProjectRole | None:
+        if marker_index < 0:
+            return None
+        distances: list[tuple[int, ProjectRole]] = []
+        for role, aliases in cls._configured_role_aliases():
+            positions = [
+                match.start()
+                for alias in aliases
+                for match in re.finditer(re.escape(alias), context)
+            ]
+            if positions:
+                distances.append((min(abs(item - marker_index) for item in positions), role))
+        if not distances:
+            return None
+        distances.sort(key=lambda item: item[0])
+        if len(distances) > 1 and distances[0][0] == distances[1][0]:
+            return None
+        return distances[0][1]
+
+    @classmethod
+    def _required_actions(
+        cls,
+        text: str,
+        *,
+        role: ProjectRole | None = None,
+    ) -> tuple[str, ...]:
         normalized = re.sub(r"\s+", "", text)
+        if (
+            re.search(r"签字|签名|签署", normalized)
+            and re.search(r"法定代表人|法人代表|法人", normalized)
+            and re.search(r"委托代理人|授权代表|授权代理人", normalized)
+        ):
+            return ("法定代表人或授权代表签字",)
         labels: list[str] = []
         for details in cls._ontology().get("document_actions", {}).values():
             if any(
@@ -586,6 +768,12 @@ class SlotContextClassifier:
             labels = [
                 label for label in labels
                 if label != "加盖投标人公章"
+            ]
+        if role is not None and "由对应人员签字" in labels:
+            labels = [
+                f"{ROLE_LABELS[role]}签字"
+                if label == "由对应人员签字" else label
+                for label in labels
             ]
         return tuple(dict.fromkeys(labels))
 
@@ -602,7 +790,7 @@ class SlotContextClassifier:
         )
         remainder = re.sub(
             r"加盖|盖公章|公章|盖章|签章|亲笔签署|签署|签字|签名|"
-            r"或|和|及|、|由",
+            r"或|和|及|、|由|其",
             "",
             remainder,
         )
@@ -614,6 +802,7 @@ class SlotContextClassifier:
             "person.name": "姓名",
             "person.id_number": "身份证号码",
             "person.title": "职务",
+            "person.professional_title": "技术职称",
             "person.phone": "联系电话",
             "organization.full_name": "企业全称",
             "organization.registered_address": "注册地址",
@@ -691,6 +880,20 @@ class SlotContextClassifier:
                 "current_project.bidder.bank_account",
                 FillStrategy.DIRECT_ATTRIBUTE,
             ),
+            "fax": (
+                "Organization[BIDDER_ORGANIZATION].fax",
+                "当前项目投标人传真", SubjectRole.BIDDER_ORGANIZATION,
+                ("当前项目", "投标人", "传真"),
+                "current_project.bidder.fax",
+                FillStrategy.DIRECT_ATTRIBUTE,
+            ),
+            "website": (
+                "Organization[BIDDER_ORGANIZATION].website",
+                "当前项目投标人网址", SubjectRole.BIDDER_ORGANIZATION,
+                ("当前项目", "投标人", "网址"),
+                "current_project.bidder.website",
+                FillStrategy.DIRECT_ATTRIBUTE,
+            ),
             "enterprise_qualification": (
                 "Organization[BIDDER_ORGANIZATION].qualification",
                 "当前项目投标人企业资质", SubjectRole.BIDDER_ORGANIZATION,
@@ -721,7 +924,6 @@ class SlotContextClassifier:
         context: str,
         canonical_hint: str | None,
     ) -> tuple[str | None, str, EntityType | None, str]:
-        combined = f"{label}{context}"
         if (
             re.search(r"项目名称|采购项目名称|招标项目名称", label)
             and re.search(r"项目编号|采购编号|招标编号|包号", label)
@@ -731,6 +933,37 @@ class SlotContextClassifier:
                 "project_reference", "project.reference",
                 EntityType.PROJECT, "project_reference",
             )
+        semantic_by_key = {
+            "bidder_name": ("organization.full_name", EntityType.ORGANIZATION),
+            "registered_address": ("organization.registered_address", EntityType.ORGANIZATION),
+            "postal_code": ("organization.postal_code", EntityType.ORGANIZATION),
+            "project_name": ("project.project_name", EntityType.PROJECT),
+            "project_number": ("project.project_number", EntityType.PROJECT),
+            "project_reference": ("project.reference", EntityType.PROJECT),
+            "contact_person": ("person.name", EntityType.PERSON),
+            "contact_phone": ("person.phone", EntityType.PERSON),
+            "date": ("bid_response.signing_date", None),
+            "bid_response_signing_date": ("bid_response.signing_date", None),
+            "bank_account": ("organization.bank_account", EntityType.ORGANIZATION),
+            "enterprise_qualification": ("organization.qualification", EntityType.ORGANIZATION),
+            "fax": ("organization.fax", EntityType.ORGANIZATION),
+            "website": ("organization.website", EntityType.ORGANIZATION),
+            "bid_round": ("bid_response.bid_round", None),
+        }
+        if canonical_hint in semantic_by_key:
+            semantic, entity_type = semantic_by_key[canonical_hint]
+            from app.core.field_semantics import FieldSemanticClassifier
+
+            normalized_key = (
+                "bid_response_signing_date"
+                if canonical_hint == "date" else canonical_hint
+            )
+            return (
+                normalized_key,
+                semantic,
+                entity_type,
+                FieldSemanticClassifier.expected_type(canonical_hint).value,
+            )
         mappings = (
             ("project_number", "project.project_number", EntityType.PROJECT, "project_identifier", ("项目编号", "采购编号", "招标编号")),
             ("project_name", "project.project_name", EntityType.PROJECT, "project_name", ("项目名称", "采购项目名称", "招标项目名称")),
@@ -739,28 +972,15 @@ class SlotContextClassifier:
             ("postal_code", "organization.postal_code", EntityType.ORGANIZATION, "postal_code", ("邮政编码", "邮编")),
             ("bank_account", "organization.bank_account", EntityType.ORGANIZATION, "bank_account", ("银行账号", "账号")),
             ("enterprise_qualification", "organization.qualification", EntityType.ORGANIZATION, "qualification", ("企业资质", "资质等级")),
+            ("fax", "organization.fax", EntityType.ORGANIZATION, "phone", ("传真",)),
+            ("website", "organization.website", EntityType.ORGANIZATION, "website", ("网址", "网站")),
             ("bid_round", "bid_response.bid_round", None, "bid_round", ("报价轮次", "轮次")),
             ("bid_response_signing_date", "bid_response.signing_date", None, "date", ("日期", "年月日")),
         )
         for key, semantic, entity_type, value_type, aliases in mappings:
-            if any(alias in combined for alias in aliases):
+            if any(alias in label for alias in aliases):
                 return key, semantic, entity_type, value_type
         if canonical_hint:
-            semantic_by_key = {
-                "bidder_name": ("organization.full_name", EntityType.ORGANIZATION),
-                "registered_address": ("organization.registered_address", EntityType.ORGANIZATION),
-                "postal_code": ("organization.postal_code", EntityType.ORGANIZATION),
-                "project_name": ("project.project_name", EntityType.PROJECT),
-                "project_number": ("project.project_number", EntityType.PROJECT),
-                "project_reference": ("project.reference", EntityType.PROJECT),
-                "contact_person": ("person.name", EntityType.PERSON),
-                "contact_phone": ("person.phone", EntityType.PERSON),
-                "date": ("bid_response.signing_date", None),
-                "bid_response_signing_date": ("bid_response.signing_date", None),
-                "bank_account": ("organization.bank_account", EntityType.ORGANIZATION),
-                "enterprise_qualification": ("organization.qualification", EntityType.ORGANIZATION),
-                "bid_round": ("bid_response.bid_round", None),
-            }
             semantic, entity_type = semantic_by_key.get(
                 canonical_hint, (f"field.{canonical_hint}", None)
             )

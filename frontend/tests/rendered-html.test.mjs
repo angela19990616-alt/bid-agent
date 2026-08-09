@@ -37,8 +37,9 @@ test("renders the private preview access gate", async () => {
 });
 
 test("keeps the simplified V1 workflow in the client source", async () => {
-  const [page, css, layout, worker, nginx] = await Promise.all([
+  const [page, ontology, css, layout, worker, nginx] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/ontology/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
@@ -62,6 +63,12 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /planned_proposal_writer/);
   assert.match(page, /查看原文定位/);
   assert.match(page, /实际取值关系/);
+  assert.match(page, /打开业务关系图/);
+  assert.match(ontology, /BUSINESS ONTOLOGY/);
+  assert.match(ontology, /Neo4j 图投影已连接/);
+  assert.match(ontology, /原模板目录/);
+  assert.match(ontology, /实际取值关系/);
+  assert.doesNotMatch(ontology, /person_id|project_id|custom_/);
   assert.match(page, /签章动作/);
   assert.match(page, /其他候选/);
   assert.match(page, /原文位置/);

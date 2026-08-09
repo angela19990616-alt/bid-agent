@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1",
+  "version": "1.1.2",
   "name": "投标文件严格回填领域本体",
   "entity_types": {
     "Project": "当前投标项目",
