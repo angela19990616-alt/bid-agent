@@ -489,3 +489,36 @@ def test_repository_tender_uses_actual_template_chapter_not_toc(tmp_path):
     assert "受控测试正文" in "".join(
         node.text or "" for node in implementation._p.getnext().iter()
     )
+
+
+def test_strict_fill_keeps_source_directory_position_and_refreshes_it(tmp_path):
+    document = Document()
+    document.add_heading("附件：投标文件格式", level=1)
+    document.add_paragraph("目录")
+    document.add_heading("一、项目理解", level=1)
+    document.add_heading("二、实施计划", level=1)
+    stream = BytesIO()
+    document.save(stream)
+
+    service = ResponseTemplateService()
+    descriptor = service.detect("投标文件格式.docx", stream.getvalue())
+    output = tmp_path / "strict-directory.docx"
+    service.fill_docx(
+        template_content=stream.getvalue(),
+        output_path=output,
+        descriptor=descriptor,
+        field_values={},
+        sections=[
+            {"title": "一、项目理解", "content": "项目理解正文。"},
+            {"title": "二、实施计划", "content": "实施计划正文。"},
+        ],
+    )
+
+    result = Document(output)
+    paragraphs = [item.text for item in result.paragraphs]
+    assert paragraphs.index("目录") < paragraphs.index("一、项目理解")
+    assert paragraphs.index("一、项目理解") < paragraphs.index("项目理解正文。")
+    assert paragraphs.index("二、实施计划") < paragraphs.index("实施计划正文。")
+    assert result.settings.element.find(qn("w:updateFields")).get(
+        qn("w:val")
+    ) == "true"

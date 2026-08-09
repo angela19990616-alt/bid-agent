@@ -48,3 +48,32 @@ def test_evidence_location_includes_nearest_chapter_and_paragraph():
     assert candidates["bidder_name"].source_title.endswith(".docx")
     assert "章节「一、企业信息」" in candidates["bidder_name"].source_location
     assert "第 3 段" in candidates["bidder_name"].source_location
+
+
+def test_rejects_prose_and_document_names_from_person_fields():
+    candidates = CaseFactResolver.extract([{
+        "title": "历史响应文件",
+        "content": (
+            "法定代表人身份证明书\n"
+            "在专家授权和指导下，完成项目。\n"
+            "授权委托书等材料应加盖公章。\n"
+            "联系人：电话"
+        ),
+    }])
+
+    assert "legal_representative" not in candidates
+    assert "authorized_representative" not in candidates
+    assert "contact_person" not in candidates
+
+
+def test_company_and_website_patterns_stop_at_field_value():
+    candidates = CaseFactResolver.extract([{
+        "title": "历史响应文件",
+        "content": (
+            "投标人全称（公章）：北京大岳咨询有限责任公司\n"
+            "网址：www.example.com）等渠道查询"
+        ),
+    }])
+
+    assert candidates["bidder_name"].value == "北京大岳咨询有限责任公司"
+    assert candidates["website"].value == "www.example.com"

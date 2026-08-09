@@ -33,7 +33,9 @@ class CaseFactResolver:
 
     PATTERNS: dict[str, tuple[str, ...]] = {
         "bidder_name": (
-            r"(?:供应商|投标人|响应人|参选人)(?:名称)?(?:（[^\n）]*）)?\s*[|:：]?\s*([^\n|]{4,60}?(?:有限责任公司|有限公司|事务所))",
+            r"(?:供应商|投标人|响应人|参选人)(?:名称|全称)?"
+            r"(?:（[^\n）]*）)?\s*[|:：]\s*"
+            r"([^\n|]{4,60}?(?:有限责任公司|有限公司|事务所))",
             r"我方[（(]?([^\n）)]{4,60}?(?:有限责任公司|有限公司))[）)]?",
         ),
         "legal_representative": (
@@ -56,7 +58,11 @@ class CaseFactResolver:
             r"(?:联系电话|手机|电话)\s*[|:：]?\s*((?:\+?86[- ]?)?(?:1\d{10}|0\d{2,3}[- ]?\d{7,8}))",
         ),
         "fax": (r"传\s*真\s*[|:：]?\s*(0\d{2,3}[- ]?\d{7,8})",),
-        "website": (r"(?:网址|网站)\s*[|:：]?\s*(https?://[^\s|]+|www\.[^\s|]+)",),
+        "website": (
+            r"(?:网址|网站)\s*[|:：]?\s*"
+            r"((?:https?://|www\.)[A-Za-z0-9.-]+(?:\:[0-9]{1,5})?"
+            r"(?:/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*)?)",
+        ),
         "enterprise_qualification": (
             r"((?:已|现已)?在全国投资项目在线审批监管平台[^\n|]{0,60}?备案)",
         ),
@@ -143,7 +149,9 @@ class CaseFactResolver:
 
     @staticmethod
     def _clean(value: str) -> str:
-        return re.sub(r"[\s_·…]+$", "", re.sub(r"\s+", " ", value)).strip(" :：|（）()")
+        cleaned = re.sub(r"\s+", " ", value)
+        cleaned = re.sub(r"^[\s_·…]+|[\s_·…]+$", "", cleaned)
+        return cleaned.strip(" :：|（）()。，；：！？、")
 
     @staticmethod
     def _usable(value: str) -> bool:

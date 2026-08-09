@@ -44,3 +44,4 @@ class TemplateFieldDecisionResponse(BaseModel):
     evidence_excerpt: str | None = None
     evidence_location: str | None = None
     evidence_match_count: int = 0
+    evidence_alternatives: list[str] = Field(default_factory=list)

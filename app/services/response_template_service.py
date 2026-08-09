@@ -708,6 +708,11 @@ class ResponseTemplateService:
                 inserted.extend(missing_sections)
                 missing_sections = []
 
+        # Keep the template's directory exactly where the source placed it.
+        # Word refreshes any existing TOC/PAGEREF fields on open; we never
+        # create a second generic directory in strict-template mode.
+        self._request_field_refresh(document)
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         document.save(output_path)
         return TemplateFillReport(
@@ -716,6 +721,15 @@ class ResponseTemplateService:
             inserted_sections=tuple(inserted),
             unresolved_sections=tuple(missing_sections),
         )
+
+    @staticmethod
+    def _request_field_refresh(document: DocumentType) -> None:
+        settings = document.settings.element
+        update_fields = settings.find(qn("w:updateFields"))
+        if update_fields is None:
+            update_fields = OxmlElement("w:updateFields")
+            settings.append(update_fields)
+        update_fields.set(qn("w:val"), "true")
 
     @staticmethod
     def _block_text(block) -> str:

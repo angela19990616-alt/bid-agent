@@ -5,6 +5,10 @@ from app.core.strict_fill import (
     StrictFillDecisionEngine,
     TemplateField,
 )
+from app.core.field_semantics import (
+    FieldSemanticClassifier,
+    SemanticValueType,
+)
 
 
 FIELD = TemplateField(
@@ -80,6 +84,42 @@ def test_person_field_accepts_a_real_name_with_middle_dot():
     assert StrictFillDecisionEngine.value_matches_field_type(
         "authorized_representative", "阿依古丽·艾力"
     ) is True
+
+
+def test_person_field_rejects_document_names_prose_and_honorifics():
+    for value in (
+        "身份证明",
+        "授权委托书",
+        "和指导下",
+        "联系电话",
+        "朱女士",
+    ):
+        assert not StrictFillDecisionEngine.value_matches_field_type(
+            "legal_representative", value
+        )
+
+
+def test_value_semantics_are_classified_before_field_matching():
+    assert FieldSemanticClassifier.classify("包锦霞") is (
+        SemanticValueType.PERSON_NAME
+    )
+    assert FieldSemanticClassifier.classify("委托书等") is (
+        SemanticValueType.DOCUMENT_REFERENCE
+    )
+    assert FieldSemanticClassifier.classify("010-12345678") is (
+        SemanticValueType.PHONE
+    )
+    assert FieldSemanticClassifier.matches("contact_person", "包锦霞")
+    assert not FieldSemanticClassifier.matches("contact_person", "委托书等")
+
+
+def test_company_and_website_reject_labels_or_trailing_prose():
+    assert not StrictFillDecisionEngine.value_matches_field_type(
+        "bidder_name", "全称（公章）：北京大岳咨询有限责任公司"
+    )
+    assert not StrictFillDecisionEngine.value_matches_field_type(
+        "website", "www.example.com）等渠道查询"
+    )
 
 
 def test_common_template_fields_must_match_their_semantic_types():

@@ -162,3 +162,34 @@ def test_bulk_field_update_cannot_bypass_semantic_type_validation():
         GenerationProfileService.update_template_fields(
             uuid4(), {"legal_representative": "法人或授权代表"}
         )
+
+
+def test_case_candidate_exposes_conflicting_text_values_for_review():
+    from app.knowledge.case_fact_resolver import CaseFactCandidate
+
+    profile = GenerationProfile(
+        project_id=uuid4(),
+        generation_mode="strict_template",
+        historical_case_mode="closest_case",
+        template_descriptor={"field_labels": ["联系电话"]},
+        template_field_values={},
+        last_fill_report={},
+    )
+    candidate = CaseFactCandidate(
+        canonical_key="contact_phone",
+        value="010-12345678",
+        source_title="案例一·中标响应文件",
+        source_excerpt="联系电话：010-12345678",
+        source_location="第 10 段",
+        confidence=0.8,
+        match_count=3,
+        alternatives=("13800138000",),
+    )
+
+    decision = GenerationProfileService.template_field_decisions(
+        profile, case_candidates={"contact_phone": candidate}
+    )[0]
+
+    assert decision["status"] == "REVIEW_REQUIRED"
+    assert decision["evidence_alternatives"] == ["13800138000"]
+    assert "系统不自动判断口径" in decision["reason"]

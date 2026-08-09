@@ -306,6 +306,7 @@ class GenerationProfileService:
             decision = engine.decide(field, facts)
             candidate = (case_candidates or {}).get(key)
             if decision.status.value == "MISSING" and candidate is not None:
+                alternative_count = len(candidate.alternatives)
                 decisions.append({
                     "field_key": key,
                     "label": field.label,
@@ -317,12 +318,20 @@ class GenerationProfileService:
                     "source_reference": candidate.source_title,
                     "confidence": candidate.confidence,
                     "status": "REVIEW_REQUIRED",
-                    "reason": "从五份机构私有案例中匹配到候选值，确认后才可用于正式交付。",
+                    "reason": (
+                        "从五份机构私有案例中匹配到候选值，"
+                        + (
+                            f"另有 {alternative_count} 个不同候选，系统不自动判断口径；"
+                            if alternative_count else ""
+                        )
+                        + "确认后才可用于正式交付。"
+                    ),
                     "required": field.required,
                     "evidence_title": candidate.source_title,
                     "evidence_excerpt": candidate.source_excerpt,
                     "evidence_location": candidate.source_location,
                     "evidence_match_count": candidate.match_count,
+                    "evidence_alternatives": list(candidate.alternatives),
                 })
                 continue
             decisions.append({
@@ -364,6 +373,9 @@ class GenerationProfileService:
                 ),
                 "evidence_match_count": reviews.get(key, {}).get(
                     "evidence_match_count", 1 if decision.value else 0
+                ),
+                "evidence_alternatives": reviews.get(key, {}).get(
+                    "evidence_alternatives", []
                 ),
             })
         return decisions
@@ -429,6 +441,9 @@ class GenerationProfileService:
                 "evidence_excerpt": candidate.get("evidence_excerpt"),
                 "evidence_location": candidate.get("evidence_location"),
                 "evidence_match_count": candidate.get("evidence_match_count", 0),
+                "evidence_alternatives": candidate.get(
+                    "evidence_alternatives", []
+                ),
             }
             values = dict(profile.template_field_values)
             values[key] = candidate["value"]

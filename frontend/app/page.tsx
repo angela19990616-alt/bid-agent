@@ -139,6 +139,7 @@ type Workspace = {
     evidence_excerpt: string | null;
     evidence_location: string | null;
     evidence_match_count: number;
+    evidence_alternatives: string[];
   }>;
   case_library_count: number;
   case_library_name: string;
@@ -1570,7 +1571,7 @@ export default function Home() {
         <div className="evidence-modal-backdrop" role="presentation" onMouseDown={() => setEvidenceItem(null)}>
           <section className="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title" onMouseDown={(event) => event.stopPropagation()}>
             <header><div><span className="panel-label">SOURCE EVIDENCE</span><h3 id="evidence-modal-title">{evidenceItem.label} · 原文依据</h3></div><button aria-label="关闭原文依据" onClick={() => setEvidenceItem(null)}>×</button></header>
-            <dl><div><dt>来源文件</dt><dd>{visibleEvidenceSource(evidenceItem)}</dd></div><div><dt>原文位置</dt><dd>{visibleEvidenceLocation(evidenceItem)}</dd></div>{evidenceItem.evidence_match_count > 1 && <div><dt>一致匹配</dt><dd>{evidenceItem.evidence_match_count} 处</dd></div>}</dl>
+            <dl><div><dt>来源文件</dt><dd>{visibleEvidenceSource(evidenceItem)}</dd></div><div><dt>原文位置</dt><dd>{visibleEvidenceLocation(evidenceItem)}</dd></div>{evidenceItem.evidence_match_count > 1 && <div><dt>一致匹配</dt><dd>{evidenceItem.evidence_match_count} 处</dd></div>}{(evidenceItem.evidence_alternatives ?? []).length > 0 && <div><dt>其他候选</dt><dd>{evidenceItem.evidence_alternatives.join("、")}</dd></div>}</dl>
             <div className="evidence-context"><strong>原文上下文</strong><blockquote>{highlightedEvidence(evidenceItem.evidence_excerpt || evidenceItem.value || "当前来源记录暂无可展示的上下文。", evidenceItem.value)}</blockquote></div>
             <p>黄色标记为本次自动匹配内容。仅展示该项目已获授权的原文片段，不暴露内部路径和系统字段。</p>
           </section>
