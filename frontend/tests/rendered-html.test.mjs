@@ -36,7 +36,7 @@ test("renders the private preview access gate", async () => {
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 });
 
-test("keeps the simplified V1 workflow in the client source", async () => {
+test("keeps the consolidated V2 workflow in the client source", async () => {
   const [page, ontology, css, layout, worker, nginx] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/ontology/page.tsx", import.meta.url), "utf8"),

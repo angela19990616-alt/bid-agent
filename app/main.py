@@ -24,9 +24,11 @@ from app.config.settings import settings
 from app.core.errors import AppError
 from app.database.db import check_postgres, check_redis
 
+APP_VERSION = "2.2.0"
+
 app = FastAPI(
     title=settings.app_name,
-    version="3.0.0",
+    version=APP_VERSION,
     description="企业级 AI 标书 Agent 后端服务",
 )
 app.add_middleware(
@@ -155,7 +157,7 @@ def root():
     return {
         "message": "AI标书Agent已经启动",
         "environment": settings.app_env,
-        "version": "3.0.0",
+        "version": APP_VERSION,
     }
 
 

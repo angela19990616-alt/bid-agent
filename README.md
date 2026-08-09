@@ -1,5 +1,8 @@
 # Bid Agent
 
+当前正式产品基线：**Bid Agent V2（2.2.0）**。正式开发分支为 `main`，
+发布版本使用不可移动的 Git 标签；历史 V1/V2/V3 标签继续保留用于回溯。
+
 Bid Agent 是面向技术投标方案生成的受控 AI 工作台。用户只需上传 PDF/DOCX
 招标文件，系统在后台创建工作区，完成有效性检查、解析、技术要求与评分点提取、
 推荐目录、按章节生成、人工编辑、合规校核和整本 Word 导出。
@@ -379,7 +382,7 @@ python scripts/acceptance_mvp.py \
 
 ```bash
 cd /opt/bid-agent
-BID_AGENT_BRANCH=codex/v2-response-map \
+BID_AGENT_BRANCH=main \
   bash scripts/deploy_ecs.sh
 ```
 

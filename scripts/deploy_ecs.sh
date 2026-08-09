@@ -2,7 +2,7 @@
 set -euo pipefail
 
 EXPECTED_DIR="${BID_AGENT_DIR:-/opt/bid-agent}"
-DEPLOY_BRANCH="${BID_AGENT_BRANCH:-codex/v2-response-map}"
+DEPLOY_BRANCH="${BID_AGENT_BRANCH:-main}"
 HEALTH_URL="${BID_AGENT_HEALTH_URL:-http://127.0.0.1:8080/health}"
 BACKUP_DIR="${BID_AGENT_BACKUP_DIR:-$EXPECTED_DIR/backups}"
 
