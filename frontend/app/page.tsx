@@ -93,7 +93,9 @@ type Workspace = {
   name: string;
   status: string;
   document: {
+    id: string;
     filename: string;
+    content_type: string | null;
     source_count: number;
     validation_score?: number | null;
     knowledge_status: string;
@@ -633,6 +635,99 @@ function WordDocumentPreview({
   </div>;
 }
 
+function SourceDocumentPreview({
+  workspace,
+  target,
+  onClose,
+}: {
+  workspace: Workspace;
+  target: PreviewTarget;
+  onClose: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const document = workspace.document;
+  const isPdf = Boolean(document && (document.content_type === "application/pdf" || document.filename.toLowerCase().endsWith(".pdf")));
+
+  useEffect(() => {
+    if (!document) {
+      setState("error");
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setState("loading");
+    setPdfUrl(null);
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/workspaces/${workspace.id}/documents/${document.id}/source`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("source unavailable");
+        const data = await response.arrayBuffer();
+        if (cancelled) return;
+        if (isPdf) {
+          objectUrl = URL.createObjectURL(new Blob([data], { type: "application/pdf" }));
+          setPdfUrl(objectUrl);
+          setState("ready");
+          return;
+        }
+        if (!containerRef.current) return;
+        const { renderAsync } = await import("docx-preview");
+        containerRef.current.replaceChildren();
+        await renderAsync(data, containerRef.current, undefined, {
+          className: "source-word-page",
+          inWrapper: true,
+          breakPages: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+        });
+        if (cancelled || !containerRef.current) return;
+        const slot = target.slot;
+        let located: HTMLElement | null = null;
+        if (slot.table_index != null && slot.row != null && slot.column != null) {
+          const table = containerRef.current.querySelectorAll<HTMLTableElement>("table")[slot.table_index];
+          located = table?.rows[slot.row]?.cells[slot.column] ?? null;
+        }
+        if (!located && slot.paragraph_index != null) {
+          located = containerRef.current.querySelectorAll<HTMLElement>("p")[slot.paragraph_index] ?? null;
+        }
+        if (!located) {
+          const hint = (slot.label || slot.display_name || "").replace(/\s+/g, "");
+          located = [...containerRef.current.querySelectorAll<HTMLElement>("td, p")].find(
+            (element) => hint && (element.textContent || "").replace(/\s+/g, "").includes(hint),
+          ) ?? null;
+        }
+        located?.classList.add("word-slot-highlight");
+        located?.scrollIntoView({ block: "center", inline: "center" });
+        setState("ready");
+      } catch {
+        if (!cancelled) setState("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [document, isPdf, target, workspace.id]);
+
+  return <div className="source-preview-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="source-preview-modal" role="dialog" aria-modal="true" aria-labelledby="source-preview-title" onMouseDown={(event) => event.stopPropagation()}>
+      <header>
+        <div><span className="panel-label">PROCUREMENT SOURCE</span><h3 id="source-preview-title">采购文件原文</h3><p>{document?.filename} · {target.slot.source_location}</p></div>
+        <button aria-label="关闭采购文件原文" onClick={onClose}>×</button>
+      </header>
+      {state === "loading" && <div className="word-preview-status">正在打开采购文件原文…</div>}
+      {state === "error" && <div className="word-preview-status error">采购文件原文暂时无法打开，请稍后重试。</div>}
+      {isPdf && pdfUrl && <iframe className="source-pdf-preview" title="采购文件 PDF 原文" src={pdfUrl} />}
+      {!isPdf && <div ref={containerRef} className="word-preview-canvas source-word-preview" aria-label="采购文件 Word 原文预览" />}
+    </section>
+  </div>;
+}
+
 function estimateLabel(item: Workspace) {
   const low = item.estimated_remaining_seconds_low;
   const high = item.estimated_remaining_seconds_high;
@@ -674,6 +769,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [evidenceItem, setEvidenceItem] = useState<EvidenceItem | null>(null);
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
+  const [sourcePreviewTarget, setSourcePreviewTarget] = useState<PreviewTarget | null>(null);
 
   const activeSection = sections.find((item) => item.id === activeSectionId);
   const feedbackSummary = useMemo(() => ({
@@ -1287,6 +1383,14 @@ export default function Home() {
     setPreviewTarget({ variable, slot, requestId: Date.now() });
   }
 
+  function openSourceSlot(
+    variable: TemplateVariableDecision,
+    slot: TemplateVariableSlot = variable.slots[0],
+  ) {
+    if (!slot) return;
+    setSourcePreviewTarget({ variable, slot, requestId: Date.now() });
+  }
+
   async function bindEntityRole(
     item: TemplateVariableDecision,
     candidate: TemplateVariableDecision["entity_candidates"][number],
@@ -1322,7 +1426,7 @@ export default function Home() {
             {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
             <div><span>当前状态</span><strong>{variableResolutionLabel(item)}</strong></div>
             <div><span>下一步</span><strong>{variableNextAction(item)}</strong></div>
-            <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位此处</button></article>)}</details>
+            <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位产出文件</button><button className="text-button" onClick={() => openSourceSlot(item, slot)}>打开采购原文</button></article>)}</details>
             {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
               <div className="entity-candidates">
                 <span>候选人员</span>
@@ -1340,9 +1444,10 @@ export default function Home() {
           </div>
         )}
         {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
-        {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
+        {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看匹配依据</button>}
         <div className="field-review-actions">
-          {item.slots.length > 0 && <button className="secondary compact preview-locate-button" disabled={Boolean(busy)} onClick={() => locatePreviewSlot(item)}>在预览中定位</button>}
+          {item.slots.length > 0 && <button className="secondary compact preview-locate-button" disabled={Boolean(busy)} onClick={() => locatePreviewSlot(item)}>在产出预览中定位</button>}
+          {item.slots.length > 0 && workspace?.document && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => openSourceSlot(item)}>查看采购文件原文</button>}
           {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "confirm")}>一次确认并同步 {item.slot_count} 处</button>}
           {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "reset")}>重新审核</button>}
         </div>
@@ -1800,7 +1905,7 @@ export default function Home() {
                   <div className="template-fields">
                     <div className="strict-fill-workbench">
                       <section className="fill-preview-pane">
-                        <header><span className="panel-label">DOCUMENT PREVIEW</span><h3>回填结果预览</h3><small>{workspace.template_filename}</small></header>
+                        <header><span className="panel-label">OUTPUT PREVIEW</span><h3>当前产出文件预览</h3><small>《AI投标文件_{workspace.name}》审阅稿</small></header>
                         <WordDocumentPreview
                           workspace={workspace}
                           target={previewTarget}
@@ -1809,7 +1914,7 @@ export default function Home() {
                         />
                       </section>
                       <section className="fill-review-pane">
-                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验实体关系并导出</h3><p>系统先自动匹配实体和来源。点击“在预览中定位”可跳到原模板空位；仅在自动结果需要纠正时，在左侧预览中修改并留痕。</p><a className="ontology-link" href="/ontology">打开业务关系图</a></header>
+                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验实体关系并导出</h3><p>左侧始终预览当前产出文件。“在产出预览中定位”用于核验回填结果；只有点击“查看采购文件原文”才打开采购文件出处。</p><a className="ontology-link" href="/ontology">打开业务关系图</a></header>
                         <div className="font-fidelity-note">
                           <b>已自动继承原模板字体</b>
                           <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>
@@ -1896,10 +2001,17 @@ export default function Home() {
           )}
         </section>
       </div>
+      {workspace && sourcePreviewTarget && (
+        <SourceDocumentPreview
+          workspace={workspace}
+          target={sourcePreviewTarget}
+          onClose={() => setSourcePreviewTarget(null)}
+        />
+      )}
       {evidenceItem && (
         <div className="evidence-modal-backdrop" role="presentation" onMouseDown={() => setEvidenceItem(null)}>
           <section className="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title" onMouseDown={(event) => event.stopPropagation()}>
-            <header><div><span className="panel-label">SOURCE EVIDENCE</span><h3 id="evidence-modal-title">{evidenceItem.label} · 原文依据</h3></div><button aria-label="关闭原文依据" onClick={() => setEvidenceItem(null)}>×</button></header>
+            <header><div><span className="panel-label">MATCH EVIDENCE</span><h3 id="evidence-modal-title">{evidenceItem.label} · 匹配依据</h3></div><button aria-label="关闭匹配依据" onClick={() => setEvidenceItem(null)}>×</button></header>
             <dl><div><dt>来源文件</dt><dd>{visibleEvidenceSource(evidenceItem)}</dd></div><div><dt>原文位置</dt><dd>{visibleEvidenceLocation(evidenceItem)}</dd></div>{evidenceItem.evidence_match_count > 1 && <div><dt>一致匹配</dt><dd>{evidenceItem.evidence_match_count} 处</dd></div>}{(evidenceItem.evidence_alternatives ?? []).length > 0 && <div><dt>其他候选</dt><dd>{evidenceItem.evidence_alternatives.join("、")}</dd></div>}</dl>
             <div className="evidence-context"><strong>原文上下文</strong><blockquote>{highlightedEvidence(evidenceItem.evidence_excerpt || evidenceItem.value || "当前来源记录暂无可展示的上下文。", evidenceItem.value)}</blockquote></div>
             <p>黄色标记为本次自动匹配内容。仅展示该项目已获授权的原文片段，不暴露内部路径和系统字段。</p>

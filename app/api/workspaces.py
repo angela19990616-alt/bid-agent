@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import (
@@ -42,6 +43,8 @@ from app.services.entity_resolution_service import EntityResolutionService
 from app.services.project_document_service import (
     DocumentParseFailedError,
     DuplicateDocumentError,
+    ProjectDocumentNotFoundError,
+    ProjectDocumentService,
 )
 from app.services.export_service import (
     ExportNotFoundError,
@@ -626,6 +629,34 @@ def preview_strict_template(
             "wordprocessingml.document"
         ),
         headers={"Cache-Control": "no-store, private"},
+    )
+
+
+@router.get("/{workspace_id}/documents/{document_id}/source")
+def preview_source_document(
+    workspace_id: UUID,
+    document_id: UUID,
+    _access: None = Depends(authorize_workspace),
+):
+    """Read the original procurement document for an explicit source view."""
+    try:
+        path, filename, content_type = ProjectDocumentService().source_file(
+            workspace_id,
+            document_id,
+        )
+    except ProjectDocumentNotFoundError as exc:
+        raise AppError(
+            404,
+            "SOURCE_DOCUMENT_NOT_FOUND",
+            "当前方案中不存在该采购文件。",
+        ) from exc
+    return FileResponse(
+        path,
+        media_type=content_type or "application/octet-stream",
+        headers={
+            "Cache-Control": "no-store, private",
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+        },
     )
 
 

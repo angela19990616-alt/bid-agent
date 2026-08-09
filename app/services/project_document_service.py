@@ -80,6 +80,31 @@ class DocumentParseFailedError(Exception):
 
 
 class ProjectDocumentService:
+    def source_file(
+        self,
+        project_id: UUID,
+        document_id: UUID,
+    ) -> tuple[Path, str, str | None]:
+        """Return the original uploaded document within its project boundary."""
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT filename, content_type, storage_key
+                    FROM documents
+                    WHERE project_id = %s
+                      AND public_id = %s
+                    """,
+                    (project_id, document_id),
+                )
+                document = cursor.fetchone()
+        if document is None:
+            raise ProjectDocumentNotFoundError(str(document_id))
+        path = self._storage_path(document["storage_key"])
+        if not path.is_file():
+            raise ProjectDocumentNotFoundError(str(document_id))
+        return path, document["filename"], document.get("content_type")
+
     def upload_and_parse(
         self,
         project_id: UUID,

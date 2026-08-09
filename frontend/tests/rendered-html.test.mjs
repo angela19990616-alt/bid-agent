@@ -61,7 +61,9 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /检测到 PDF，但尚无法可靠转换/);
   assert.match(page, /strict_template_writer/);
   assert.match(page, /planned_proposal_writer/);
-  assert.match(page, /查看原文定位/);
+  assert.match(page, /查看匹配依据/);
+  assert.match(page, /查看采购文件原文/);
+  assert.match(page, /在产出预览中定位/);
   assert.match(page, /实际取值关系/);
   assert.match(page, /打开业务关系图/);
   assert.match(ontology, /BUSINESS ONTOLOGY/);
@@ -75,9 +77,11 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /来源记录暂未提供页码或段落/);
   assert.match(page, /图片\/扫描件/);
   assert.match(page, /回填位置/);
-  assert.match(page, /回填结果预览/);
+  assert.match(page, /当前产出文件预览/);
   assert.match(page, /WordDocumentPreview/);
+  assert.match(page, /SourceDocumentPreview/);
   assert.match(page, /template-preview/);
+  assert.match(page, /documents\/\$\{document\.id\}\/source/);
   assert.match(page, /docx-preview/);
   assert.match(page, /evidence-modal/);
   assert.match(page, /visibleEvidenceSource/);
@@ -107,8 +111,9 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /同一人员档案自动联动/);
   assert.match(page, /fill-variable-group/);
   assert.match(css, /repeat\(auto-fit, minmax\(230px, 1fr\)\)/);
-  assert.match(page, /在预览中定位/);
-  assert.match(page, /定位此处/);
+  assert.match(page, /在产出预览中定位/);
+  assert.match(page, /定位产出文件/);
+  assert.match(page, /打开采购原文/);
   assert.match(page, /保存并同步/);
   assert.match(page, /word-slot-highlight/);
   assert.match(page, /原模板位置/);
