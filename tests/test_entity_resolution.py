@@ -14,6 +14,7 @@ from app.core.entity_resolution import (
     ProjectRole,
     ProjectRoleAssignment,
     SlotContextClassifier,
+    SlotSemanticContractValidator,
 )
 from app.services.generation_profile_service import (
     GenerationProfile,
@@ -417,6 +418,57 @@ def test_standalone_contact_phone_binds_to_project_contact_person():
     assert slot.display_name == "联系人联系电话"
 
 
+def test_semantic_contract_requires_person_role_outside_people_table():
+    slot = SlotContextClassifier.classify(
+        label="姓名",
+        surrounding_text="【当前空位：姓名】",
+        source_location="授权书/第2段",
+        document_section="授权书",
+        paragraph_index=2,
+    )
+
+    report = SlotSemanticContractValidator.audit([slot.snapshot()])
+
+    assert report["status"] == "review_required"
+    assert {item["code"] for item in report["issues"]} == {
+        "person_role_missing"
+    }
+
+
+def test_semantic_contract_rejects_entity_type_mismatch():
+    slot = SlotContextClassifier.classify(
+        label="投标人名称",
+        surrounding_text="投标人名称：___",
+        source_location="投标函/第1段",
+        document_section="投标函",
+        paragraph_index=1,
+    ).snapshot()
+    slot["expected_entity_type"] = "Person"
+
+    report = SlotSemanticContractValidator.audit([slot])
+
+    assert report["status"] == "review_required"
+    assert "entity_type_mismatch" in {
+        item["code"] for item in report["issues"]
+    }
+
+
+def test_semantic_contract_accepts_project_team_person_collection():
+    slot = SlotContextClassifier.classify(
+        label="管理人员",
+        surrounding_text="管理人员：___",
+        source_location="人员配置表/第2段",
+        document_section="人员配置表",
+        paragraph_index=2,
+    )
+
+    report = SlotSemanticContractValidator.audit([slot.snapshot()])
+
+    assert slot.semantic_field == "project.team.members"
+    assert slot.expected_entity_type is EntityType.PERSON
+    assert report["status"] == "passed"
+
+
 def test_table_collections_are_reviewed_as_business_objects_not_every_cell():
     document = Document()
     document.sections[0].header.paragraphs[0].text = "原模板页眉"
@@ -451,6 +503,14 @@ def test_table_collections_are_reviewed_as_business_objects_not_every_cell():
     variables = GenerationProfileService.template_variable_decisions(profile)
 
     assert descriptor.fields
+    assert descriptor.semantic_audit == {
+        "version": "1.3.0",
+        "status": "passed",
+        "field_count": len(descriptor.fields),
+        "valid_field_count": len(descriptor.fields),
+        "issue_count": 0,
+        "issues": [],
+    }
     assert all(item["semantic_field"] != "text.value" for item in descriptor.fields)
     assert all("页眉" not in item["surrounding_text"] for item in descriptor.fields)
     assert all("页脚" not in item["surrounding_text"] for item in descriptor.fields)

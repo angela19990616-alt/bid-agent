@@ -17,7 +17,10 @@ from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
 from app.core.strict_fill import StrictFillDecisionEngine
-from app.core.entity_resolution import SlotContextClassifier
+from app.core.entity_resolution import (
+    SlotContextClassifier,
+    SlotSemanticContractValidator,
+)
 
 
 TEMPLATE_MARKERS = (
@@ -92,6 +95,7 @@ class TemplateDescriptor:
     end_block: int | None = None
     font_profile: dict[str, Any] | None = None
     actions: tuple[dict[str, Any], ...] = ()
+    semantic_audit: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         return asdict(self)
@@ -283,6 +287,7 @@ class ResponseTemplateService:
         fields, actions = self._extract_fillable_fields(
             document, start_block, end_block
         )
+        semantic_audit = SlotSemanticContractValidator.audit(list(fields))
         strict = tuple(marker for marker in STRICT_MARKERS if marker in candidate_text)
         outline = self._extract_outline(document, start_block)
         font_profile = self._extract_font_profile(document, start_block, end_block)
@@ -314,6 +319,7 @@ class ResponseTemplateService:
             end_block=end_block,
             font_profile=font_profile,
             actions=actions,
+            semantic_audit=semantic_audit,
         )
 
     @staticmethod

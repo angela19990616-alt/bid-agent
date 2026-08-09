@@ -40,6 +40,9 @@ def test_detects_embedded_docx_template_and_strict_rules():
     assert descriptor.start_block is not None
     assert "project_name" in descriptor.placeholders
     assert "严格按照" in descriptor.strict_reasons
+    assert descriptor.semantic_audit is not None
+    assert descriptor.semantic_audit["status"] == "passed"
+    assert descriptor.semantic_audit["issue_count"] == 0
 
 
 def test_docx_negated_template_statement_does_not_trigger_strict_mode():

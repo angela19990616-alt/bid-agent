@@ -1193,6 +1193,122 @@ class SlotContextClassifier:
         return None, "text.value", None, "unknown"
 
 
+class SlotSemanticContractValidator:
+    """Validate slot meaning before an entity graph is allowed to resolve it.
+
+    Classification answers what the blank means; entity resolution later
+    answers which verified object supplies the value.  Keeping this contract
+    rule-driven prevents a graph or vector search from compensating for a
+    wrongly typed slot.
+    """
+
+    @classmethod
+    def audit(cls, fields: list[dict[str, Any]]) -> dict[str, Any]:
+        ontology = SlotContextClassifier._ontology()
+        contracts = tuple(ontology.get("semantic_contracts") or ())
+        validation = ontology.get("semantic_validation") or {}
+        unknown_fields = set(validation.get("unknown_fields") or ())
+        unknown_value_types = set(
+            validation.get("unknown_value_types") or ()
+        )
+        generic_names = set(validation.get("generic_display_names") or ())
+        issues: list[dict[str, str]] = []
+
+        for raw in fields:
+            slot = DocumentSlot.from_snapshot(raw)
+            actual_entity = (
+                slot.expected_entity_type.value
+                if slot.expected_entity_type else None
+            )
+            contract = next(
+                (
+                    item for item in contracts
+                    if slot.semantic_field.startswith(
+                        str(item.get("prefix") or "")
+                    )
+                ),
+                None,
+            )
+            if contract is None or slot.semantic_field in unknown_fields:
+                cls._issue(
+                    issues, slot, "semantic_field_unregistered",
+                    "空位尚未映射到已登记的业务属性。",
+                )
+            elif actual_entity != contract.get("entity_type"):
+                cls._issue(
+                    issues, slot, "entity_type_mismatch",
+                    "业务属性与目标实体类型不一致。",
+                )
+            if slot.expected_value_type in unknown_value_types:
+                cls._issue(
+                    issues, slot, "value_type_unknown",
+                    "空位没有明确的值类型。",
+                )
+            if (
+                not slot.ontology_concept
+                or slot.ontology_concept == "unmapped"
+                or not slot.relation_path
+            ):
+                cls._issue(
+                    issues, slot, "relation_path_missing",
+                    "空位尚未建立从当前项目到目标属性的关系路径。",
+                )
+            if slot.display_name in generic_names:
+                cls._issue(
+                    issues, slot, "display_name_generic",
+                    "空位仍使用泛化名称，无法向业务人员说明实际含义。",
+                )
+            if (
+                slot.expected_entity_type is EntityType.PERSON
+                and slot.expected_role is None
+                and slot.table_index is None
+                and slot.expected_value_type != "person_collection"
+            ):
+                cls._issue(
+                    issues, slot, "person_role_missing",
+                    "非人员清单中的人员字段必须先绑定项目角色。",
+                )
+            if slot.table_index is not None and (
+                slot.row is None or slot.column is None
+            ):
+                cls._issue(
+                    issues, slot, "table_coordinate_missing",
+                    "表格空位缺少行列坐标。",
+                )
+            if slot.table_index is None and slot.paragraph_index is None:
+                cls._issue(
+                    issues, slot, "document_coordinate_missing",
+                    "空位缺少表格或段落定位信息。",
+                )
+
+        invalid_slots = {
+            (item["source_location"], item["display_name"])
+            for item in issues
+        }
+        return {
+            "version": str(ontology.get("version") or "unknown"),
+            "status": "passed" if not issues else "review_required",
+            "field_count": len(fields),
+            "valid_field_count": len(fields) - len(invalid_slots),
+            "issue_count": len(issues),
+            "issues": issues,
+        }
+
+    @staticmethod
+    def _issue(
+        issues: list[dict[str, str]],
+        slot: DocumentSlot,
+        code: str,
+        message: str,
+    ) -> None:
+        issues.append({
+            "source_location": slot.source_location,
+            "display_name": slot.display_name,
+            "code": code,
+            "message": message,
+        })
+
+
 class EntityResolutionEngine:
     PROJECT_SCOPED_ROLES = {
         ProjectRole.AUTHORIZED_REPRESENTATIVE,
