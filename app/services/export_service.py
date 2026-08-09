@@ -12,6 +12,7 @@ from app.database.db import connect
 from app.services.docx_builder import (
     build_full_proposal_docx,
     build_proposal_docx,
+    delivery_title,
 )
 from app.services.proposal_review_service import (
     ProposalReviewService,
@@ -68,11 +69,9 @@ class ExportService:
                 template_content=template_path.read_bytes(),
                 output_path=temporary,
                 descriptor=profile.template_descriptor,
-                field_values={
-                    **preview_values,
-                    "project_name": data["project_name"],
-                },
+                field_values=preview_values,
                 sections=data["sections"],
+                document_title=delivery_title(data["project_name"]),
             )
             temporary.replace(destination)
         except Exception as exc:
@@ -102,7 +101,7 @@ class ExportService:
             r'[\\/:*?"<>|\s]+', "_", data["project_name"]
         ).strip("_")[:80] or "项目"
         filename = (
-            f"{safe_project}_技术方案_"
+            f"AI投标文件_{safe_project}_"
             f"{datetime.now().astimezone():%Y%m%d_%H%M%S}.docx"
         )
         storage_key = f"{project_id}/{filename}"
@@ -143,11 +142,9 @@ class ExportService:
                     template_content=template_path.read_bytes(),
                     output_path=temporary,
                     descriptor=profile.template_descriptor,
-                    field_values={
-                        **approved_values,
-                        "project_name": data["project_name"],
-                    },
+                    field_values=approved_values,
                     sections=data["sections"],
+                    document_title=delivery_title(data["project_name"]),
                 )
                 profile_service.record_fill_report(
                     project_id,

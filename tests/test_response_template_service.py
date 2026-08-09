@@ -169,6 +169,7 @@ def test_pdf_template_is_not_falsely_claimed_as_auto_fillable():
 
 def test_extracts_project_number_from_procurement_source_only():
     document = Document()
+    document.add_paragraph("采购项目名称：测试采购项目。")
     document.add_paragraph("项目编号：SCXHR20250320。")
     document.add_paragraph("供应商名称：此处不得从历史响应文件推断")
     stream = BytesIO()
@@ -178,7 +179,21 @@ def test_extracts_project_number_from_procurement_source_only():
         "招标文件.docx", stream.getvalue()
     )
 
-    assert values == {"project_number": "SCXHR20250320"}
+    assert values == {
+        "project_name": "测试采购项目",
+        "project_number": "SCXHR20250320",
+    }
+
+    detailed_values, evidence = (
+        ResponseTemplateService().extract_source_fields_with_evidence(
+            "招标文件.docx", stream.getvalue()
+        )
+    )
+    assert detailed_values == values
+    assert evidence["project_number"]["title"] == "招标文件.docx"
+    assert evidence["project_name"]["location"] == "正文第 1 段"
+    assert evidence["project_number"]["location"] == "正文第 2 段"
+    assert "SCXHR20250320" in evidence["project_number"]["excerpt"]
 
 
 def test_empty_paragraph_is_never_selected_as_section_heading(tmp_path):
@@ -279,6 +294,55 @@ def test_detects_template_fonts_and_uses_them_for_inserted_content(tmp_path):
     fonts = generated_body.runs[0]._element.rPr.rFonts
     assert fonts.get(qn("w:eastAsia")) == "仿宋_GB2312"
     assert generated_body.runs[0].font.size.pt == 16
+
+
+def test_compound_labels_use_the_value_before_the_blank_and_skip_signatures():
+    document = Document()
+    document.add_heading("附件：投标文件格式", level=1)
+    table = document.add_table(rows=4, cols=2)
+    table.cell(0, 0).text = "项目编号/包号：_____________________ 项目名称"
+    table.cell(1, 0).text = "企业名称（盖章）"
+    table.cell(2, 0).text = "法定代表人（单位负责人）（签字或盖章）"
+    table.cell(3, 0).text = "附：法定代表人身份证明文件复印件"
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "投标文件格式.docx", stream.getvalue()
+    )
+    by_label = {item["label"]: item["field_key"] for item in descriptor.fields}
+
+    assert by_label["项目编号/包号：_____________________ 项目名称"] == "project_number"
+    assert by_label["企业名称（盖章）"] == "bidder_name"
+    assert "法定代表人（单位负责人）（签字或盖章）" not in by_label
+    assert "附：法定代表人身份证明文件复印件" not in by_label
+
+
+def test_strict_fill_keeps_header_footer_and_sets_delivery_metadata(tmp_path):
+    document = Document()
+    document.sections[0].header.paragraphs[0].text = "原模板页眉"
+    document.sections[0].footer.paragraphs[0].text = "原模板页脚"
+    document.add_heading("附件：投标文件格式", level=1)
+    document.add_paragraph("项目名称：{{project_name}}")
+    stream = BytesIO()
+    document.save(stream)
+    content = stream.getvalue()
+    descriptor = ResponseTemplateService().detect("投标文件格式.docx", content)
+    output = tmp_path / "metadata.docx"
+
+    ResponseTemplateService().fill_docx(
+        template_content=content,
+        output_path=output,
+        descriptor=descriptor,
+        field_values={"project_name": "测试项目"},
+        sections=[],
+        document_title="《AI投标文件+测试项目》",
+    )
+
+    result = Document(output)
+    assert result.core_properties.title == "《AI投标文件+测试项目》"
+    assert result.sections[0].header.paragraphs[0].text == "原模板页眉"
+    assert result.sections[0].footer.paragraphs[0].text == "原模板页脚"
 
 
 def test_table_fill_preserves_existing_target_font():
@@ -398,7 +462,13 @@ def test_repository_tender_uses_actual_template_chapter_not_toc(tmp_path):
     assert descriptor.marker_text.startswith("第七章")
     required = service.required_fields(descriptor.snapshot())
     assert {"project_name", "project_number", "bidder_name"} <= set(required)
-    assert "legal_representative" in required
+    assert all(
+        not (
+            item["field_key"] == "legal_representative"
+            and any(token in item["label"] for token in ("签字", "盖章", "复印件"))
+        )
+        for item in descriptor.fields
+    )
     assert len(required) >= 10
     assert descriptor.end_block is not None
     assert descriptor.end_block > descriptor.start_block

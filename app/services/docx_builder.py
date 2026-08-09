@@ -18,6 +18,10 @@ LATIN_FONT = "Arial"
 CJK_FONT = "PingFang SC"
 
 
+def delivery_title(project_name: str) -> str:
+    return f"《AI投标文件+{project_name.strip()}》"
+
+
 def build_proposal_docx(
     output_path: Path,
     *,
@@ -56,8 +60,11 @@ def build_full_proposal_docx(
     requirements: list[dict],
 ) -> None:
     document = Document()
-    _configure_document(document, project_name, "技术方案")
-    _add_title_block(document, project_name, "技术方案")
+    title = delivery_title(project_name)
+    _configure_document(document, project_name, title)
+    _add_title_block(document, project_name, title)
+    document.add_page_break()
+    _add_directory(document, sections)
     document.add_page_break()
     for index, section in enumerate(sections, start=1):
         if index > 1:
@@ -172,6 +179,18 @@ def _add_title_block(
         f"导出时间：{datetime.now().astimezone():%Y-%m-%d %H:%M}"
     )
     _set_run_font(run, 10, MUTED)
+
+
+def _add_directory(document: Document, sections: list[dict]) -> None:
+    heading = document.add_paragraph()
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = heading.add_run("目录")
+    _set_run_font(run, 20, RGBColor(0, 0, 0), bold=True)
+    for index, section in enumerate(sections, start=1):
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.space_after = Pt(6)
+        run = paragraph.add_run(f"{index}. {section['title']}")
+        _set_run_font(run, 11, RGBColor(0, 0, 0))
 
 
 def _add_markdown(document: Document, content: str) -> None:

@@ -3,7 +3,9 @@ from docx import Document
 from app.services.docx_builder import (
     _clean_export_markdown,
     _strip_leading_heading,
+    build_full_proposal_docx,
     build_proposal_docx,
+    delivery_title,
 )
 
 
@@ -65,3 +67,21 @@ def test_duplicate_leading_chapter_heading_is_removed():
         "# 服务范围与工作内容\n\n正文",
         "服务范围与工作内容",
     ).strip() == "正文"
+
+
+def test_full_proposal_uses_delivery_title_and_directory(tmp_path):
+    output = tmp_path / "full.docx"
+    build_full_proposal_docx(
+        output,
+        project_name="测试项目",
+        sections=[{"title": "实施方案", "content": "正文"}],
+        requirements=[],
+    )
+
+    document = Document(output)
+    text = "\n".join(item.text for item in document.paragraphs)
+    assert delivery_title("测试项目") == "《AI投标文件+测试项目》"
+    assert "《AI投标文件+测试项目》" in text
+    assert "目录" in text
+    assert "1. 实施方案" in text
+    assert document.core_properties.title == "《AI投标文件+测试项目》"

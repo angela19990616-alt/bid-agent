@@ -256,9 +256,21 @@ class ResponseSupportService:
                 if not overlap:
                     continue
                 metadata = dict(item.get("metadata") or {})
+                asset_reference = metadata.get("asset_reference")
+                evidence_location = (
+                    metadata.get("evidence_location")
+                    or metadata.get("source_location")
+                )
+                mime_type = str(metadata.get("mime_type") or "")
+                asset_kind = str(metadata.get("asset_kind") or "").strip()
+                if not asset_kind:
+                    asset_kind = (
+                        "image"
+                        if mime_type.startswith("image/")
+                        else "document"
+                    )
                 matches.append(
                     {
-                        "knowledge_id": str(item["id"]),
                         "title": item["title"],
                         "category": item["category"],
                         "score": round(
@@ -270,7 +282,30 @@ class ResponseSupportService:
                         ),
                         "holder": metadata.get("holder"),
                         "valid_until": metadata.get("valid_until"),
-                        "asset_reference": metadata.get("asset_reference"),
+                        "asset_kind": asset_kind,
+                        "asset_available": bool(asset_reference),
+                        "source_file": (
+                            metadata.get("evidence_title")
+                            or metadata.get("source_filename")
+                            or item["title"]
+                        ),
+                        "source_location": evidence_location,
+                        "source_page": metadata.get("source_page"),
+                        "source_excerpt": metadata.get("evidence_excerpt"),
+                        "target_location": (
+                            requirement.get("proposal_mapping")
+                            or "资格响应附件"
+                        ),
+                        "insertion_status": (
+                            "ready_for_review"
+                            if metadata.get("verified_enterprise_fact", False)
+                            and asset_reference
+                            and evidence_location
+                            else "source_location_required"
+                            if metadata.get("verified_enterprise_fact", False)
+                            and asset_reference
+                            else "asset_required"
+                        ),
                         "rationale": "匹配字段：" + "、".join(sorted(overlap)[:6]),
                     }
                 )
@@ -283,7 +318,12 @@ class ResponseSupportService:
                     "sources": requirement.get("sources", []),
                     "status": (
                         "matched_verified"
-                        if any(item["verified"] for item in matches)
+                        if any(
+                            item["verified"]
+                            and item["asset_available"]
+                            and item["source_location"]
+                            for item in matches
+                        )
                         else "manual_material_required"
                     ),
                     "matches": matches[:5],

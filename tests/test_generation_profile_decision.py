@@ -1,6 +1,7 @@
 from io import BytesIO
 from uuid import uuid4
 
+import pytest
 from docx import Document
 
 from app.agents.proposal_planner import ProposalPlanner
@@ -92,8 +93,12 @@ def test_template_field_decisions_separate_tender_and_enterprise_facts():
 
     assert decisions["project_number"]["status"] == "AUTO_FILL"
     assert decisions["project_number"]["source_type"] == "tender_document"
+    assert decisions["project_number"]["expected_value_type_label"] == "项目编号"
+    assert decisions["project_number"]["type_validation"] == "passed"
     assert decisions["bidder_name"]["status"] == "REVIEW_REQUIRED"
     assert decisions["legal_representative"]["status"] == "MISSING"
+    assert decisions["legal_representative"]["expected_value_type_label"] == "姓名"
+    assert decisions["legal_representative"]["type_validation"] == "missing"
 
 
 def test_confirmed_manual_value_becomes_traceable_auto_fill():
@@ -150,3 +155,10 @@ def test_confirmed_case_value_keeps_business_readable_original_evidence():
     assert decision["evidence_location"] == "机构私有案例库"
     assert decision["evidence_match_count"] == 3
     assert "current_project" not in decision["source_reference"]
+
+
+def test_bulk_field_update_cannot_bypass_semantic_type_validation():
+    with pytest.raises(ValueError, match="字段类型（姓名）"):
+        GenerationProfileService.update_template_fields(
+            uuid4(), {"legal_representative": "法人或授权代表"}
+        )

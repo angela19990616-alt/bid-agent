@@ -37,3 +37,14 @@ def test_rejects_person_field_label_as_a_case_candidate():
     ])
 
     assert "legal_representative" not in candidates
+
+
+def test_evidence_location_includes_nearest_chapter_and_paragraph():
+    candidates = CaseFactResolver.extract([{
+        "title": "案例一·中标响应文件.docx",
+        "content": "第三章 投标人基本情况\n一、企业信息\n供应商名称：北京大岳咨询有限责任公司",
+    }])
+
+    assert candidates["bidder_name"].source_title.endswith(".docx")
+    assert "章节「一、企业信息」" in candidates["bidder_name"].source_location
+    assert "第 3 段" in candidates["bidder_name"].source_location

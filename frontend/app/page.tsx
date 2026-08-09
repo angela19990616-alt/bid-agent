@@ -125,6 +125,9 @@ type Workspace = {
   template_field_decisions: Array<{
     field_key: string;
     label: string;
+    expected_value_type: string;
+    expected_value_type_label: string;
+    type_validation: "passed" | "missing";
     value: string | null;
     source_type: string | null;
     source_reference: string | null;
@@ -209,13 +212,19 @@ type ResponseSupport = {
     requirement: string;
     status: "matched_verified" | "manual_material_required";
     matches: Array<{
-      knowledge_id: string;
       title: string;
       score: number;
       verified: boolean;
       holder: string | null;
       valid_until: string | null;
-      asset_reference: string | null;
+      asset_kind: "image" | "document";
+      asset_available: boolean;
+      source_file: string;
+      source_location: string | null;
+      source_page: number | null;
+      source_excerpt: string | null;
+      target_location: string;
+      insertion_status: "ready_for_review" | "source_location_required" | "asset_required";
       rationale: string;
     }>;
   }>;
@@ -360,7 +369,9 @@ function visibleEvidenceSource(item: TemplateFieldDecision) {
 
 function visibleEvidenceLocation(item: TemplateFieldDecision) {
   if (item.evidence_location && !isInternalEvidenceLabel(item.evidence_location)) return item.evidence_location;
-  return item.source_type === "tender_document" ? "当前采购文件原文" : "机构私有资料库原文";
+  return item.source_type === "tender_document"
+    ? "当前采购文件（来源记录暂未提供页码或段落）"
+    : "机构私有资料（来源记录暂未提供章节、页码或附件位置）";
 }
 
 function highlightedEvidence(text: string, value: string | null) {
@@ -1198,8 +1209,14 @@ export default function Home() {
                       <article key={item.requirement_id}>
                         <strong>{item.requirement}</strong>
                         <span>{item.status === "matched_verified" ? "已匹配核验材料" : "未找到已核验材料，需人工补充"}</span>
-                        {item.matches.map((match) => (
-                          <p key={match.knowledge_id}>{match.title} · 匹配 {Math.round(match.score * 100)}% · {match.verified ? "已核验" : "待核验"}</p>
+                        {item.matches.map((match, matchIndex) => (
+                          <details key={`${match.title}-${matchIndex}`}>
+                            <summary>{match.title} · 匹配 {Math.round(match.score * 100)}% · {match.verified ? "事实已核验" : "待核验"}</summary>
+                            <p>材料：{match.asset_kind === "image" ? "图片/扫描件" : "文档附件"} · {match.asset_available ? "文件已关联" : "尚未关联真实文件"}</p>
+                            <p>来源：{match.source_file}{match.source_page ? ` · 第 ${match.source_page} 页` : ""}{match.source_location ? ` · ${match.source_location}` : " · 尚缺原文件位置"}</p>
+                            <p>回填位置：{match.target_location} · {match.insertion_status === "ready_for_review" ? "可进入人工审核" : "补齐文件及定位后再回填"}</p>
+                            {match.source_excerpt && <blockquote>{match.source_excerpt}</blockquote>}
+                          </details>
                         ))}
                       </article>
                     ))}
@@ -1476,8 +1493,9 @@ export default function Home() {
                                   </div>
                                 </div>
                               ) : <p>{item.value || "尚未提供"}</p>}
+                              <small>字段类型：{item.expected_value_type_label} · {item.type_validation === "passed" ? "类型校验已通过" : "未获得符合类型的值"}</small>
                               <small>{item.reason}</small>
-                              {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)}</small>}
+                              {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
                               {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
                               {editingFieldKey !== item.field_key && <div className="field-review-actions">
                                 {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "confirm")}>确认该字段</button>}

@@ -17,6 +17,8 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
+from app.core.strict_fill import StrictFillDecisionEngine
+
 
 TEMPLATE_MARKERS = (
     "投标文件格式", "响应文件格式", "报价文件格式", "资格响应格式",
@@ -29,7 +31,9 @@ STRICT_MARKERS = (
 FIELD_ALIASES = {
     "project_name": ("项目名称", "采购项目名称", "招标项目名称"),
     "project_number": ("项目编号", "采购编号", "招标编号"),
-    "bidder_name": ("供应商名称", "投标人名称", "响应人名称"),
+    "bidder_name": (
+        "供应商名称", "投标人名称", "响应人名称", "企业名称", "单位名称",
+    ),
     "legal_representative": ("法定代表人",),
     "authorized_representative": ("授权代表", "委托代理人"),
     "date": ("日期", "响应日期", "投标日期"),
@@ -147,36 +151,74 @@ class ResponseTemplateService:
         content: bytes,
     ) -> dict[str, str]:
         """Extract procurement facts that are safe to prefill from source."""
+        values, _ = self.extract_source_fields_with_evidence(filename, content)
+        return values
+
+    def extract_source_fields_with_evidence(
+        self,
+        filename: str,
+        content: bytes,
+    ) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+        """Extract procurement facts together with a readable source locator."""
         suffix = Path(filename).suffix.lower()
-        text = ""
+        segments: list[tuple[str, str]] = []
         try:
             if suffix == ".docx":
                 document = Document(BytesIO(content))
-                text = "\n".join(
-                    [item.text for item in document.paragraphs]
-                    + [
-                        cell.text
-                        for table in document.tables
-                        for row in table.rows
-                        for cell in row.cells
-                    ]
+                segments.extend(
+                    (item.text, f"正文第 {index} 段")
+                    for index, item in enumerate(document.paragraphs, start=1)
+                    if item.text.strip()
                 )
+                for table_index, table in enumerate(document.tables, start=1):
+                    for row_index, row in enumerate(table.rows, start=1):
+                        for cell_index, cell in enumerate(row.cells, start=1):
+                            if cell.text.strip():
+                                segments.append((
+                                    cell.text,
+                                    f"表格 {table_index} · 第 {row_index} 行第 {cell_index} 列",
+                                ))
             elif suffix == ".pdf":
-                text = "\n".join(
-                    page.extract_text() or ""
-                    for page in PdfReader(BytesIO(content)).pages
+                segments.extend(
+                    (page.extract_text() or "", f"第 {index} 页")
+                    for index, page in enumerate(
+                        PdfReader(BytesIO(content)).pages, start=1
+                    )
                 )
         except Exception:
-            return {}
-        project_number = re.search(
-            r"(?:采购项目编号|招标项目编号|项目编号|采购编号|招标编号)"
-            r"\s*(?:[（(][^）)\n]{0,12}[）)])?\s*[：:]\s*"
-            r"([A-Za-z0-9][A-Za-z0-9._/-]{3,79})",
-            text,
-        )
-        if project_number is None:
-            return {}
-        return {"project_number": project_number.group(1).rstrip("。.;；")}
+            return {}, {}
+        patterns = {
+            "project_number": re.compile(
+                r"(?:采购项目编号|招标项目编号|项目编号|采购编号|招标编号)"
+                r"\s*(?:[（(][^）)\n]{0,12}[）)])?\s*[：:]\s*"
+                r"([A-Za-z0-9][A-Za-z0-9._/-]{3,79})"
+            ),
+            "project_name": re.compile(
+                r"(?:采购项目名称|招标项目名称|项目名称)\s*[：:]\s*"
+                r"([^\n|]{4,160})"
+            ),
+        }
+        values: dict[str, str] = {}
+        evidence: dict[str, dict[str, str]] = {}
+        for text, location in segments:
+            for key, pattern in patterns.items():
+                if key in values:
+                    continue
+                match = pattern.search(text)
+                if match is None:
+                    continue
+                value = match.group(1).strip().rstrip("。.;；")
+                if not StrictFillDecisionEngine.value_matches_field_type(
+                    key, value
+                ):
+                    continue
+                values[key] = value
+                evidence[key] = {
+                    "title": filename,
+                    "location": location,
+                    "excerpt": re.sub(r"\s+", " ", text).strip()[:500],
+                }
+        return values, evidence
 
     def _detect_docx(self, filename: str, content: bytes) -> TemplateDescriptor:
         document = Document(BytesIO(content))
@@ -409,8 +451,20 @@ class ResponseTemplateService:
 
         def append(label: str, location: str) -> None:
             display_label = re.sub(r"\s+", " ", label).strip().strip("：:")
-            clean = re.sub(r"[\s()（）]", "", display_label)
+            semantic_label = re.split(
+                r"(?:[_＿]{2,}|…+|\.{3,})", display_label, maxsplit=1
+            )[0]
+            clean = re.sub(r"[\s()（）]", "", semantic_label)
             if not 2 <= len(clean) <= 40:
+                return
+            if re.search(r"甲方|乙方|联合体牵头人|联合体成员", clean):
+                return
+            if re.search(r"身份证明|复印件|扫描件|护照|附件", clean):
+                return
+            if (
+                re.search(r"法定代表人|委托代理人|授权代表", clean)
+                and re.search(r"签字|签名|盖章", clean)
+            ):
                 return
             if not re.search(
                 r"名称|编号|代表|日期|金额|报价|地址|电话|手机|邮箱|联系人|"
@@ -419,10 +473,14 @@ class ResponseTemplateService:
             ):
                 return
             canonical = None
-            for key, aliases in FIELD_ALIASES.items():
-                if any(alias in clean for alias in aliases):
-                    canonical = key
-                    break
+            candidates = [
+                (len(alias), -clean.find(alias), key)
+                for key, aliases in FIELD_ALIASES.items()
+                for alias in aliases
+                if alias in clean
+            ]
+            if candidates:
+                canonical = max(candidates)[2]
             field_key = canonical or (
                 "custom_" + hashlib.sha256(clean.encode()).hexdigest()[:12]
             )
@@ -569,6 +627,7 @@ class ResponseTemplateService:
         descriptor: TemplateDescriptor | dict[str, Any],
         field_values: dict[str, str],
         sections: list[dict[str, str]],
+        document_title: str | None = None,
     ) -> TemplateFillReport:
         data = (
             descriptor.snapshot()
@@ -578,6 +637,8 @@ class ResponseTemplateService:
         if not data.get("detected") or data.get("source_format") != "docx":
             raise ValueError("当前文件不是可自动回填的 DOCX 响应模板。")
         document = Document(BytesIO(template_content))
+        if document_title:
+            document.core_properties.title = document_title
         start = data.get("start_block")
         end = data.get("end_block")
         if isinstance(start, int) and (

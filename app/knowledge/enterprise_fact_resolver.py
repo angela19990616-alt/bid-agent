@@ -82,4 +82,20 @@ class EnterpriseFactResolver:
             confidence=float(details.get("confidence", 1.0)),
             verified=details.get("verified", True) is True,
             sensitivity=sensitivity,
+            evidence_title=str(
+                details.get("evidence_title")
+                or details.get("source_reference")
+                or item.get("title")
+                or "企业知识库"
+            ),
+            evidence_excerpt=(
+                str(details.get("evidence_excerpt")).strip()
+                if details.get("evidence_excerpt")
+                else None
+            ),
+            evidence_location=(
+                str(details.get("evidence_location")).strip()
+                if details.get("evidence_location")
+                else None
+            ),
         )

@@ -30,6 +30,9 @@ class TemplateFieldReviewUpdate(BaseModel):
 class TemplateFieldDecisionResponse(BaseModel):
     field_key: str
     label: str
+    expected_value_type: str = "text"
+    expected_value_type_label: str = "文本"
+    type_validation: Literal["passed", "missing"] = "missing"
     value: str | None = None
     source_type: str | None = None
     source_reference: str | None = None

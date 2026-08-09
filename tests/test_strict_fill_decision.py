@@ -36,6 +36,26 @@ def test_verified_enterprise_fact_can_be_auto_filled():
     assert decision.source_reference == "工商信息快照-2026-08-08"
 
 
+def test_enterprise_fact_without_precise_evidence_requires_review():
+    decision = StrictFillDecisionEngine().decide(
+        FIELD,
+        [
+            EnterpriseFact(
+                canonical_key="legal_representative",
+                value="张三",
+                source_type="company_profile",
+                source_reference="企业资料库",
+                confidence=1.0,
+                verified=True,
+                evidence_title="企业工商资料.pdf",
+            )
+        ],
+    )
+
+    assert decision.status == FillStatus.REVIEW_REQUIRED
+    assert "缺少页码、章节或附件位置" in decision.reason
+
+
 def test_person_field_rejects_a_label_as_the_value():
     decision = StrictFillDecisionEngine().decide(
         FIELD,
@@ -60,6 +80,45 @@ def test_person_field_accepts_a_real_name_with_middle_dot():
     assert StrictFillDecisionEngine.value_matches_field_type(
         "authorized_representative", "阿依古丽·艾力"
     ) is True
+
+
+def test_common_template_fields_must_match_their_semantic_types():
+    valid = {
+        "project_number": "SCXHR2025-0320",
+        "bidder_name": "北京大岳咨询有限责任公司",
+        "postal_code": "100032",
+        "contact_phone": "13800138000",
+        "fax": "010-12345678",
+        "website": "https://example.com",
+        "bank_account": "123456789012",
+        "date": "2026年8月9日",
+        "registered_address": "北京市西城区某大街1号",
+        "bid_round": "第二轮",
+    }
+    invalid = {
+        "project_number": "项目编号",
+        "bidder_name": "供应商名称",
+        "postal_code": "邮政编码",
+        "contact_phone": "联系电话",
+        "fax": "请填写",
+        "website": "公司网址",
+        "bank_account": "银行账号",
+        "date": "年月日",
+        "registered_address": "注册地址",
+        "bid_round": "报价轮次",
+    }
+
+    for key, value in valid.items():
+        assert StrictFillDecisionEngine.value_matches_field_type(key, value)
+    for key, value in invalid.items():
+        assert not StrictFillDecisionEngine.value_matches_field_type(key, value)
+
+
+def test_field_type_labels_are_business_readable():
+    assert StrictFillDecisionEngine.field_type_label(
+        "legal_representative"
+    ) == "姓名"
+    assert StrictFillDecisionEngine.field_type_label("contact_phone") == "电话号码"
 
 
 def test_missing_fact_is_never_invented():

@@ -46,6 +46,10 @@ class FakeKnowledge:
                     "verified_enterprise_fact": True,
                     "holder": "张三",
                     "asset_reference": "private://qualification/zhangsan",
+                    "asset_kind": "image",
+                    "evidence_title": "张三高级工程师证书扫描件.pdf",
+                    "evidence_location": "第 2 页 · 证书正文",
+                    "source_page": 2,
                 },
             }
         ]
@@ -140,7 +144,38 @@ def test_support_marks_exact_format_and_matches_verified_qualification():
     qualification = result["qualification_responses"][0]
     assert qualification["status"] == "matched_verified"
     assert qualification["matches"][0]["holder"] == "张三"
+    assert qualification["matches"][0]["asset_kind"] == "image"
+    assert qualification["matches"][0]["asset_available"] is True
+    assert qualification["matches"][0]["source_page"] == 2
+    assert qualification["matches"][0]["insertion_status"] == "ready_for_review"
+    assert "knowledge_id" not in qualification["matches"][0]
     assert "content" not in qualification["matches"][0]
+
+
+def test_verified_material_without_source_location_is_not_claimed_as_ready():
+    items = [
+        requirement(
+            type="qualification_requirement",
+            title="人员职称",
+            normalized_text="项目负责人须具有工程咨询高级工程师职称",
+            quote="项目负责人须具有高级工程师职称。",
+            response_action="provide_attachment",
+            proposal_mapping=None,
+        )
+    ]
+    service = make_service(items)
+    original = service.knowledge_engine.list_active
+
+    def without_location(context):
+        entries = original(context)
+        entries[0]["metadata"].pop("evidence_location")
+        return entries
+
+    service.knowledge_engine.list_active = without_location
+    qualification = service.overview(uuid4())["qualification_responses"][0]
+
+    assert qualification["status"] == "manual_material_required"
+    assert qualification["matches"][0]["insertion_status"] == "source_location_required"
 
 
 def test_manual_archive_collects_variables_and_human_reviews():

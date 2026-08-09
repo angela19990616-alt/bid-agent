@@ -67,9 +67,13 @@ class GenerationProfileService:
         content: bytes,
     ) -> GenerationProfile:
         descriptor = self.template_service.detect(filename, content)
-        source_fields = self.template_service.extract_source_fields(
-            filename, content
+        source_fields, source_evidence = (
+            self.template_service.extract_source_fields_with_evidence(
+                filename, content
+            )
         )
+        descriptor_snapshot = descriptor.snapshot()
+        descriptor_snapshot["source_evidence"] = source_evidence
         mode = self.mode_for_descriptor(descriptor.snapshot())
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
@@ -145,7 +149,7 @@ class GenerationProfileService:
                         project_id,
                         mode,
                         document["id"] if descriptor.detected else None,
-                        json.dumps(descriptor.snapshot(), ensure_ascii=False),
+                        json.dumps(descriptor_snapshot, ensure_ascii=False),
                         json.dumps(source_fields, ensure_ascii=False),
                     ),
                 )
@@ -241,6 +245,10 @@ class GenerationProfileService:
             ]
             if value:
                 review = reviews.get(key, {})
+                source_evidence = (
+                    profile.template_descriptor.get("source_evidence", {})
+                    .get(key, {})
+                )
                 confirmed = (
                     review.get("status") == "confirmed"
                     and review.get("value") == value
@@ -273,6 +281,19 @@ class GenerationProfileService:
                         )
                         else DataSensitivity.NORMAL
                     ),
+                    evidence_title=(
+                        review.get("evidence_title")
+                        or source_evidence.get("title")
+                        or profile.template_filename
+                    ),
+                    evidence_excerpt=(
+                        review.get("evidence_excerpt")
+                        or source_evidence.get("excerpt")
+                    ),
+                    evidence_location=(
+                        review.get("evidence_location")
+                        or source_evidence.get("location")
+                    ),
                 ))
             metadata = field_metadata.get(key, {})
             field = TemplateField(
@@ -288,6 +309,9 @@ class GenerationProfileService:
                 decisions.append({
                     "field_key": key,
                     "label": field.label,
+                    "expected_value_type": engine.field_type(key),
+                    "expected_value_type_label": engine.field_type_label(key),
+                    "type_validation": "passed",
                     "value": candidate.value,
                     "source_type": "historical_case",
                     "source_reference": candidate.source_title,
@@ -304,6 +328,11 @@ class GenerationProfileService:
             decisions.append({
                 "field_key": key,
                 "label": field.label,
+                "expected_value_type": engine.field_type(key),
+                "expected_value_type_label": engine.field_type_label(key),
+                "type_validation": (
+                    "passed" if decision.value else "missing"
+                ),
                 "value": decision.value,
                 "source_type": decision.source_type,
                 "source_reference": decision.source_reference,
@@ -313,13 +342,24 @@ class GenerationProfileService:
                 "required": field.required,
                 "evidence_title": (
                     reviews.get(key, {}).get("evidence_title")
+                    or (
+                        profile.template_descriptor.get("source_evidence", {})
+                        .get(key, {}).get("title")
+                    )
+                    or decision.evidence_title
                     or decision.source_reference
                 ),
-                "evidence_excerpt": reviews.get(key, {}).get(
-                    "evidence_excerpt"
+                "evidence_excerpt": (
+                    reviews.get(key, {}).get("evidence_excerpt")
+                    or profile.template_descriptor.get("source_evidence", {})
+                    .get(key, {}).get("excerpt")
+                    or decision.evidence_excerpt
                 ),
                 "evidence_location": (
                     reviews.get(key, {}).get("evidence_location")
+                    or profile.template_descriptor.get("source_evidence", {})
+                    .get(key, {}).get("location")
+                    or decision.evidence_location
                     or decision.source_type
                 ),
                 "evidence_match_count": reviews.get(key, {}).get(
@@ -349,7 +389,8 @@ class GenerationProfileService:
         if manual_value and not StrictFillDecisionEngine.value_matches_field_type(
             key, manual_value
         ):
-            raise ValueError("填写内容不符合该字段类型，请填写真实值。")
+            label = StrictFillDecisionEngine.field_type_label(key)
+            raise ValueError(f"填写内容不符合字段类型（{label}），请填写真实值。")
         if manual_value:
             previous_value = profile.template_field_values.get(key)
             values = dict(profile.template_field_values)
@@ -437,6 +478,9 @@ class GenerationProfileService:
             value = str(raw_value).strip()
             if not key or len(key) > 80 or not value or len(value) > 500:
                 raise ValueError("模板字段名或字段值无效。")
+            if not StrictFillDecisionEngine.value_matches_field_type(key, value):
+                label = StrictFillDecisionEngine.field_type_label(key)
+                raise ValueError(f"填写内容不符合字段类型（{label}）。")
             cleaned[key] = value
         with connect() as conn:
             with conn.cursor() as cursor:

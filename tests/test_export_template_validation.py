@@ -164,5 +164,5 @@ def test_template_preview_builds_real_docx_without_delivery_record(
     assert captured["template_content"] == b"template-package"
     assert captured["field_values"] == {
         "bidder_name": "候选企业名称",
-        "project_name": "测试项目",
     }
+    assert captured["document_title"] == "《AI投标文件+测试项目》"

@@ -112,10 +112,15 @@ class CaseFactResolver:
                         excerpt = re.sub(r"\s+", " ", text[start:end]).strip()
                         paragraph_start = text.count("\n", 0, found.start()) + 1
                         paragraph_end = text.count("\n", 0, found.end()) + 1
-                        location = (
+                        paragraph_location = (
                             f"原文第 {paragraph_start} 段"
                             if paragraph_start == paragraph_end
                             else f"原文第 {paragraph_start}-{paragraph_end} 段"
+                        )
+                        chapter = cls._nearest_chapter(text, found.start())
+                        location = (
+                            f"章节「{chapter}」 · {paragraph_location}"
+                            if chapter else paragraph_location
                         )
                         matches[key].append((value, title, excerpt, location))
         result: dict[str, CaseFactCandidate] = {}
@@ -149,3 +154,19 @@ class CaseFactResolver:
             "xxx", "填写", "加盖", "签字", "法定代表人或",
             "姓名", "代表人", "委托代理人",
         ))
+
+    @staticmethod
+    def _nearest_chapter(text: str, position: int) -> str | None:
+        heading = None
+        for line in text[:position].splitlines():
+            candidate = re.sub(r"\s+", " ", line).strip()
+            if not candidate or len(candidate) > 80 or candidate.endswith("。"):
+                continue
+            if re.match(
+                r"^(?:第?[一二三四五六七八九十百\d]+章|"
+                r"[一二三四五六七八九十]+、|"
+                r"\d+(?:\.\d+){0,4}[.\s、])",
+                candidate,
+            ):
+                heading = candidate
+        return heading
