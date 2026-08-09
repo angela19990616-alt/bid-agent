@@ -649,7 +649,9 @@ class GenerationProfileService:
                 decision.status.value == "MISSING"
                 and candidate is not None
                 and slot.expected_entity_type not in {
-                    EntityType.PERSON, EntityType.ORGANIZATION
+                    EntityType.PERSON, EntityType.ORGANIZATION,
+                    EntityType.BUSINESS_CASE, EntityType.CERTIFICATE,
+                    EntityType.RESPONSE_ITEM,
                 }
             ):
                 alternative_count = len(candidate.alternatives)

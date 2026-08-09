@@ -327,3 +327,141 @@ def test_role_attribute_and_staffing_total_are_not_misread_as_person_names():
     assert project_manager_total.expected_role is None
     assert project_manager_total.expected_entity_type is EntityType.ORGANIZATION
     assert project_manager_total.semantic_field == "organization.project_manager_count"
+
+
+def test_structured_word_tables_bind_cells_to_upper_level_business_objects():
+    cases = SlotContextClassifier.classify(
+        label="用户/业主名称",
+        surrounding_text=(
+            "序号 | 用户/业主名称 | 项目名称 | 项目内容 | 合同总价 | "
+            "签订时间 | 完成时间 | 【当前空位：用户/业主名称】"
+        ),
+        source_location="表格1/第2行/第2列",
+        document_section="响应文件格式 / 响应供应商同类项目经验",
+        table_index=1,
+        row=2,
+        column=2,
+    )
+    response = SlotContextClassifier.classify(
+        label="响应供应商响应描述",
+        surrounding_text=(
+            "序号 | 磋商文件条款描述 | 响应供应商响应描述 | "
+            "偏离情况说明 | 【当前空位：响应供应商响应描述】"
+        ),
+        source_location="表格2/第2行/第3列",
+        document_section="响应文件格式 / 采购需求响应一览表",
+        table_index=2,
+        row=2,
+        column=3,
+    )
+    certificate = SlotContextClassifier.classify(
+        label="发证单位",
+        surrounding_text=(
+            "证书名称 | 发证单位 | 证书等级 | 证书有效期 | "
+            "【当前空位：发证单位】"
+        ),
+        source_location="表格3/第2行/第2列",
+        document_section="响应文件格式 / 响应供应商证书一览表",
+        table_index=3,
+        row=2,
+        column=2,
+    )
+    sequence = SlotContextClassifier.classify(
+        label="序号",
+        surrounding_text="序号 | 项目名称 | 【当前空位：序号】",
+        source_location="表格1/第2行/第1列",
+        document_section="响应文件格式",
+        table_index=1,
+        row=2,
+        column=1,
+    )
+    service_term = SlotContextClassifier.classify(
+        label="服务期限",
+        surrounding_text=(
+            "采购内容 | 数量 | 磋商报价 | 服务期限 | "
+            "【当前空位：服务期限】"
+        ),
+        source_location="表格4/第2行/第4列",
+        document_section="响应文件格式 / 磋商报价表",
+        table_index=4,
+        row=2,
+        column=4,
+    )
+
+    assert cases.expected_entity_type is EntityType.BUSINESS_CASE
+    assert cases.semantic_field == "business_case.client_name"
+    assert cases.fill_strategy is FillStrategy.KNOWLEDGE_COLLECTION
+    assert response.expected_entity_type is EntityType.RESPONSE_ITEM
+    assert response.semantic_field == "bid_response.response_item.response_text"
+    assert response.fill_strategy is FillStrategy.GENERATED_COLLECTION
+    assert certificate.expected_entity_type is EntityType.CERTIFICATE
+    assert certificate.semantic_field == "certificate.issuer"
+    assert sequence.expected_entity_type is None
+    assert sequence.fill_strategy is FillStrategy.AUTO_LAYOUT
+    assert service_term.expected_entity_type is EntityType.PROJECT
+    assert service_term.semantic_field == "project.service_term"
+
+
+def test_standalone_contact_phone_binds_to_project_contact_person():
+    slot = SlotContextClassifier.classify(
+        label="电话",
+        surrounding_text="【当前空位：电话】",
+        source_location="第111段/第1个字段",
+        document_section="第六章 响应文件格式",
+        paragraph_index=111,
+        canonical_hint="contact_phone",
+    )
+
+    assert slot.semantic_field == "person.phone"
+    assert slot.expected_role is ProjectRole.CONTACT_PERSON
+    assert slot.display_name == "联系人联系电话"
+
+
+def test_table_collections_are_reviewed_as_business_objects_not_every_cell():
+    document = Document()
+    document.sections[0].header.paragraphs[0].text = "原模板页眉"
+    document.sections[0].footer.paragraphs[0].text = "原模板页脚"
+    document.add_heading("第六章 响应文件格式", level=1)
+
+    cases = document.add_table(rows=3, cols=7)
+    for index, label in enumerate((
+        "序号", "用户/业主名称", "项目名称", "项目内容",
+        "合同总价", "签订时间", "完成时间",
+    )):
+        cases.cell(0, index).text = label
+
+    responses = document.add_table(rows=3, cols=4)
+    for index, label in enumerate((
+        "序号", "磋商文件条款描述", "响应供应商响应描述", "偏离情况说明",
+    )):
+        responses.cell(0, index).text = label
+
+    stream = BytesIO()
+    document.save(stream)
+    descriptor = ResponseTemplateService().detect(
+        "采购文件.docx", stream.getvalue()
+    )
+    profile = GenerationProfile(
+        project_id=uuid4(),
+        generation_mode="strict_template",
+        historical_case_mode="closest_case",
+        template_descriptor=descriptor.snapshot(),
+        template_field_values={},
+    )
+    variables = GenerationProfileService.template_variable_decisions(profile)
+
+    assert descriptor.fields
+    assert all(item["semantic_field"] != "text.value" for item in descriptor.fields)
+    assert all("页眉" not in item["surrounding_text"] for item in descriptor.fields)
+    assert all("页脚" not in item["surrounding_text"] for item in descriptor.fields)
+    layout = [item for item in descriptor.fields if item["fill_strategy"] == "auto_layout"]
+    assert layout and all(item["required"] is False for item in layout)
+    review_groups = {
+        item["review_group_key"]: item["review_group_label"]
+        for item in variables
+        if item["resolution_state"] != "layout_managed"
+    }
+    assert set(review_groups.values()) == {
+        "企业业绩表（系统整表匹配）",
+        "招标响应表（系统整表生成）",
+    }

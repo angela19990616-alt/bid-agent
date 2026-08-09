@@ -102,8 +102,9 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /不再强制替换为系统默认字体/);
   assert.match(page, /一次确认并同步/);
   assert.match(page, /人工确认来源/);
-  assert.match(page, /业务变量归并为/);
-  assert.match(page, /同一对象的不同属性横向展示/);
+  assert.match(page, /待审核业务对象/);
+  assert.match(page, /表格按整表或业务对象处理/);
+  assert.match(page, /页眉、页脚和原版式只继承保真/);
   assert.match(page, /待匹配企业资料/);
   assert.match(page, /person_binding_pending/);
   assert.match(page, /response_generation_pending/);
@@ -118,7 +119,7 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /word-slot-highlight/);
   assert.match(page, /原模板位置/);
   assert.match(page, /选择并建立角色绑定/);
-  assert.match(page, /查看关联的/);
+  assert.match(page, /需要抽查时查看/);
   assert.doesNotMatch(page, /保存并确认/);
   assert.doesNotMatch(page, />custom_/);
   assert.match(page, /ResizeObserver/);

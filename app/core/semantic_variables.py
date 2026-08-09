@@ -132,9 +132,23 @@ class VariableDictionary:
                     ),
                 )
 
-        # Never merge two unresolved people merely because both say "姓名".
-        # Until a role exists they are distinct business questions.
-        if slot.semantic_field.startswith("person."):
+        # Collection rows represent different business objects even when they
+        # share a column label.  Never merge five cases, people, certificates
+        # or response rows into one value merely because each column says the
+        # same thing.
+        if (
+            slot.semantic_field.startswith("person.")
+            or (
+                slot.expected_entity_type is not None
+                and slot.expected_entity_type.value in {
+                    "BusinessCase", "Certificate", "ResponseItem",
+                }
+            )
+            or slot.fill_strategy in {
+                FillStrategy.GENERATED_COLLECTION,
+                FillStrategy.KNOWLEDGE_COLLECTION,
+            }
+        ):
             return cls._fallback(slot, priorities, unique=True)
         return cls._fallback(slot, priorities, unique=False)
 
@@ -190,7 +204,16 @@ class VariableDictionary:
                 return f"人员表第 {slot.row + 1} 行候选人员"
             return "待绑定人员"
         if slot.expected_entity_type:
+            collection_labels = {
+                "BusinessCase": "企业业绩候选",
+                "Certificate": "企业证书候选",
+                "ResponseItem": "招标响应事项",
+            }
+            if slot.expected_entity_type.value in collection_labels:
+                return collection_labels[slot.expected_entity_type.value]
             return f"待绑定{slot.expected_entity_type.value}"
+        if slot.fill_strategy is FillStrategy.AUTO_LAYOUT:
+            return "原模板格式"
         return "本次投标文件"
 
 
@@ -369,6 +392,21 @@ class SlotDeduplicationEngine:
                 "resolution_label": "待人工核验",
                 "next_action": "已找到候选值，请核验来源和取值后确认。",
             }
+        fill_strategy = str(primary.get("fill_strategy") or "")
+        if fill_strategy == FillStrategy.AUTO_LAYOUT.value:
+            return {
+                "semantics_recognized": True,
+                "resolution_state": "layout_managed",
+                "resolution_label": "系统按原模板自动处理",
+                "next_action": "序号、页码和版式由系统统一编排，不需要逐格审核。",
+            }
+        if fill_strategy == FillStrategy.GENERATED_COLLECTION.value:
+            return {
+                "semantics_recognized": True,
+                "resolution_state": "response_generation_pending",
+                "resolution_label": "待按整表生成响应",
+                "next_action": "系统将依据采购要求生成整张响应表，业务人员只审核整表结果。",
+            }
         if not semantics_recognized:
             return {
                 "semantics_recognized": False,
@@ -397,6 +435,18 @@ class SlotDeduplicationEngine:
                 "resolution_state": state,
                 "resolution_label": label,
                 "next_action": action,
+            }
+        if definition.target_entity_type in {"BusinessCase", "Certificate"}:
+            label = (
+                "业绩案例"
+                if definition.target_entity_type == "BusinessCase"
+                else "企业证书"
+            )
+            return {
+                "semantics_recognized": True,
+                "resolution_state": "knowledge_match_pending",
+                "resolution_label": f"待匹配{label}",
+                "next_action": f"系统将从已核验企业资料中匹配{label}并按整表回填。",
             }
         if definition.target_entity_type == "Organization":
             return {
@@ -447,6 +497,26 @@ class SlotDeduplicationEngine:
             ))
             token = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:16]
             return f"person_row.{token}", definition.entity_scope_label
+        if (
+            entity_type in {"BusinessCase", "Certificate", "ResponseItem"}
+            or str(primary.get("fill_strategy") or "") in {
+                FillStrategy.GENERATED_COLLECTION.value,
+                FillStrategy.KNOWLEDGE_COLLECTION.value,
+                FillStrategy.AUTO_LAYOUT.value,
+            }
+        ) and slot.get("table_index") is not None:
+            scope = "|".join((
+                str(slot.get("document_section") or ""),
+                str(slot.get("table_index")),
+                entity_type or str(primary.get("fill_strategy") or "table"),
+            ))
+            token = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:16]
+            label = {
+                "BusinessCase": "企业业绩表（系统整表匹配）",
+                "Certificate": "企业证书表（系统整表匹配）",
+                "ResponseItem": "招标响应表（系统整表生成）",
+            }.get(entity_type, "原模板格式（系统统一处理）")
+            return f"table_collection.{token}", label
         if (
             definition.semantic_field == "bid_response.content"
             and slot.get("table_index") is not None

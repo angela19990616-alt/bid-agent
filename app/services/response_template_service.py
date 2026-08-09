@@ -576,9 +576,12 @@ class ResponseTemplateService:
                 "field_key": field_key,
                 "canonical_key": canonical_key,
                 "label": display_label,
-                "required": not bool(
-                    re.search(r"可选|如有|若有", clean)
-                    or clean in {"备注", "偏离说明"}
+                "required": (
+                    slot.fill_strategy.value != "auto_layout"
+                    and not bool(
+                        re.search(r"可选|如有|若有", clean)
+                        or clean in {"备注", "偏离说明"}
+                    )
                 ),
                 "expected_source": source_type,
                 "source_location": location,
@@ -793,7 +796,11 @@ class ResponseTemplateService:
             return False
         if re.search(r"身份证明|复印件|扫描件|护照|附件", compact):
             return False
-        if re.search(r"请|应当|须|不得|^(?:说明|注)$|注[：:]", compact):
+        if re.search(
+            r"请|应当|须|不得|^(?:说明|注)$|注[：:]|"
+            r"声明|同意|相关说明|规定的条件$|有限公司$",
+            compact,
+        ):
             return False
         if re.search(
             r"如下$|承诺$|具备.*条件$|详见|根据.*要求$|参与.*项目$",
@@ -822,10 +829,45 @@ class ResponseTemplateService:
         column_index: int,
     ) -> str | None:
         row = table.rows[row_index - 1]
+        adjacent = (
+            row.cells[column_index - 2].text.strip()
+            if column_index > 1 else ""
+        )
+        if adjacent and not BLANK_TOKEN_RE.search(adjacent):
+            adjacent_generic = SlotContextClassifier._generic_business_slot(
+                adjacent
+            )
+            adjacent_known = any(
+                alias in re.sub(r"\s+", "", adjacent)
+                for aliases in FIELD_ALIASES.values()
+                for alias in aliases
+            )
+            if (
+                adjacent_known
+                or (
+                    adjacent_generic
+                    and adjacent_generic[1] != "project.team.members"
+                )
+            ):
+                return adjacent
+        # A semantic grid header is authoritative for the current column.  In
+        # a response matrix, the adjacent left cell contains the procurement
+        # clause, not the label of the blank response cell.
+        for above in range(row_index - 2, -1, -1):
+            candidate = table.rows[above].cells[column_index - 1].text.strip()
+            if not candidate:
+                continue
+            if (
+                not BLANK_TOKEN_RE.search(candidate)
+                and cls._looks_like_field_label(candidate)
+                and cls._semantic_label_count(table.rows[above]) >= 2
+            ):
+                return candidate
+            break
         # A horizontal label/value pair must be adjacent. Looking farther left
         # makes every layout cell in a wide table look like the same field.
         if column_index > 1:
-            candidate = row.cells[column_index - 2].text.strip()
+            candidate = adjacent
             if (
                 candidate
                 and not BLANK_TOKEN_RE.search(candidate)
@@ -839,21 +881,6 @@ class ResponseTemplateService:
                 # next cell.  Continue upward to the real column header.
                 if not generic or generic[1] != "project.team.members":
                     return candidate
-        # A real grid header applies to all following blank data rows, not just
-        # the first one. Propagate it only when its row contains at least two
-        # semantic column labels; this avoids carrying arbitrary prose through
-        # layout tables.
-        for above in range(row_index - 2, -1, -1):
-            candidate = table.rows[above].cells[column_index - 1].text.strip()
-            if not candidate:
-                continue
-            if (
-                not BLANK_TOKEN_RE.search(candidate)
-                and cls._looks_like_field_label(candidate)
-                and cls._semantic_label_count(table.rows[above]) >= 2
-            ):
-                return candidate
-            break
         return None
 
     @classmethod
@@ -887,8 +914,26 @@ class ResponseTemplateService:
             if cell.text.strip()
         )
         header_text = ""
-        if row_index > 1:
-            header_text = table.rows[row_index - 2].cells[column_index - 1].text.strip()
+        # Preserve the full semantic header row in the slot context.  Looking
+        # only at the immediately preceding cell loses the object represented
+        # by a multi-row grid (case/person/certificate/response table), which
+        # turns every empty cell into an unrelated generic text field.
+        for above in range(row_index - 2, -1, -1):
+            candidate_row = table.rows[above]
+            if cls._semantic_label_count(candidate_row) < 2:
+                continue
+            seen_nodes: set[int] = set()
+            header_cells: list[str] = []
+            for cell in candidate_row.cells:
+                node_id = id(cell._tc)
+                if node_id in seen_nodes:
+                    continue
+                seen_nodes.add(node_id)
+                text = re.sub(r"\s+", " ", cell.text).strip()
+                if text:
+                    header_cells.append(text)
+            header_text = " | ".join(header_cells)
+            break
         context = " | ".join(item for item in (header_text, row_text) if item)
         return f"{context} | 【当前空位：{label}】" if context else f"【当前空位：{label}】"
 

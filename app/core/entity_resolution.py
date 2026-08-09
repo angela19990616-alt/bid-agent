@@ -16,6 +16,9 @@ class EntityType(StrEnum):
     ORGANIZATION = "Organization"
     PERSON = "Person"
     PROJECT = "Project"
+    BUSINESS_CASE = "BusinessCase"
+    CERTIFICATE = "Certificate"
+    RESPONSE_ITEM = "ResponseItem"
 
 
 class SubjectRole(StrEnum):
@@ -25,12 +28,19 @@ class SubjectRole(StrEnum):
     CONSORTIUM_MEMBER = "CONSORTIUM_MEMBER"
     BID_RESPONSE_DOCUMENT = "BID_RESPONSE_DOCUMENT"
     DOCUMENT_ACTION = "DOCUMENT_ACTION"
+    BUSINESS_CASE_LIBRARY = "BUSINESS_CASE_LIBRARY"
+    CERTIFICATE_LIBRARY = "CERTIFICATE_LIBRARY"
+    RESPONSE_TABLE = "RESPONSE_TABLE"
+    DOCUMENT_LAYOUT = "DOCUMENT_LAYOUT"
 
 
 class FillStrategy(StrEnum):
     DIRECT_ATTRIBUTE = "direct_attribute"
     COMPOSED_VALUE = "composed_value"
     ACTION_ONLY = "action_only"
+    AUTO_LAYOUT = "auto_layout"
+    GENERATED_COLLECTION = "generated_collection"
+    KNOWLEDGE_COLLECTION = "knowledge_collection"
     UNRESOLVED = "unresolved"
 
 
@@ -378,6 +388,11 @@ class SlotContextClassifier:
         ):
             role_matches = {ProjectRole.LEGAL_REPRESENTATIVE}
         role = next(iter(role_matches)) if len(role_matches) == 1 else None
+        # A standalone contact phone still belongs to the current project's
+        # contact person. Do not turn this clear slot into a generic Person
+        # question merely because the adjacent label omits the word “联系人”.
+        if role is None and canonical_hint == "contact_phone":
+            role = ProjectRole.CONTACT_PERSON
         compact_label = re.sub(r"\s+", "", label)
         required_actions = cls._required_actions(
             f"{compact_label}{surrounding_text}", role=role
@@ -406,11 +421,29 @@ class SlotContextClassifier:
                 fill_strategy=FillStrategy.ACTION_ONLY,
                 required_actions=required_actions,
             )
-        organization_field = bool(
-            re.search(r"投标人|供应商|响应人|单位|企业|联合体", compact_label)
-            and re.search(r"名称|全称", compact_label)
-        )
-        if organization_field:
+        structured_table_slot = cls._structured_table_slot(
+            compact_label, context
+        ) if table_index is not None else None
+        if structured_table_slot is not None:
+            (
+                canonical_key, semantic_field, entity_type, value_type,
+                ontology_concept, display_name, subject_role,
+                relation_path, fill_strategy,
+            ) = structured_table_slot
+            role = None
+            confidence = 0.96
+            value_expression = None
+        else:
+            organization_field = bool(
+                re.search(
+                    r"投标人|供应商|响应人|单位|企业|联合体",
+                    compact_label,
+                )
+                and re.search(r"名称|全称", compact_label)
+            )
+        if structured_table_slot is not None:
+            pass
+        elif organization_field:
             canonical_key = "bidder_name"
             semantic_field = "organization.full_name"
             entity_type = EntityType.ORGANIZATION
@@ -558,6 +591,148 @@ class SlotContextClassifier:
         )
 
     @staticmethod
+    def _structured_table_slot(
+        label: str,
+        context: str,
+    ) -> tuple[
+        str, str, EntityType | None, str, str, str,
+        SubjectRole | None, tuple[str, ...], FillStrategy,
+    ] | None:
+        """Map a grid cell to its row entity or system-managed table task.
+
+        Empty Word table cells are not independent business facts.  A bid
+        form normally represents a collection of cases, people, certificates
+        or response rows.  Keeping that upper-level object prevents dozens of
+        physical cells from becoming dozens of manual review questions.
+        """
+        normalized = re.sub(r"\s+", "", label).strip("：:")
+        compact_context = re.sub(r"\s+", "", context)
+
+        if normalized == "序号":
+            return (
+                "table_sequence_number", "bid_response.layout.sequence_number",
+                None, "sequence_number", "BidResponseDocument.Table.sequence",
+                "表格序号（系统自动编排）", SubjectRole.DOCUMENT_LAYOUT,
+                ("当前项目", "投标文件", "原模板表格", "自动编排序号"),
+                FillStrategy.AUTO_LAYOUT,
+            )
+
+        response_columns = {
+            "磋商文件条款描述": ("requirement_text", "采购文件条款"),
+            "谈判文件条款描述": ("requirement_text", "采购文件条款"),
+            "采购文件条款描述": ("requirement_text", "采购文件条款"),
+            "响应供应商响应描述": ("response_text", "投标响应内容"),
+            "响应人响应描述": ("response_text", "投标响应内容"),
+            "偏离情况说明": ("deviation_status", "偏离情况"),
+            "偏离情况说明（正偏离/完全响应/负偏离）": (
+                "deviation_status", "偏离情况"
+            ),
+            "查阅/证明文件指引": ("evidence_reference", "证明材料指引"),
+            "查阅/指引": ("evidence_reference", "证明材料指引"),
+        }
+        if normalized in response_columns:
+            attribute, display = response_columns[normalized]
+            return (
+                f"response_item_{attribute}",
+                f"bid_response.response_item.{attribute}",
+                EntityType.RESPONSE_ITEM, attribute,
+                f"ResponseItem.{attribute}", display,
+                SubjectRole.RESPONSE_TABLE,
+                ("当前项目", "投标文件", "响应表", display),
+                FillStrategy.GENERATED_COLLECTION,
+            )
+
+        case_table = (
+            "用户/业主名称" in compact_context
+            and any(item in compact_context for item in (
+                "合同总价", "签订时间", "完成时间", "项目内容",
+            ))
+        )
+        case_attributes = {
+            "用户/业主名称": ("client_name", "客户名称"),
+            "项目名称": ("project_name", "项目名称"),
+            "项目内容": ("service_content", "服务内容"),
+            "合同总价": ("contract_amount", "合同金额"),
+            "签订时间": ("signed_at", "合同签订时间"),
+            "完成时间": ("completed_at", "项目完成时间"),
+            "用户/业主联系人及电话": ("client_contact", "客户联系人及电话"),
+        }
+        if case_table and normalized in case_attributes:
+            attribute, display = case_attributes[normalized]
+            return (
+                f"business_case_{attribute}", f"business_case.{attribute}",
+                EntityType.BUSINESS_CASE, attribute,
+                f"BusinessCase.{attribute}", f"业绩案例{display}",
+                SubjectRole.BUSINESS_CASE_LIBRARY,
+                ("当前项目", "企业业绩库", "候选案例", display),
+                FillStrategy.KNOWLEDGE_COLLECTION,
+            )
+
+        personnel_table = any(item in compact_context for item in (
+            "经验年限", "承担工作内容", "担任职务", "学历", "职称",
+        ))
+        personnel_attributes = {
+            "姓名": ("name", "姓名"),
+            "性别": ("gender", "性别"),
+            "年龄": ("age", "年龄"),
+            "学历": ("education", "学历"),
+            "职称": ("professional_title", "职称"),
+            "专业": ("specialty", "专业"),
+            "经验年限": ("experience_years", "经验年限"),
+            "担任职务": ("title", "项目职务"),
+            "承担工作内容": ("assignment", "承担工作内容"),
+        }
+        if personnel_table and normalized in personnel_attributes:
+            attribute, display = personnel_attributes[normalized]
+            return (
+                f"person_{attribute}", f"person.{attribute}",
+                EntityType.PERSON, attribute,
+                f"Person[PROJECT_TEAM_ROW].{attribute}", f"项目团队人员{display}",
+                SubjectRole.CURRENT_PROJECT,
+                ("当前项目", "项目团队", "候选人员", display),
+                FillStrategy.KNOWLEDGE_COLLECTION,
+            )
+
+        certificate_table = any(item in compact_context for item in (
+            "证书名称", "发证单位", "证书等级", "证书有效期",
+        ))
+        certificate_attributes = {
+            "证书名称": ("name", "证书名称"),
+            "发证单位": ("issuer", "发证单位"),
+            "证书等级": ("level", "证书等级"),
+            "证书有效期": ("valid_until", "证书有效期"),
+        }
+        if certificate_table and normalized in certificate_attributes:
+            attribute, display = certificate_attributes[normalized]
+            return (
+                f"certificate_{attribute}", f"certificate.{attribute}",
+                EntityType.CERTIFICATE, attribute,
+                f"Certificate.{attribute}", display,
+                SubjectRole.CERTIFICATE_LIBRARY,
+                ("当前项目", "企业证书库", "候选证书", display),
+                FillStrategy.KNOWLEDGE_COLLECTION,
+            )
+
+        if normalized in {"服务期限", "履约期限", "项目工期", "工期"}:
+            return (
+                "project_service_term", "project.service_term",
+                EntityType.PROJECT, "duration", "Project.service_term",
+                "当前项目服务期限", SubjectRole.CURRENT_PROJECT,
+                ("当前项目", "采购要求", "服务期限"),
+                FillStrategy.DIRECT_ATTRIBUTE,
+            )
+
+        if re.search(r"(?:小写|大写|RMB)", normalized):
+            return (
+                "bid_price_amount", "bid_response.pricing.amount",
+                None, "money", "BidResponseDocument.Pricing.amount",
+                "本项目报价金额（大小写）", SubjectRole.BID_RESPONSE_DOCUMENT,
+                ("当前项目", "投标文件", "报价表", "报价金额"),
+                FillStrategy.KNOWLEDGE_COLLECTION,
+            )
+        return None
+
+    @staticmethod
     def _generic_business_slot(
         label: str,
     ) -> tuple[
@@ -577,6 +752,10 @@ class SlotContextClassifier:
             "级别": ("certificate_level", "证书级别"),
             "证号": ("certificate_number", "证书编号"),
             "专业": ("specialty", "专业"),
+            "学历": ("education", "学历"),
+            "经验年限": ("experience_years", "经验年限"),
+            "担任职务": ("title", "项目职务"),
+            "承担工作内容": ("assignment", "承担工作内容"),
         }
         normalized = re.sub(r"\s+", "", label)
         if normalized in person_attributes:
@@ -589,13 +768,20 @@ class SlotContextClassifier:
                 ("当前项目", "人员清单", display),
             )
         organization_attributes = {
+            "地址": ("registered_address", "注册地址"),
             "组织结构": ("organization_structure", "组织结构"),
             "成立时间": ("established_date", "成立时间"),
             "员工总人数": ("employee_count", "员工总人数"),
             "营业执照号": ("business_license_number", "营业执照编号"),
+            "营业执照（注册号）": (
+                "business_license_number", "营业执照注册号"
+            ),
             "注册资金": ("registered_capital", "注册资金"),
             "开户银行": ("bank_name", "开户银行"),
             "经营范围": ("business_scope", "经营范围"),
+            "经济性质": ("economic_nature", "经济性质"),
+            "主营（产）": ("main_business", "主营业务"),
+            "兼营（产）": ("secondary_business", "兼营业务"),
             "高级职称人员": ("senior_staff_count", "高级职称人员数量"),
             "中级职称人员": ("intermediate_staff_count", "中级职称人员数量"),
             "初级职称人员": ("junior_staff_count", "初级职称人员数量"),
@@ -833,6 +1019,10 @@ class SlotContextClassifier:
             SubjectRole.CURRENT_PROJECT: "当前项目",
             SubjectRole.BID_RESPONSE_DOCUMENT: "本项目投标文件",
             SubjectRole.DOCUMENT_ACTION: "文档动作",
+            SubjectRole.BUSINESS_CASE_LIBRARY: "企业业绩库",
+            SubjectRole.CERTIFICATE_LIBRARY: "企业证书库",
+            SubjectRole.RESPONSE_TABLE: "响应表",
+            SubjectRole.DOCUMENT_LAYOUT: "原模板格式",
         }[role]
 
     @staticmethod

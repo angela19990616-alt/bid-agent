@@ -254,6 +254,33 @@ class OntologyGraphService:
                     f"{slot_id}-person-registry", slot_id,
                     "person-registry", "EXPECTS_PERSON", "等待绑定人员",
                 )
+            elif str(first.get("expected_entity_type") or "") == "BusinessCase":
+                add_node(
+                    "business-case-library", "document", "企业业绩案例库",
+                    "按整表匹配已核验案例",
+                )
+                add_edge(
+                    f"{slot_id}-business-case-library", slot_id,
+                    "business-case-library", "MATCHES_CASES", "匹配业绩案例",
+                )
+            elif str(first.get("expected_entity_type") or "") == "Certificate":
+                add_node(
+                    "certificate-library", "document", "企业证书资料库",
+                    "按整表匹配已核验证书",
+                )
+                add_edge(
+                    f"{slot_id}-certificate-library", slot_id,
+                    "certificate-library", "MATCHES_CERTIFICATES", "匹配证书资料",
+                )
+            elif str(first.get("expected_entity_type") or "") == "ResponseItem":
+                add_node(
+                    "response-table", "document", "招标响应表",
+                    "依据响应事项按整表生成",
+                )
+                add_edge(
+                    f"{slot_id}-response-table", slot_id,
+                    "response-table", "GENERATES_RESPONSE_ROWS", "生成响应行",
+                )
             else:
                 add_edge(
                     f"{slot_id}-response-document", slot_id,

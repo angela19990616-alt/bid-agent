@@ -1,12 +1,15 @@
 {
-  "version": "1.1.2",
+  "version": "1.2.0",
   "name": "投标文件严格回填领域本体",
   "entity_types": {
     "Project": "当前投标项目",
     "Organization": "组织",
     "Person": "人员",
     "BidResponseDocument": "本项目投标文件",
-    "DocumentAction": "文档动作"
+    "DocumentAction": "文档动作",
+    "BusinessCase": "企业业绩案例",
+    "Certificate": "企业或人员证书",
+    "ResponseItem": "招标响应表事项"
   },
   "roles": {
     "LEGAL_REPRESENTATIVE": {
@@ -86,6 +89,10 @@
     "legal_representative_attribute": ["当前项目", "投标人", "法定代表人", "{attribute}"],
     "project_person_attribute": ["当前项目", "{role}", "{attribute}"],
     "response_signing_date": ["当前项目", "投标文件", "签署日期"],
-    "document_action": ["当前项目", "投标文件", "{action}"]
+    "document_action": ["当前项目", "投标文件", "{action}"],
+    "business_case_attribute": ["当前项目", "企业业绩库", "候选案例", "{attribute}"],
+    "certificate_attribute": ["当前项目", "企业证书库", "候选证书", "{attribute}"],
+    "response_item_attribute": ["当前项目", "投标文件", "响应表", "{attribute}"],
+    "document_layout": ["当前项目", "投标文件", "原模板格式", "{attribute}"]
   }
 }

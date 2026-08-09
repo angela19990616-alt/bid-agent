@@ -472,6 +472,26 @@ def test_instruction_paragraph_does_not_replace_the_current_form_directory():
     assert project_field["document_section"].endswith("技术要求应答表")
 
 
+def test_legal_declaration_ending_with_colon_is_not_a_fill_slot():
+    document = Document()
+    document.add_heading("第六章 响应文件格式", level=1)
+    document.add_paragraph(
+        "具备《中华人民共和国政府采购法》第二十二条规定的条件："
+    )
+    document.add_paragraph("签名代表在此声明并同意：")
+    document.add_paragraph("供应商名称：________")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "采购文件.docx", stream.getvalue()
+    )
+
+    assert [item["canonical_key"] for item in descriptor.fields] == [
+        "bidder_name",
+    ]
+
+
 def test_strict_fill_keeps_header_footer_and_sets_delivery_metadata(tmp_path):
     document = Document()
     document.sections[0].header.paragraphs[0].text = "原模板页眉"
@@ -482,6 +502,11 @@ def test_strict_fill_keeps_header_footer_and_sets_delivery_metadata(tmp_path):
     document.save(stream)
     content = stream.getvalue()
     descriptor = ResponseTemplateService().detect("投标文件格式.docx", content)
+    assert all(
+        "页眉" not in item["surrounding_text"]
+        and "页脚" not in item["surrounding_text"]
+        for item in descriptor.fields
+    )
     output = tmp_path / "metadata.docx"
 
     ResponseTemplateService().fill_docx(

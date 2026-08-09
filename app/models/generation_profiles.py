@@ -145,6 +145,8 @@ class TemplateVariableDecisionResponse(BaseModel):
         "person_binding_pending",
         "person_fact_pending",
         "response_generation_pending",
+        "knowledge_match_pending",
+        "layout_managed",
         "semantic_review_required",
         "value_resolution_pending",
     ] = "value_resolution_pending"

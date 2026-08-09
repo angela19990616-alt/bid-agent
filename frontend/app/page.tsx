@@ -171,7 +171,7 @@ type Workspace = {
       surrounding_text?: string;
     };
     semantic_field: string | null;
-    expected_entity_type: "Organization" | "Person" | "Project" | null;
+    expected_entity_type: "Organization" | "Person" | "Project" | "BusinessCase" | "Certificate" | "ResponseItem" | null;
     expected_role: "LEGAL_REPRESENTATIVE" | "AUTHORIZED_REPRESENTATIVE" | "PROJECT_MANAGER" | "TECHNICAL_LEAD" | "CONTACT_PERSON" | "SIGNATORY" | null;
     expected_role_label: string | null;
     subject_organization: string | null;
@@ -192,7 +192,7 @@ type Workspace = {
     subject_role: string | null;
     relation_path: string[];
     value_expression: string | null;
-    fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "unresolved";
+    fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "auto_layout" | "generated_collection" | "knowledge_collection" | "unresolved";
     required_actions: string[];
   }>;
   template_variable_decisions: Array<{
@@ -202,7 +202,7 @@ type Workspace = {
     label: string;
     aliases: string[];
     semantic_field: string;
-    target_entity_type: "Organization" | "Person" | "Project" | null;
+    target_entity_type: "Organization" | "Person" | "Project" | "BusinessCase" | "Certificate" | "ResponseItem" | null;
     target_relation: "LEGAL_REPRESENTATIVE" | "AUTHORIZED_REPRESENTATIVE" | "PROJECT_MANAGER" | "TECHNICAL_LEAD" | "CONTACT_PERSON" | "SIGNATORY" | string | null;
     target_relations: string[];
     entity_scope_label: string;
@@ -246,7 +246,7 @@ type Workspace = {
       source_location: string | null;
       confidence: number;
     }>;
-    fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "unresolved";
+    fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "auto_layout" | "generated_collection" | "knowledge_collection" | "unresolved";
     personnel_rule_results: Array<Record<string, unknown>>;
     semantics_recognized?: boolean;
     resolution_state: string;
@@ -819,6 +819,7 @@ export default function Home() {
   const templateVariableGroups = useMemo(() => {
     const groups = new Map<string, { key: string; label: string; items: TemplateVariableDecision[] }>();
     for (const item of workspace?.template_variable_decisions ?? []) {
+      if (item.resolution_state === "layout_managed") continue;
       const key = item.review_group_key || item.variable_key;
       const existing = groups.get(key);
       if (existing) existing.items.push(item);
@@ -840,10 +841,13 @@ export default function Home() {
       enterprisePending: decisions.filter((item) => item.resolution_state === "enterprise_fact_pending").length,
       personGroupsPending: templateVariableGroups.filter((group) => group.items.some((item) => ["person_binding_pending", "person_fact_pending"].includes(item.resolution_state))).length,
       responsePending: decisions.filter((item) => item.resolution_state === "response_generation_pending").length,
+      knowledgePending: templateVariableGroups.filter((group) => group.items.some((item) => item.resolution_state === "knowledge_match_pending")).length,
+      layoutManaged: decisions.filter((item) => item.resolution_state === "layout_managed").length,
       otherPending: decisions.filter((item) => item.required && ![
         "resolved", "review_required", "enterprise_fact_pending",
         "person_binding_pending", "person_fact_pending",
-        "response_generation_pending", "semantic_review_required",
+        "response_generation_pending", "knowledge_match_pending",
+        "layout_managed", "semantic_review_required",
       ].includes(item.resolution_state)).length,
     };
   }, [workspace?.template_variable_decisions, templateVariableGroups]);
@@ -1419,14 +1423,14 @@ export default function Home() {
       <article key={item.variable_key} className={`fill-decision ${variableResolutionClass(item)}`} data-resolution-state={item.resolution_state}>
         <div><strong>{item.standard_name}</strong><span>{variableResolutionLabel(item)}</span></div>
         <p>{item.value || variableNextAction(item)}</p>
-        <small>{item.entity_scope_label} · 覆盖 {item.slot_count} 个原模板位置 · 应填：{item.expected_value_type_label}</small>
+        <small>{item.entity_scope_label} · 系统联动 {item.slot_count} 个原模板位置，无需逐格确认 · 应填：{item.expected_value_type_label}</small>
         {item.semantic_field && (
           <div className="entity-resolution-card">
             <div><span>识别字段</span><strong>{item.standard_name}</strong></div>
             {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
             <div><span>当前状态</span><strong>{variableResolutionLabel(item)}</strong></div>
             <div><span>下一步</span><strong>{variableNextAction(item)}</strong></div>
-            <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位产出文件</button><button className="text-button" onClick={() => openSourceSlot(item, slot)}>打开采购原文</button></article>)}</details>
+            <details className="variable-slot-details"><summary>需要抽查时查看 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位产出文件</button><button className="text-button" onClick={() => openSourceSlot(item, slot)}>打开采购原文</button></article>)}</details>
             {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
               <div className="entity-candidates">
                 <span>候选人员</span>
@@ -1922,11 +1926,13 @@ export default function Home() {
                         </div>
                         <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
                         {(workspace.template_actions ?? []).length > 0 && <div className="case-library-note"><b>已识别 {(workspace.template_actions ?? []).length} 项签章动作</b><span>{workspace.template_actions.map((action) => action.display_name).filter((value, index, values) => values.indexOf(value) === index).join("、")}；动作不再冒充待填文字。</span></div>}
-                        <div className="case-library-note"><b>{workspace.template_variable_decisions?.length ?? 0} 个业务变量归并为 {templateVariableGroups.length} 个审核对象</b><span>覆盖 {workspace.template_field_decisions?.length ?? 0} 个原模板位置；同一对象的不同属性横向展示，同一实体与属性只审核一次。</span></div>
+                        <div className="case-library-note"><b>{templateVariableGroups.length} 个待审核业务对象</b><span>表格按整表或业务对象处理，不要求逐格确认；页眉、页脚和原版式只继承保真，不进入回填清单。</span></div>
                         <div className="fill-resolution-summary">
                           <span>待匹配企业资料 {templateResolutionSummary.enterprisePending}</span>
                           <span>待处理人员 {templateResolutionSummary.personGroupsPending} 组</span>
                           <span>待生成响应 {templateResolutionSummary.responsePending}</span>
+                          {templateResolutionSummary.knowledgePending > 0 && <span>待整表匹配 {templateResolutionSummary.knowledgePending} 组</span>}
+                          {templateResolutionSummary.layoutManaged > 0 && <span>系统管理版式 {templateResolutionSummary.layoutManaged} 项</span>}
                           {templateResolutionSummary.otherPending > 0 && <span>其他待处理 {templateResolutionSummary.otherPending}</span>}
                           <span className={templateResolutionSummary.semanticReview ? "warning" : "ready"}>字段含义待确认 {templateResolutionSummary.semanticReview}</span>
                         </div>
@@ -1935,7 +1941,7 @@ export default function Home() {
                           {templateVariableGroups.map((group) => group.items.length > 1 ? (
                             <details key={group.key} className="fill-variable-group">
                               <summary><span><strong>{group.label}</strong><small>{group.items.length} 个关联变量 · 点击展开横向核验</small></span><b>{group.statusLabel}</b></summary>
-                              <p>{group.items[0].target_entity_type === "Person" ? "系统已识别这一行各字段的含义；确定人员后，姓名、职务、证书等资料将从同一人员档案自动联动。" : "这些变量属于同一业务对象；系统分别匹配属性值，前端集中展示和审核，不会重复创建对象。"}</p>
+                              <p>{group.items[0].target_entity_type === "Person" ? "同一对象的不同属性横向展示；确定人员后，姓名、职务、证书等资料将从同一人员档案自动联动。" : "同一对象的不同属性横向展示；系统分别匹配属性值，前端集中审核，不会重复创建对象。"}</p>
                               <div className="fill-variable-group-items">{group.items.map(renderTemplateVariableDecision)}</div>
                             </details>
                           ) : renderTemplateVariableDecision(group.items[0]))}
