@@ -489,7 +489,8 @@ def test_detects_and_fills_generic_blank_table_field(tmp_path):
     )
 
     assert field["expected_source"] == "pricing_database"
-    assert field["field_key"].startswith("custom_")
+    assert field["field_key"] == "unmapped_field"
+    assert field["display_name"] == "尚未识别的业务槽位"
 
     output = tmp_path / "generic-fill.docx"
     report = service.fill_docx(

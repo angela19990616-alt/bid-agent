@@ -67,6 +67,26 @@ def test_authorization_template_resolves_organization_and_distinct_roles():
     )
     assert all(item["surrounding_text"] for item in slots)
     assert all(item["paragraph_index"] for item in slots)
+    organization_slot = next(
+        item for item in slots
+        if item["semantic_field"] == "organization.full_name"
+    )
+    assert organization_slot["expected_role"] is None
+    assert organization_slot["relation_path"] == [
+        "当前项目", "投标人", "企业全称",
+    ]
+
+
+def test_mixed_authorization_sentence_binds_blank_to_nearest_role():
+    slot = _slot(
+        "姓名",
+        "投标人的法定代表人，现委托_______（姓名）为我方代理人。",
+    )
+
+    assert slot.expected_role is ProjectRole.AUTHORIZED_REPRESENTATIVE
+    assert slot.relation_path == (
+        "当前项目", "授权代表", "姓名",
+    )
 
 
 def test_legal_representative_aliases_are_one_role():
@@ -184,3 +204,68 @@ def test_ambiguous_legal_or_authorized_representative_needs_review():
 
     assert slot.expected_entity_type.value == "Person"
     assert slot.expected_role is None
+
+
+def test_date_and_seal_are_document_relationships_not_isolated_values():
+    document = Document()
+    document.add_heading("附件：投标文件格式", level=1)
+    document.add_paragraph("投标人名称（加盖公章）：________")
+    document.add_paragraph("盖章：________")
+    document.add_paragraph("日 期：________")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "采购文件.docx", stream.getvalue()
+    )
+
+    assert [item["display_name"] for item in descriptor.fields] == [
+        "当前项目投标人名称", "本项目投标文件签署日期",
+    ]
+    bidder = descriptor.fields[0]
+    assert bidder["required_actions"] == ["加盖投标人公章"]
+    signing_date = descriptor.fields[1]
+    assert signing_date["semantic_field"] == "bid_response.signing_date"
+    assert signing_date["relation_path"] == [
+        "当前项目", "投标文件", "签署日期",
+    ]
+    assert len(descriptor.actions) == 1
+    assert descriptor.actions[0]["display_name"] == "加盖投标人公章"
+
+
+def test_two_party_seal_block_is_actions_not_an_empty_text_field():
+    document = Document()
+    document.add_heading("附件：投标文件格式", level=1)
+    document.add_paragraph("甲方（盖章）：_________ 乙方（盖章）：_________")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "采购文件.docx", stream.getvalue()
+    )
+
+    assert descriptor.fields == ()
+    assert {item["display_name"] for item in descriptor.actions} == {
+        "甲方签章", "乙方签章",
+    }
+
+
+def test_project_name_and_number_in_one_slot_is_a_composed_relation():
+    slot = _slot(
+        "项目名称，项目编号/包号",
+        "我方参加___（项目名称，项目编号/包号）组织的招标活动。",
+    )
+
+    assert slot.canonical_key == "project_reference"
+    assert slot.semantic_field == "project.reference"
+    assert slot.display_name == "当前项目名称及编号"
+    assert slot.fill_strategy.value == "composed_value"
+    assert slot.relation_path == ("当前项目", "组合项目名称与项目编号")
+
+
+def test_unknown_slot_never_exposes_custom_internal_identifier():
+    slot = _slot("其他说明", "其他说明：________")
+
+    assert slot.canonical_key == "unmapped_field"
+    assert "custom_" not in slot.canonical_key
+    assert slot.display_name == "尚未识别的业务槽位"

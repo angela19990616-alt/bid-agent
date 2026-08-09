@@ -1,0 +1,91 @@
+{
+  "version": "1.0.1",
+  "name": "投标文件严格回填领域本体",
+  "entity_types": {
+    "Project": "当前投标项目",
+    "Organization": "组织",
+    "Person": "人员",
+    "BidResponseDocument": "本项目投标文件",
+    "DocumentAction": "文档动作"
+  },
+  "roles": {
+    "LEGAL_REPRESENTATIVE": {
+      "label": "法定代表人",
+      "scope": "organization",
+      "aliases": ["法定代表人", "法定代表", "法人代表", "法人"],
+      "relation": "投标人依法登记的法定代表人"
+    },
+    "AUTHORIZED_REPRESENTATIVE": {
+      "label": "本项目授权代表",
+      "scope": "project",
+      "aliases": ["委托代理人", "授权代理人", "授权代表", "被授权人", "受托人", "代理人"],
+      "relation": "当前项目授权委托关系指定的代理人"
+    },
+    "PROJECT_MANAGER": {
+      "label": "本项目项目负责人",
+      "scope": "project",
+      "aliases": ["项目负责人", "项目经理"],
+      "relation": "当前项目负责人关系指定的人员"
+    },
+    "TECHNICAL_LEAD": {
+      "label": "本项目技术负责人",
+      "scope": "project",
+      "aliases": ["技术负责人", "技术总监"],
+      "relation": "当前项目技术负责人关系指定的人员"
+    },
+    "CONTACT_PERSON": {
+      "label": "本项目联系人",
+      "scope": "project",
+      "aliases": ["项目联系人", "联系人"],
+      "relation": "当前项目联系人关系指定的人员"
+    },
+    "SIGNATORY": {
+      "label": "本项目签署人",
+      "scope": "project",
+      "aliases": ["签字人", "签署人"],
+      "relation": "当前文件签署关系指定的人员"
+    }
+  },
+  "organization_roles": {
+    "BIDDER_ORGANIZATION": {
+      "label": "当前项目投标人",
+      "aliases": ["投标人", "供应商", "响应人", "本单位", "我方", "单位名称", "企业名称"]
+    },
+    "CONSORTIUM_LEAD": {
+      "label": "联合体牵头人",
+      "aliases": ["联合体牵头人", "联合体主办方"]
+    },
+    "CONSORTIUM_MEMBER": {
+      "label": "联合体成员",
+      "aliases": ["联合体成员"]
+    }
+  },
+  "document_actions": {
+    "COUNTERPARTY_A_SEAL": {
+      "label": "甲方签章",
+      "aliases": ["甲方（盖章）", "甲方盖章", "采购人（盖章）", "采购人盖章"]
+    },
+    "COUNTERPARTY_B_SEAL": {
+      "label": "乙方签章",
+      "aliases": ["乙方（盖章）", "乙方盖章"]
+    },
+    "APPLY_OFFICIAL_SEAL": {
+      "label": "加盖投标人公章",
+      "aliases": ["加盖公章", "盖公章", "公章", "盖章", "签章"]
+    },
+    "HANDWRITTEN_SIGNATURE": {
+      "label": "由对应人员签字",
+      "aliases": ["签字", "签名", "亲笔签署"]
+    }
+  },
+  "relation_templates": {
+    "project_name": ["当前项目", "项目名称"],
+    "project_number": ["当前项目", "项目编号"],
+    "project_reference": ["当前项目", "组合项目名称与项目编号"],
+    "bidder_attribute": ["当前项目", "投标人", "{attribute}"],
+    "legal_representative_attribute": ["当前项目", "投标人", "法定代表人", "{attribute}"],
+    "project_person_attribute": ["当前项目", "{role}", "{attribute}"],
+    "response_signing_date": ["当前项目", "投标文件", "签署日期"],
+    "document_action": ["当前项目", "投标文件", "{action}"]
+  }
+}

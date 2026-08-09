@@ -156,6 +156,11 @@ class StrictFillDecisionEngine:
                 and (
                     target_entity_id is None
                     or fact.entity_id == target_entity_id
+                    or (
+                        field.expected_entity_type == EntityType.ORGANIZATION.value
+                        and fact.entity_id is None
+                        and fact.source_type in self.EVIDENCE_REQUIRED_SOURCES
+                    )
                 )
                 and fact.value.strip()
                 and fact.source_type not in self.NON_AUTHORITATIVE_FACT_SOURCES

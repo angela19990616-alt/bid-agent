@@ -369,6 +369,9 @@ class WorkspaceService:
                     ),
                 )
             ),
+            "template_actions": profile.template_descriptor.get(
+                "actions", []
+            ),
             "case_library_count": case_library["count"],
             "case_library_name": case_library["name"],
             "case_library_scope": case_library["scope"],

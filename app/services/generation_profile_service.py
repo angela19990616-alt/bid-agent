@@ -26,6 +26,7 @@ from app.core.entity_resolution import (
     EntityResolutionContext,
     EntityResolutionEngine,
     EntityType,
+    FillStrategy,
     ROLE_LABELS,
     SlotContextClassifier,
 )
@@ -38,6 +39,7 @@ from app.services.pdf_template_conversion_service import (
 TEMPLATE_FIELD_LABELS = {
     "project_name": "项目名称",
     "project_number": "项目编号",
+    "project_reference": "项目名称及编号",
     "bidder_name": "供应商名称",
     "legal_representative": "法定代表人",
     "authorized_representative": "授权代表",
@@ -47,6 +49,7 @@ TEMPLATE_FIELD_LABELS = {
     "person_id_number": "身份证号码",
     "person_title": "职务",
     "date": "日期",
+    "bid_response_signing_date": "投标文件签署日期",
     "registered_address": "注册地址",
     "postal_code": "邮政编码",
     "contact_person": "联系人",
@@ -132,6 +135,9 @@ class GenerationProfileService:
             )
         )
         descriptor_snapshot = descriptor.snapshot()
+        descriptor_snapshot["ontology_version"] = (
+            SlotContextClassifier.ontology_version()
+        )
         descriptor_snapshot["source_format_original"] = Path(
             filename
         ).suffix.lower().lstrip(".")
@@ -413,7 +419,62 @@ class GenerationProfileService:
                 writer_strategy="planned_proposal_writer",
                 template_conversion_report={},
             )
-        return GenerationProfile(**row)
+        profile = GenerationProfile(**row)
+        if (
+            profile.generation_mode == "strict_template"
+            and profile.template_descriptor.get("ontology_version")
+            != SlotContextClassifier.ontology_version()
+        ):
+            profile = GenerationProfileService._refresh_template_ontology(
+                profile
+            )
+        return profile
+
+    @staticmethod
+    def _refresh_template_ontology(
+        profile: GenerationProfile,
+    ) -> GenerationProfile:
+        """Re-analyse existing templates once when ontology rules change."""
+        path = GenerationProfileService.template_path(profile)
+        if path is None or not path.is_file():
+            return profile
+        filename = profile.template_filename or path.name
+        if profile.converted_template_storage_key:
+            filename = f"{Path(filename).stem}-converted.docx"
+        descriptor = ResponseTemplateService().detect(
+            filename, path.read_bytes()
+        ).snapshot()
+        descriptor["ontology_version"] = (
+            SlotContextClassifier.ontology_version()
+        )
+        previous = profile.template_descriptor
+        for key in (
+            "source_evidence", "source_format_original", "conversion",
+        ):
+            if key in previous:
+                descriptor[key] = previous[key]
+        if previous.get("fidelity") == "converted_template_validated":
+            descriptor["fidelity"] = "converted_template_validated"
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE proposal_generation_profiles
+                    SET template_descriptor = %s::jsonb,
+                        updated_at = NOW()
+                    WHERE project_id = %s
+                    """,
+                    (
+                        json.dumps(descriptor, ensure_ascii=False),
+                        profile.project_id,
+                    ),
+                )
+        return GenerationProfile(
+            **{
+                **profile.__dict__,
+                "template_descriptor": descriptor,
+            }
+        )
 
     @staticmethod
     def template_field_decisions(
@@ -452,6 +513,25 @@ class GenerationProfileService:
                 or fallback_values.get(canonical_key)
                 or ""
             ).strip()
+            if canonical_key == "project_reference" and not value:
+                project_name = (
+                    profile.template_field_values.get("project_name")
+                    or fallback_values.get("project_name")
+                    or ""
+                ).strip()
+                project_number = (
+                    profile.template_field_values.get("project_number")
+                    or fallback_values.get("project_number")
+                    or ""
+                ).strip()
+                if project_name and project_number:
+                    value = f"{project_name}（项目编号：{project_number}）"
+            if canonical_key == "bid_response_signing_date" and not value:
+                value = (
+                    profile.template_field_values.get("date")
+                    or fallback_values.get("date")
+                    or ""
+                ).strip()
             facts: list[EnterpriseFact] = [
                 fact
                 for fact in (enterprise_facts or [])
@@ -468,7 +548,7 @@ class GenerationProfileService:
                     and review.get("value") == value
                 )
                 procurement_fact = canonical_key in {
-                    "project_name", "project_number"
+                    "project_name", "project_number", "project_reference",
                 }
                 expected_source = metadata.get("expected_source")
                 facts.append(EnterpriseFact(
@@ -639,7 +719,7 @@ class GenerationProfileService:
         key: str,
         metadata: dict[str, Any],
     ) -> DocumentSlot:
-        if metadata.get("slot_id"):
+        if metadata.get("slot_id") and metadata.get("ontology_concept"):
             return DocumentSlot.from_snapshot(metadata)
         canonical_key = str(metadata.get("canonical_key") or key)
         label = (
@@ -781,6 +861,15 @@ class GenerationProfileService:
                 [item.snapshot() for item in resolution.candidates]
                 if resolution is not None else []
             ),
+            "ontology_concept": slot.ontology_concept,
+            "display_name": slot.display_name,
+            "subject_role": (
+                slot.subject_role.value if slot.subject_role else None
+            ),
+            "relation_path": list(slot.relation_path),
+            "value_expression": slot.value_expression,
+            "fill_strategy": slot.fill_strategy.value,
+            "required_actions": list(slot.required_actions),
         }
 
     @staticmethod
@@ -812,11 +901,10 @@ class GenerationProfileService:
         slot = GenerationProfileService._slot_for_field(
             key, field_metadata
         )
-        if manual_value and slot.expected_entity_type in {
-            EntityType.PERSON, EntityType.ORGANIZATION
-        }:
+        if manual_value and slot.fill_strategy is not FillStrategy.UNRESOLVED:
             raise ValueError(
-                "企业和人员字段不能直接输入；请从已核验实体库匹配并完成审核。"
+                "已识别业务槽位不能直接输入；请从已核验数据库自动匹配，"
+                "必要时先建立实体或项目角色关系。"
             )
         if manual_value and not StrictFillDecisionEngine.value_matches_field_type(
             slot.canonical_key, manual_value

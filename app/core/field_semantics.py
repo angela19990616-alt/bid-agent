@@ -7,6 +7,7 @@ from enum import StrEnum
 class SemanticValueType(StrEnum):
     PROJECT_NAME = "project_name"
     PROJECT_IDENTIFIER = "project_identifier"
+    PROJECT_REFERENCE = "project_reference"
     ORGANIZATION_NAME = "organization_name"
     PERSON_NAME = "person_name"
     IDENTITY_NUMBER = "identity_number"
@@ -31,6 +32,7 @@ class SemanticValueType(StrEnum):
 FIELD_EXPECTATIONS: dict[str, tuple[SemanticValueType, str]] = {
     "project_name": (SemanticValueType.PROJECT_NAME, "项目名称"),
     "project_number": (SemanticValueType.PROJECT_IDENTIFIER, "项目编号"),
+    "project_reference": (SemanticValueType.PROJECT_REFERENCE, "项目名称及编号"),
     "bidder_name": (SemanticValueType.ORGANIZATION_NAME, "企业名称"),
     "legal_representative": (SemanticValueType.PERSON_NAME, "姓名"),
     "authorized_representative": (SemanticValueType.PERSON_NAME, "姓名"),
@@ -41,6 +43,7 @@ FIELD_EXPECTATIONS: dict[str, tuple[SemanticValueType, str]] = {
     "person_id_number": (SemanticValueType.IDENTITY_NUMBER, "身份证号码"),
     "person_title": (SemanticValueType.JOB_TITLE, "职务"),
     "date": (SemanticValueType.DATE, "日期"),
+    "bid_response_signing_date": (SemanticValueType.DATE, "投标文件签署日期"),
     "registered_address": (SemanticValueType.ADDRESS, "地址"),
     "postal_code": (SemanticValueType.POSTAL_CODE, "邮政编码"),
     "contact_phone": (SemanticValueType.PHONE, "电话号码"),
@@ -99,6 +102,12 @@ class FieldSemanticClassifier:
         expected = cls.expected_type(canonical_key)
         if expected is SemanticValueType.UNKNOWN:
             return bool(str(value or "").strip())
+        if expected is SemanticValueType.PROJECT_REFERENCE:
+            compact = re.sub(r"\s+", "", str(value or ""))
+            return bool(
+                re.search(r"项目|工程|服务|采购|建设|咨询", compact)
+                and re.search(r"编号|包号|[A-Za-z0-9][A-Za-z0-9._/-]{3,}", compact)
+            )
         return cls.classify(value) is expected
 
     @classmethod

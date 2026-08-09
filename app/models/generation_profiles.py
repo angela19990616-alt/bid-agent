@@ -71,3 +71,10 @@ class TemplateFieldDecisionResponse(BaseModel):
     binding_status: str | None = None
     match_path: list[str] = Field(default_factory=list)
     entity_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    ontology_concept: str = "unmapped"
+    display_name: str = "待识别字段"
+    subject_role: str | None = None
+    relation_path: list[str] = Field(default_factory=list)
+    value_expression: str | None = None
+    fill_strategy: str = "unresolved"
+    required_actions: list[str] = Field(default_factory=list)

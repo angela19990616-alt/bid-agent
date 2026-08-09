@@ -61,7 +61,8 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /strict_template_writer/);
   assert.match(page, /planned_proposal_writer/);
   assert.match(page, /查看原文定位/);
-  assert.match(page, /字段类型/);
+  assert.match(page, /实际取值关系/);
+  assert.match(page, /签章动作/);
   assert.match(page, /其他候选/);
   assert.match(page, /原文位置/);
   assert.match(page, /来源记录暂未提供页码或段落/);
@@ -90,7 +91,7 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /不再强制替换为系统默认字体/);
   assert.match(page, /保存并确认/);
   assert.match(page, /人工确认来源/);
-  assert.match(page, /识别字段/);
+  assert.match(page, /原模板槽位/);
   assert.match(page, /目标角色/);
   assert.match(page, /选择并建立角色绑定/);
   assert.match(page, /查看槽位判断上下文/);

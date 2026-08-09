@@ -185,6 +185,21 @@ type Workspace = {
       source_location: string | null;
       confidence: number;
     }>;
+    ontology_concept: string;
+    display_name: string;
+    subject_role: string | null;
+    relation_path: string[];
+    value_expression: string | null;
+    fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "unresolved";
+    required_actions: string[];
+  }>;
+  template_actions: Array<{
+    action_id: string;
+    display_name: string;
+    source_location: string;
+    surrounding_text: string;
+    relation_path: string[];
+    required_actions: string[];
   }>;
   case_library_count: number;
   case_library_name: string;
@@ -1575,11 +1590,12 @@ export default function Home() {
                           <small>回填字段和生成正文均继承所在模板样式，不再强制替换为系统默认字体。</small>
                         </div>
                         <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
+                        {(workspace.template_actions ?? []).length > 0 && <div className="case-library-note"><b>已识别 {(workspace.template_actions ?? []).length} 项签章动作</b><span>{workspace.template_actions.map((action) => action.display_name).filter((value, index, values) => values.indexOf(value) === index).join("、")}；动作不再冒充待填文字。</span></div>}
                         {missingTemplateDecisions.length > 0 ? <p className="template-field-warning">企业资料库缺少 {missingTemplateDecisions.length} 项资料。系统保留空位，不允许 AI 猜写。</p> : <p className="template-field-ready">全部字段已匹配，请审核后导出。</p>}
                         <div className="fill-decision-list">
                           {(workspace.template_field_decisions ?? []).map((item) => (
                             <article key={item.field_key} className={`fill-decision ${item.status.toLowerCase()}`}>
-                              <div><strong>{item.label}</strong><span>{fillStatusLabels[item.status]}</span></div>
+                              <div><strong>{item.display_name || item.label}</strong><span>{fillStatusLabels[item.status]}</span></div>
                               {editingFieldKey === item.field_key ? (
                                 <div className="field-edit-form">
                                   <input aria-label={`修改${item.label}`} maxLength={500} value={editingFieldValue} onChange={(event) => setEditingFieldValue(event.target.value)} autoFocus />
@@ -1589,14 +1605,16 @@ export default function Home() {
                                   </div>
                                 </div>
                               ) : <p>{item.value || "尚未提供"}</p>}
-                              <small>字段类型：{item.expected_value_type_label} · {item.type_validation === "passed" ? "类型校验已通过" : "未获得符合类型的值"}</small>
+                              <small>原模板槽位：{item.label} · 应填：{item.expected_value_type_label} · {item.type_validation === "passed" ? "类型校验已通过" : "未获得符合类型的值"}</small>
                               {item.semantic_field && (
                                 <div className="entity-resolution-card">
-                                  <div><span>识别字段</span><strong>{item.expected_role_label ? `${item.expected_role_label}${item.expected_value_type_label}` : item.label}</strong></div>
+                                  <div><span>识别结果</span><strong>{item.display_name || (item.expected_role_label ? `${item.expected_role_label}${item.expected_value_type_label}` : item.label)}</strong></div>
+                                  {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
                                   {item.subject_organization && <div><span>所属主体</span><strong>{item.subject_organization}</strong></div>}
                                   {item.expected_role_label && <div><span>目标角色</span><strong>{item.expected_role_label}</strong></div>}
                                   {item.project_name && item.expected_role !== "LEGAL_REPRESENTATIVE" && <div><span>当前项目</span><strong>{item.project_name}</strong></div>}
                                   <div><span>当前状态</span><strong>{item.binding_status === "resolved" ? "已确定唯一实体和角色" : item.reason}</strong></div>
+                                  {(item.required_actions ?? []).length > 0 && <div><span>随附动作</span><strong>{item.required_actions.join("、")}</strong></div>}
                                   {item.slot?.surrounding_text && <details><summary>查看槽位判断上下文</summary><blockquote>{item.slot.surrounding_text}</blockquote></details>}
                                   {(item.match_path ?? []).length > 0 && <details><summary>查看匹配路径</summary><ol>{item.match_path.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol></details>}
                                   {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
@@ -1620,7 +1638,6 @@ export default function Home() {
                               {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
                               {editingFieldKey !== item.field_key && <div className="field-review-actions">
                                 {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "confirm")}>确认该字段</button>}
-                                {!item.expected_entity_type && <button className="text-button" disabled={Boolean(busy)} onClick={() => startEditingTemplateField(item)}>修改</button>}
                                 {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "reset")}>重新审核</button>}
                               </div>}
                             </article>

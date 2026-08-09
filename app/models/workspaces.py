@@ -74,6 +74,7 @@ class WorkspaceResponse(BaseModel):
     template_field_decisions: list[TemplateFieldDecisionResponse] = Field(
         default_factory=list
     )
+    template_actions: list[dict] = Field(default_factory=list)
     case_library_count: int = 5
     case_library_name: str = "大岳五案例示例库"
     case_library_scope: str = "organization_private"

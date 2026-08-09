@@ -82,6 +82,7 @@ class TemplateDescriptor:
     fields: tuple[dict[str, Any], ...] = ()
     end_block: int | None = None
     font_profile: dict[str, Any] | None = None
+    actions: tuple[dict[str, Any], ...] = ()
 
     def snapshot(self) -> dict[str, Any]:
         return asdict(self)
@@ -270,7 +271,7 @@ class ResponseTemplateService:
             for match in PLACEHOLDER_RE.finditer(candidate_text)
         }))
         labels = self._fillable_labels(document)
-        fields = self._extract_fillable_fields(
+        fields, actions = self._extract_fillable_fields(
             document, start_block, end_block
         )
         strict = tuple(marker for marker in STRICT_MARKERS if marker in candidate_text)
@@ -303,6 +304,7 @@ class ResponseTemplateService:
             fields=fields,
             end_block=end_block,
             font_profile=font_profile,
+            actions=actions,
         )
 
     @staticmethod
@@ -471,10 +473,11 @@ class ResponseTemplateService:
         document: DocumentType,
         start_block: int | None,
         end_block: int | None,
-    ) -> tuple[dict[str, Any], ...]:
+    ) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
         if start_block is None:
-            return ()
+            return (), ()
         fields: list[dict[str, Any]] = []
+        actions: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         field_key_counts: Counter[str] = Counter()
 
@@ -496,14 +499,9 @@ class ResponseTemplateService:
             clean = re.sub(r"[\s()（）]", "", semantic_label)
             if not 2 <= len(clean) <= 40:
                 return
-            if re.search(r"甲方|乙方|联合体牵头人|联合体成员", clean):
+            if re.search(r"^甲方$|^乙方$", clean):
                 return
             if re.search(r"身份证明|复印件|扫描件|护照|附件", clean):
-                return
-            if (
-                re.search(r"法定代表人|委托代理人|授权代表", clean)
-                and re.search(r"签字|签名|盖章", clean)
-            ):
                 return
             if not re.search(
                 r"名称|姓名|编号|代表|日期|金额|报价|地址|电话|手机|邮箱|联系人|"
@@ -531,6 +529,20 @@ class ResponseTemplateService:
                 column=column,
                 canonical_hint=canonical,
             )
+            if slot.fill_strategy.value == "action_only":
+                action_labels = slot.required_actions or (slot.display_name,)
+                for action_index, action_label in enumerate(action_labels, start=1):
+                    actions.append({
+                        "action_id": f"{slot.slot_id}:{action_index}",
+                        "display_name": action_label,
+                        "source_location": location,
+                        "surrounding_text": slot.surrounding_text,
+                        "relation_path": [
+                            "当前项目", "投标文件", action_label,
+                        ],
+                        "required_actions": [action_label],
+                    })
+                return
             canonical_key = slot.canonical_key
             identity = (canonical_key, location)
             if identity in seen:
@@ -543,7 +555,10 @@ class ResponseTemplateService:
                 else f"{canonical_key}__{slot.slot_id}"
             )
             source_type = "manual_input"
-            if canonical_key in {"project_name", "project_number", "date"}:
+            if canonical_key in {
+                "project_name", "project_number", "project_reference",
+                "bid_response_signing_date",
+            }:
                 source_type = "tender_document"
             elif re.search(r"报价|金额|价格", clean):
                 source_type = "pricing_database"
@@ -606,21 +621,43 @@ class ResponseTemplateService:
                         document_section=current_section,
                         paragraph_index=paragraph_index,
                     )
-                for slot_index, inline in enumerate(
-                    re.finditer(
-                        r"(?:[_＿]{2,}|…+|\.{3,})\s*[（(]([^）)]{1,30})[）)]",
-                        text,
-                    ),
-                    start=1,
-                ):
+                inline_matches = list(re.finditer(
+                    r"(?:[_＿]{2,}|…+|\.{3,})\s*[（(]([^）)]{1,30})[）)]",
+                    text,
+                ))
+                for slot_index, inline in enumerate(inline_matches, start=1):
+                    local_context = cls._local_slot_context(
+                        text, inline_matches, slot_index - 1
+                    )
                     append(
                         inline.group(1),
                         f"第{paragraph_index}段/第{slot_index}个空位",
-                        surrounding_text=text,
+                        surrounding_text=local_context,
                         document_section=current_section,
                         paragraph_index=paragraph_index,
                     )
-        return tuple(fields)
+        unique_actions = {
+            item["action_id"]: item for item in actions
+        }
+        return tuple(fields), tuple(unique_actions.values())
+
+    @staticmethod
+    def _local_slot_context(
+        text: str,
+        matches: list[re.Match[str]],
+        index: int,
+    ) -> str:
+        """Cut one placeholder's clause away from neighbouring placeholders."""
+        current = matches[index]
+        left = 0 if index == 0 else (
+            matches[index - 1].end() + current.start()
+        ) // 2
+        right = len(text) if index == len(matches) - 1 else (
+            current.end() + matches[index + 1].start()
+        ) // 2
+        # Keep enough text on both sides to capture patterns such as
+        # “系投标人的法定代表人” and “现委托…为我方代理人”.
+        return text[max(0, left - 24):min(len(text), right + 48)]
 
     @classmethod
     def _extract_outline(
