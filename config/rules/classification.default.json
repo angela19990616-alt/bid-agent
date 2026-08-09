@@ -1,0 +1,105 @@
+{
+  "rule_type": "classification",
+  "key": "proposal-oriented-classification",
+  "name": "面向技术方案生成的 Requirement 分类规则",
+  "version": 4,
+  "model_instruction": "你是投标技术方案分类器。不要根据“平台、查询、性能、技术能力”等孤立词语判断，而要判断整条要求会影响技术方案的哪一部分。先反证：如果内容只是资格承诺、供应商基本材料、响应文件格式、采购程序、公告查询、签章密封、假设性样品条款或单独表格提交要求，则不得进入技术方案正文。对每条要求回答：投标人需要响应什么、应写入哪一章、是否影响评分、是否需要企业知识支持。只能使用规则中定义的枚举；资格、商务和合规要求不得进入技术方案正文。只返回完整 JSON，不输出 Markdown。",
+  "requirement_types": {
+    "technical_capability": {"label": "技术能力", "default_chapter": "技术路线"},
+    "functional_requirement": {"label": "功能要求", "default_chapter": "系统功能设计"},
+    "system_architecture": {"label": "系统架构", "default_chapter": "总体技术架构"},
+    "security_requirement": {"label": "安全要求", "default_chapter": "数据安全方案"},
+    "performance_requirement": {"label": "性能要求", "default_chapter": "总体技术架构"},
+    "implementation_requirement": {"label": "实施要求", "default_chapter": "实施计划"},
+    "project_management": {"label": "项目管理", "default_chapter": "项目组织管理"},
+    "operation_maintenance": {"label": "运维要求", "default_chapter": "运维保障方案"},
+    "training_requirement": {"label": "培训要求", "default_chapter": "培训方案"},
+    "delivery_requirement": {"label": "交付要求", "default_chapter": "实施计划"},
+    "commercial_requirement": {"label": "商务要求", "default_chapter": null},
+    "qualification_requirement": {"label": "资格要求", "default_chapter": null},
+    "scoring_requirement": {"label": "评分要求", "default_chapter": "技术评分点响应"},
+    "other": {"label": "其他", "default_chapter": null}
+  },
+  "classifiers": [
+    {"type": "qualification_requirement", "keywords": ["不得存在失信", "失信情况", "资格条件", "资质证书", "法定代表人", "营业执照", "履行合同所必须的设备和专业技术能力", "履行合同所必需的设备和专业技术能力", "工程咨询单位名录中备案"], "chapter": null, "need_generation": false, "priority": 110, "enforcement": "hard_exclusion"},
+    {"type": "project_management", "keywords": ["主要人员情况表", "项目负责人情况表", "项目团队情况表"], "chapter": "项目组织管理", "need_generation": true, "priority": 109},
+    {"type": "implementation_requirement", "keywords": ["服务方案（格式14）", "服务方案(格式14)", "重点难点分析", "服务质量保证"], "chapter": "实施方案与质量保障", "need_generation": true, "priority": 109},
+    {"type": "technical_capability", "keywords": ["编制地方政府专项债券实施方案", "编制本项目的可行性研究报告", "申报地方政府专项债券项目提供指导和服务", "申报地方政府专项债项目提供指导和服务", "协调律师事务所", "协调会计师事务所"], "chapter": "服务范围与工作内容", "need_generation": true, "priority": 109},
+    {"type": "other", "keywords": ["供应商简介", "供应商基本情况表", "服务要求应答表", "更正公告", "若需提供样品", "纸质文档一式", "电子文档1份", "品名、规格型号、数量、详细参数"], "chapter": null, "need_generation": false, "priority": 108, "enforcement": "hard_exclusion"},
+    {"type": "implementation_requirement", "keywords": ["180日历天", "实施周期", "服务期限", "工期", "进度安排"], "chapter": "实施计划", "need_generation": true, "priority": 107},
+    {"type": "delivery_requirement", "keywords": ["作为成果之一", "全部成果资料", "成果清单"], "chapter": "成果交付与验收", "need_generation": true, "priority": 106},
+    {"type": "other", "keywords": ["目录格式", "章节顺序", "编制格式", "字体", "字号", "行距", "页数", "字数", "装订", "签章"], "chapter": null, "need_generation": false, "priority": 98, "enforcement": "hard_exclusion"},
+    {"type": "commercial_requirement", "keywords": ["报价", "付款", "保证金", "合同价", "发票", "密封"], "chapter": null, "need_generation": false, "priority": 95, "enforcement": "hard_exclusion"},
+    {"type": "scoring_requirement", "keywords": ["评分", "得分", "加分", "分值"], "chapter": "技术评分点响应", "need_generation": true, "priority": 90},
+    {"type": "training_requirement", "keywords": ["培训", "授课", "培训教材"], "chapter": "培训方案", "need_generation": true, "priority": 88},
+    {"type": "operation_maintenance", "keywords": ["运维", "维护", "售后", "7×24", "7*24", "响应时间", "故障处理"], "chapter": "运维保障方案", "need_generation": true, "priority": 86},
+    {"type": "functional_requirement", "keywords": ["功能", "支持用户", "用户管理", "模块", "查询", "统计", "展示"], "exclude_keywords": ["公告", "响应文件", "供应商"], "chapter": "系统功能设计", "need_generation": true, "priority": 85},
+    {"type": "security_requirement", "keywords": ["安全", "权限控制", "日志审计", "等保", "加密", "备份", "容灾"], "chapter": "数据安全方案", "need_generation": true, "priority": 84},
+    {"type": "system_architecture", "keywords": ["架构", "平台", "技术路线", "系统设计", "国产化数据库", "部署架构"], "exclude_keywords": ["名录", "备案", "审批监管平台"], "chapter": "总体技术架构", "need_generation": true, "priority": 82},
+    {"type": "performance_requirement", "keywords": ["并发", "吞吐", "响应时间", "性能", "可用性"], "exclude_keywords": ["样品", "承诺函"], "chapter": "总体技术架构", "need_generation": true, "priority": 80},
+    {"type": "project_management", "keywords": ["项目经理", "项目团队", "人员配置", "组织管理", "沟通机制"], "chapter": "项目组织管理", "need_generation": true, "priority": 78},
+    {"type": "implementation_requirement", "keywords": ["实施周期", "服务期限", "工期", "进度", "上线", "部署", "实施计划"], "chapter": "实施计划", "need_generation": true, "priority": 76},
+    {"type": "delivery_requirement", "keywords": ["交付", "验收", "成果文件", "提交成果"], "chapter": "实施计划", "need_generation": true, "priority": 74},
+    {"type": "technical_capability", "keywords": ["技术能力", "兼容", "接口", "集成", "技术要求"], "chapter": "技术路线", "need_generation": true, "priority": 70}
+  ],
+  "context_profiles": {
+    "consulting_service": {
+      "project_keywords": ["咨询", "规划", "可研", "研究报告", "评估", "策划"],
+      "software_explicit_keywords": ["软件开发", "信息系统", "系统建设", "平台建设", "用户管理", "权限控制", "接口开发", "数据库", "部署架构", "日志审计"],
+      "overrides": {
+        "functional_requirement": {
+          "type": "technical_capability",
+          "chapter": "服务范围与工作内容"
+        },
+        "system_architecture": {
+          "type": "technical_capability",
+          "chapter": "技术路线"
+        },
+        "performance_requirement": {
+          "type": "implementation_requirement",
+          "chapter": "实施方案与质量保障"
+        }
+      }
+    }
+  },
+  "chapter_mapping": {
+    "项目理解": ["项目背景", "建设目标", "需求理解"],
+    "服务范围与工作内容": ["technical_capability", "咨询服务", "工作范围"],
+    "实施方案与质量保障": ["implementation_requirement", "重点难点", "质量保证"],
+    "成果交付与验收": ["delivery_requirement", "成果文件", "验收"],
+    "总体技术架构": ["system_architecture", "performance_requirement"],
+    "系统功能设计": ["functional_requirement"],
+    "技术路线": ["technical_capability"],
+    "数据安全方案": ["security_requirement"],
+    "实施计划": ["implementation_requirement", "delivery_requirement"],
+    "项目组织管理": ["project_management"],
+    "运维保障方案": ["operation_maintenance"],
+    "培训方案": ["training_requirement"],
+    "服务承诺": ["服务承诺"],
+    "技术评分点响应": ["scoring_requirement"]
+  },
+  "scoring_keywords": {
+    "high_score_item": ["重点评分", "满分", "最高得分", "分值"],
+    "medium_score_item": ["评分", "得分", "加分"]
+  },
+  "importance_keywords": {
+    "critical": ["必须", "不得", "否决", "废标", "实质性"],
+    "high": ["应当", "须", "关键", "重点"],
+    "medium": ["应", "需要", "要求"]
+  },
+  "knowledge_keywords": ["企业", "资质", "案例", "经验", "团队", "产品能力", "技术能力"],
+  "high_confidence_threshold": 0.8,
+  "low_confidence_threshold": 0.6,
+  "output_schema": {
+    "classifications": [{
+      "source_ref": "R1",
+      "requirement_type": "functional_requirement",
+      "proposal_chapter": "系统功能设计",
+      "scoring_relation": "requirement_only",
+      "importance": "high",
+      "confidence": 0.9,
+      "knowledge_support_required": false,
+      "rationale": "简短、面向方案用途的理由"
+    }]
+  }
+}

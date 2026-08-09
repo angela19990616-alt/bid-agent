@@ -22,7 +22,7 @@ class LLMFactory:
         if not model:
             raise ValueError("LLM model is missing")
 
-        if provider == "dashscope":
+        if provider in {"dashscope", "openai"}:
             return {
                 "provider": provider,
                 "model": model,

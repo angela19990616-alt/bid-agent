@@ -1,0 +1,81 @@
+{
+  "key": "default-writing",
+  "rule_type": "writing",
+  "version": 7,
+  "name": "技术方案写作规则",
+  "description": "控制目录、章节写作、企业知识引用和事实边界。",
+  "chapter_order": [
+    "项目理解与总体思路",
+    "服务范围与工作内容",
+    "实施计划与进度安排",
+    "项目组织与人员配置",
+    "质量保障与验收方案",
+    "培训方案",
+    "运维与持续服务",
+    "技术评分点响应"
+  ],
+  "policies": {
+    "must_cite_requirement": true,
+    "must_match_knowledge_before_writing": true,
+    "must_cite_enterprise_knowledge_when_used": true,
+    "evidence_only_writing": true,
+    "allow_plausible_but_unprovided_details": false,
+    "allow_historical_cases": "only_when_verified_enterprise_fact_is_true",
+    "allow_unverified_qualification": false,
+    "allow_invented_capability": false,
+    "missing_fact_placeholder": "【待补充：需要的企业事实】",
+    "target_length_chars": {"min": 800, "max": 5000},
+    "max_repetition_ratio": 0.25,
+    "terminology_consistency": true,
+    "paragraph_source_tracking": true,
+    "formal_plain_language": true,
+    "forbid_markdown_decorations": true,
+    "forbid_emoji": true,
+    "forbid_internal_identifiers": true
+  },
+  "prompt_budget": {
+    "max_input_chars": 24000,
+    "requirements_chars": 9000,
+    "knowledge_chars": 5500,
+    "format_constraints_chars": 2200,
+    "proposal_memory_chars": 2200,
+    "generation_instruction_chars": 1000,
+    "minimum_chars_per_item": 120
+  },
+  "format_constraint_policy": {
+    "apply_before_chapter_writing": true,
+    "hard_constraints_override_default_style": true,
+    "never_invent_missing_format_values": true,
+    "manual_only_items": ["签章", "盖章", "装订", "密封"],
+    "instruction": "逐项遵守输入中的招标文件硬性格式与必写内容。仅应用原文明示的约束；没有明确数值时不得猜测字体、字号、页数或字数。"
+  },
+  "historical_case_modes": {
+    "balanced": "综合参考多个相似案例的结构和表达，不复制旧项目事实。",
+    "closest_case": "优先贴近最相似历史案例的结构、颗粒度和论证方式，但必须改写为当前项目。",
+    "structure_only": "历史案例仅用于章节结构和分析维度，不参考正文措辞。",
+    "current_only": "不使用历史案例，只依据当前采购文件和已核验企业知识生成。"
+  },
+  "knowledge_category_policy": {
+    "company_profile": "仅可陈述知识正文中明确记录的事实",
+    "qualification": "仅当 metadata.verified_enterprise_fact=true 时可作为企业资质",
+    "product_capability": "仅当 metadata.verified_enterprise_fact=true 时可作为产品能力",
+    "technical_capability": "仅当 metadata.verified_enterprise_fact=true 时可作为技术能力",
+    "case_study": "仅当 metadata.verified_enterprise_fact=true 时可作为本企业案例",
+    "standard_template": "仅可参考结构与表达，不得继承事实",
+    "expert_experience": "仅可引用已明确授权且可核验的经验",
+    "historical_bid": "仅可参考结构、术语和响应方法，不得当作本企业案例、资质或能力",
+    "common_chapter": "仅可参考章节结构，不得继承事实"
+  },
+  "chapter_styles": {
+    "项目理解与总体思路": "先解释目标与难点，再给出总体方法和闭环。",
+    "服务范围与工作内容": "按工作包说明输入、动作、成果和责任边界。",
+    "实施计划与进度安排": "根据采购文件已有阶段和时间依据，自然说明主要工作、时间安排与阶段成果；没有依据时不得补写日期、时限、机构或责任边界。",
+    "项目组织与人员配置": "说明角色、职责和协作机制；不得虚构人员姓名或履历。",
+    "质量保障与验收方案": "说明质量门禁、检查方法、证据和验收响应。",
+    "培训方案": "说明对象、内容、形式、计划与效果评估。",
+    "运维与持续服务": "说明服务机制、响应流程、持续改进和可核验记录。",
+    "技术评分点响应": "逐项对应评分点，突出可核验响应，不虚构得分依据。"
+  },
+  "model_instruction": "你是 Chapter Writer。写作前已完成规则加载、企业知识匹配和方案记忆匹配。只能使用输入中的采购要求证据与已匹配企业知识证明事实；Proposal Memory 只能参考章节结构、分析维度和表达方法，不得证明企业能力，不得复制历史事实或正文。不得自行搜索或虚构事实，不得用行业惯例猜测。严禁补写输入中未出现的政策名称、政府部门、时间承诺、合同条款、交付数量、企业资质、案例、人员、机构、责任边界或顺延机制。使用正式、克制、自然的中文投标文件语言，不使用 Emoji、箭头、对勾、星号装饰，不机械重复完全相同的小节模板，不堆叠口号化承诺。无法确认的事实不写入正文，留给 Proposal Review 列为待确认风险。正文只输出人类可直接阅读的方案内容，不得复述“Requirements”“Matched Knowledge”“Proposal Memory”“规范描述”“原文证据”等 Prompt 标签，不得输出“（要求编号）”、内部 UUID、数据库字段或置信度。",
+  "user_template": "撰写章节《{section_title}》。遵守写作规则中的章节风格、事实边界和篇幅要求。逐项响应 Requirements；企业事实只能来自 Matched Knowledge。"
+}

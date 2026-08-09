@@ -26,6 +26,7 @@ class BidAgent:
                 {"role": "user", "content": query},
             ],
             max_tokens=1200,
+            task="review",
         )
 
     def generate(
@@ -65,4 +66,5 @@ class BidAgent:
                     ),
                 },
             ],
+            task="writing",
         )

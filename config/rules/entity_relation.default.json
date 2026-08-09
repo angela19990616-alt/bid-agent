@@ -1,0 +1,110 @@
+{
+  "key": "default-entity-relation",
+  "rule_type": "entity_relation",
+  "version": 1,
+  "name": "招标响应实体关系规则",
+  "description": "把响应事项拆成实体、关系、动作、材料和约束；签字盖章属于动作或约束，不作为核心实体。",
+  "entity_definitions": {
+    "supplier": {"type": "organization_role", "label": "投标人", "aliases": ["供应商", "投标人", "响应人", "报价人"]},
+    "purchaser": {"type": "organization_role", "label": "采购人", "aliases": ["采购人", "招标人", "委托人"]},
+    "legal_representative": {"type": "person_role", "label": "法定代表人", "aliases": ["法定代表人", "法定代表", "法人代表", "法人"]},
+    "authorized_representative": {"type": "person_role", "label": "授权代表", "aliases": ["授权代表", "委托代理人", "被授权人", "受托人"]},
+    "project_manager": {"type": "person_role", "label": "项目负责人", "aliases": ["项目负责人", "项目经理"]},
+    "project_member": {"type": "person_role", "label": "项目组成员", "aliases": ["项目组成员", "项目成员", "团队成员"]},
+    "authorization_letter": {"type": "evidence_material", "label": "授权委托书", "aliases": ["授权委托书", "授权书", "委托书"]},
+    "identity_proof": {"type": "evidence_material", "label": "身份证明材料", "aliases": ["身份证明书", "身份证明", "身份证复印件", "身份证扫描件"]},
+    "business_license": {"type": "evidence_material", "label": "营业执照", "aliases": ["营业执照", "营业执照副本"]},
+    "social_security_proof": {"type": "evidence_material", "label": "社保证明", "aliases": ["社保证明", "社会保险证明", "社保缴纳证明"]},
+    "qualification_certificate": {"type": "evidence_material", "label": "资格证书", "aliases": ["资格证书", "职业资格证书", "注册证书"]},
+    "performance_contract": {"type": "evidence_material", "label": "业绩合同", "aliases": ["合同首尾页", "合同扫描件", "业绩合同"]},
+    "performance_proof": {"type": "evidence_material", "label": "业绩证明材料", "aliases": ["业绩证明表", "项目评价函", "中标通知书"]}
+  },
+  "credential_definitions": {
+    "consulting_engineer": {"label": "咨询工程师", "aliases": ["咨询工程师"]},
+    "certified_public_accountant": {"label": "注册会计师", "aliases": ["注册会计师"]},
+    "cost_engineer": {"label": "一级造价工程师", "aliases": ["一级造价工程师"]},
+    "constructor": {"label": "一级建造师", "aliases": ["一级建造师"]},
+    "legal_qualification": {"label": "法律职业资格", "aliases": ["法律职业资格"]}
+  },
+  "action_definitions": [
+    {"key": "provide", "label": "提供", "keywords": ["提供", "提交", "附上", "随附", "出具"]},
+    {"key": "fill", "label": "填写", "keywords": ["填写", "填报", "列明"]},
+    {"key": "sign", "label": "签字", "keywords": ["签字", "签名", "签署"]},
+    {"key": "stamp", "label": "盖章", "keywords": ["盖章", "加盖公章", "公章"]},
+    {"key": "commit", "label": "承诺", "keywords": ["承诺", "声明", "保证"]},
+    {"key": "perform", "label": "履行", "keywords": ["实施", "完成", "履行", "负责"]},
+    {"key": "prohibit", "label": "不得实施", "keywords": ["不得", "禁止", "不允许"]}
+  ],
+  "relation_rules": [
+    {
+      "key": "legal_representative_represents_supplier",
+      "trigger_any": ["法定代表人", "法定代表", "法人代表", "法人"],
+      "subject": "legal_representative",
+      "predicate": "represents",
+      "predicate_label": "代表",
+      "object": "supplier",
+      "focus_priority": 70
+    },
+    {
+      "key": "authorized_representative_authorized_by_supplier",
+      "trigger_any": ["授权代表", "委托代理人", "被授权人", "受托人", "授权委托书"],
+      "subject": "authorized_representative",
+      "predicate": "authorized_by",
+      "predicate_label": "受权于",
+      "object": "supplier",
+      "focus_priority": 100
+    },
+    {
+      "key": "authorization_letter_proves_authorization",
+      "trigger_any": ["授权委托书", "授权书", "委托书"],
+      "subject": "authorization_letter",
+      "predicate": "proves_authorization_of",
+      "predicate_label": "证明授权关系",
+      "object": "authorized_representative",
+      "focus_priority": 95
+    },
+    {
+      "key": "legal_identity_proof",
+      "trigger_all": ["法定代表人", "身份证明"],
+      "subject": "identity_proof",
+      "predicate": "proves_identity_of",
+      "predicate_label": "证明身份",
+      "object": "legal_representative",
+      "focus_priority": 110
+    },
+    {
+      "key": "authorized_identity_proof",
+      "trigger_groups": [["授权代表", "委托代理人", "被授权人", "受托人", "授权委托书"], ["身份证"]],
+      "subject": "identity_proof",
+      "predicate": "proves_identity_of",
+      "predicate_label": "证明身份",
+      "object": "authorized_representative",
+      "focus_priority": 110
+    },
+    {
+      "key": "member_social_security",
+      "trigger_groups": [["项目负责人", "项目经理", "项目组成员", "项目成员"], ["社保", "社会保险"]],
+      "subject": "social_security_proof",
+      "predicate": "proves_employment_of",
+      "predicate_label": "证明任职关系",
+      "object": "project_member",
+      "focus_priority": 105
+    }
+  ],
+  "generic_relations": {
+    "material_action_predicate": "must_provide",
+    "material_action_label": "须提供",
+    "actor_action_predicate": "must_perform",
+    "actor_action_label": "须执行"
+  },
+  "focus_policy": {
+    "prefer_relation_over_action": true,
+    "entity_type_order": ["person_role", "credential", "evidence_material", "organization_role"]
+  },
+  "output_policy": {
+    "source_only": true,
+    "do_not_infer_missing_names": true,
+    "actions_are_not_entities": true,
+    "unresolved_entities_require_review": true
+  }
+}

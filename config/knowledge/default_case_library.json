@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "library_key": "dayue-five-case-demo",
+  "name": "大岳五案例示例库",
+  "purpose": "historical_proposal_reference",
+  "organization_key": "default",
+  "permission_scope": "organization_private",
+  "fact_usage": "prohibited",
+  "cases": [
+    {"case_id": "case-01", "project_type": "招标代理服务", "active": true},
+    {"case_id": "case-02", "project_type": "投融资咨询", "active": true},
+    {"case_id": "case-03", "project_type": "绩效评价", "active": true},
+    {"case_id": "case-04", "project_type": "规划咨询", "active": true},
+    {"case_id": "case-05", "project_type": "专项债券咨询", "active": true}
+  ]
+}

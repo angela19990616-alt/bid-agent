@@ -2,11 +2,16 @@
 .env
 .env.*
 !.env.example
-.codex/
+.codex/*
+!.codex/config.toml
+!.codex/agents/
+!.codex/agents/*.toml
 
 # Python
 .venv/
 .venv-*/
+.testdeps/
+.recovery-source/
 .git-corrupt-backup/
 venv/
 __pycache__/
@@ -23,15 +28,26 @@ uploads/
 exports/
 database/历史案例（投标文件）/
 database/输入（招标文件）/
+database/私有案例/
+database/*.local.json
+acceptance_samples/*
+!acceptance_samples/.gitkeep
+acceptance_reports/
+backups/
 
 # Coverage and build artifacts
 .coverage
 htmlcov/
 build/
+!frontend/build/
+!frontend/build/sites-vite-plugin.ts
 dist/
+*.tsbuildinfo
 
 # Editors and operating systems
 .DS_Store
 .idea/
 .vscode/
 *.swp
+artifacts/qa/
+.codex-qa/

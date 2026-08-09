@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -26,3 +27,37 @@ class SearchResultResponse(BaseModel):
     similarity: float
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+
+class ProjectDocumentResponse(BaseModel):
+    id: UUID
+    project_id: UUID
+    filename: str
+    content_type: str | None
+    size_bytes: int
+    status: str
+    error_code: str | None = None
+    error_message: str | None = None
+    source_count: int
+    validation_status: str = "pending"
+    validation_score: float | None = None
+    validation_reason: str | None = None
+    knowledge_status: str = "pending"
+    knowledge_scope: str = "organization_private"
+    created_at: datetime
+    updated_at: datetime
+    job_id: UUID | None = None
+
+
+class SourceLocatorResponse(BaseModel):
+    kind: str
+    page: int | None = None
+    paragraph_start: int | None = None
+    paragraph_end: int | None = None
+
+
+class SourceResponse(BaseModel):
+    id: UUID
+    document_id: UUID
+    filename: str
+    locator: SourceLocatorResponse
+    text: str

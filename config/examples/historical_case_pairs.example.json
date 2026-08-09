@@ -1,0 +1,39 @@
+{
+  "pairs": [
+    {
+      "tender": "case-01/tender.docx",
+      "winning_proposal": "case-01/winning-proposal.docx",
+      "project_type": "咨询服务",
+      "industry": "示例行业",
+      "quality_score": 0.85
+    },
+    {
+      "tender": "case-02/tender.docx",
+      "winning_proposal": "case-02/winning-proposal.docx",
+      "project_type": "咨询服务",
+      "industry": "示例行业",
+      "quality_score": 0.85
+    },
+    {
+      "tender": "case-03/tender.docx",
+      "winning_proposal": "case-03/winning-proposal.docx",
+      "project_type": "咨询服务",
+      "industry": "示例行业",
+      "quality_score": 0.85
+    },
+    {
+      "tender": "case-04/tender.docx",
+      "winning_proposal": "case-04/winning-proposal.docx",
+      "project_type": "咨询服务",
+      "industry": "示例行业",
+      "quality_score": 0.85
+    },
+    {
+      "tender": "case-05/tender.docx",
+      "winning_proposal": "case-05/winning-proposal.docx",
+      "project_type": "咨询服务",
+      "industry": "示例行业",
+      "quality_score": 0.85
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "version": "1.0.0",
+  "name": "投标文件业务变量字典",
+  "source_priority": [
+    "current_tender",
+    "verified_entity_registry",
+    "verified_enterprise_fact",
+    "reviewed_project_binding",
+    "historical_case_reference"
+  ],
+  "variables": [
+    {
+      "variable_key": "project.name",
+      "standard_name": "项目名称",
+      "aliases": ["project_name", "项目名称", "采购项目名称", "招标项目名称"],
+      "semantic_field": "project.name",
+      "target_entity_type": "Project",
+      "target_relation": "CURRENT_PROJECT",
+      "expected_value_type": "project_name"
+    },
+    {
+      "variable_key": "project.number",
+      "standard_name": "项目编号",
+      "aliases": ["project_number", "项目编号", "采购编号", "招标编号"],
+      "semantic_field": "project.number",
+      "target_entity_type": "Project",
+      "target_relation": "CURRENT_PROJECT",
+      "expected_value_type": "project_identifier"
+    },
+    {
+      "variable_key": "project.reference",
+      "standard_name": "项目名称及编号",
+      "aliases": ["project_reference", "项目名称及编号"],
+      "semantic_field": "project.reference",
+      "target_entity_type": "Project",
+      "target_relation": "CURRENT_PROJECT",
+      "expected_value_type": "project_reference"
+    },
+    {
+      "variable_key": "organization.bidder.full_name",
+      "standard_name": "投标人名称",
+      "aliases": ["bidder_name", "投标人名称", "供应商名称", "响应人名称", "企业名称"],
+      "semantic_field": "organization.full_name",
+      "target_entity_type": "Organization",
+      "target_relation": "BIDDER_ORGANIZATION",
+      "expected_value_type": "organization_name"
+    },
+    {
+      "variable_key": "organization.bidder.registered_address",
+      "standard_name": "投标人注册地址",
+      "aliases": ["registered_address", "注册地址", "投标人地址", "供应商地址"],
+      "semantic_field": "organization.registered_address",
+      "target_entity_type": "Organization",
+      "target_relation": "BIDDER_ORGANIZATION",
+      "expected_value_type": "address"
+    },
+    {
+      "variable_key": "organization.bidder.postal_code",
+      "standard_name": "投标人邮政编码",
+      "aliases": ["postal_code", "邮政编码"],
+      "semantic_field": "organization.postal_code",
+      "target_entity_type": "Organization",
+      "target_relation": "BIDDER_ORGANIZATION",
+      "expected_value_type": "postal_code"
+    },
+    {
+      "variable_key": "organization.bidder.fax",
+      "standard_name": "投标人传真",
+      "aliases": ["fax", "传真"],
+      "semantic_field": "organization.fax",
+      "target_entity_type": "Organization",
+      "target_relation": "BIDDER_ORGANIZATION",
+      "expected_value_type": "phone"
+    },
+    {
+      "variable_key": "organization.bidder.website",
+      "standard_name": "投标人网站",
+      "aliases": ["website", "网址", "网站"],
+      "semantic_field": "organization.website",
+      "target_entity_type": "Organization",
+      "target_relation": "BIDDER_ORGANIZATION",
+      "expected_value_type": "website"
+    },
+    {
+      "variable_key": "organization.bidder.qualification",
+      "standard_name": "投标人资质",
+      "aliases": ["enterprise_qualification", "企业资质", "资质等级"],
+      "semantic_field": "organization.qualification",
+      "target_entity_type": "Organization",
+      "target_relation": "BIDDER_ORGANIZATION",
+      "expected_value_type": "qualification"
+    },
+    {
+      "variable_key": "organization.bidder.bank_account",
+      "standard_name": "投标人银行账号",
+      "aliases": ["bank_account", "银行账号", "账号"],
+      "semantic_field": "organization.bank_account",
+      "target_entity_type": "Organization",
+      "target_relation": "BIDDER_ORGANIZATION",
+      "expected_value_type": "bank_account"
+    },
+    {
+      "variable_key": "bid_response.signing_date",
+      "standard_name": "投标文件签署日期",
+      "aliases": ["date", "bid_response_signing_date", "日期", "签署日期"],
+      "semantic_field": "bid_response.signing_date",
+      "target_entity_type": null,
+      "target_relation": "BID_RESPONSE_DOCUMENT",
+      "expected_value_type": "date"
+    },
+    {
+      "variable_key": "bid_response.bid_round",
+      "standard_name": "报价轮次",
+      "aliases": ["bid_round", "报价轮次"],
+      "semantic_field": "bid_response.bid_round",
+      "target_entity_type": null,
+      "target_relation": "BID_RESPONSE_DOCUMENT",
+      "expected_value_type": "bid_round"
+    }
+  ],
+  "person_role_scopes": {
+    "LEGAL_REPRESENTATIVE": {
+      "path": "organization.legal_representative",
+      "standard_name": "法定代表人"
+    },
+    "AUTHORIZED_REPRESENTATIVE": {
+      "path": "project.authorized_representative",
+      "standard_name": "本项目授权代表"
+    },
+    "PROJECT_MANAGER": {
+      "path": "project.project_manager",
+      "standard_name": "本项目项目负责人"
+    },
+    "TECHNICAL_LEAD": {
+      "path": "project.technical_lead",
+      "standard_name": "本项目技术负责人"
+    },
+    "CONTACT_PERSON": {
+      "path": "project.contact_person",
+      "standard_name": "本项目联系人"
+    },
+    "SIGNATORY": {
+      "path": "project.signatory",
+      "standard_name": "本项目签署人"
+    }
+  },
+  "person_attributes": {
+    "person.name": {"suffix": "name", "label": "姓名", "expected_value_type": "person_name"},
+    "person.id_number": {"suffix": "id_number", "label": "身份证号码", "expected_value_type": "identity_number"},
+    "person.title": {"suffix": "title", "label": "职务", "expected_value_type": "job_title"},
+    "person.professional_title": {"suffix": "professional_title", "label": "技术职称", "expected_value_type": "professional_title"},
+    "person.phone": {"suffix": "phone", "label": "联系电话", "expected_value_type": "phone"}
+  }
+}

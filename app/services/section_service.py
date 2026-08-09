@@ -1,0 +1,1039 @@
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from uuid import UUID, uuid4
+
+from psycopg.rows import dict_row
+
+from app.core.model_client import ModelClient
+from app.core.model_routing import ModelRoutingRules
+from app.database.db import connect
+from app.knowledge.engine import (
+    EnterpriseKnowledgeEngine,
+    KnowledgeMatch,
+    KnowledgeMatchRepository,
+)
+from app.memory.engine import (
+    ProposalMemoryEngine,
+    ProposalMemoryMatch,
+)
+from app.rules.engine import RuleDocument, RuleEngine
+from app.services.model_budget_service import (
+    ModelBudgetExceeded,
+    ModelBudgetService,
+)
+from app.services.provenance_service import ProvenanceService
+from app.workflows.controlled_pipeline import ControlledPipeline
+
+
+class SectionNotFoundError(Exception):
+    pass
+
+
+class SectionValidationError(Exception):
+    pass
+
+
+class SectionVersionConflictError(Exception):
+    pass
+
+
+class SectionGenerationError(Exception):
+    def __init__(self, job_id: UUID, message: str):
+        super().__init__(message)
+        self.job_id = job_id
+
+
+@dataclass(frozen=True)
+class ReviewFinding:
+    finding_type: str
+    severity: str
+    message: str
+
+
+class SectionService:
+    def __init__(
+        self,
+        model_client: ModelClient | None = None,
+        rule_engine: RuleEngine | None = None,
+        knowledge_engine: EnterpriseKnowledgeEngine | None = None,
+        proposal_memory_engine: ProposalMemoryEngine | None = None,
+    ):
+        self.model_client = model_client
+        self.rule_engine = rule_engine or RuleEngine()
+        self.knowledge_engine = (
+            knowledge_engine or EnterpriseKnowledgeEngine()
+        )
+        self.proposal_memory_engine = (
+            proposal_memory_engine or ProposalMemoryEngine()
+        )
+
+    def create(
+        self,
+        project_id: UUID,
+        title: str,
+        requirement_ids: list[UUID],
+    ) -> dict:
+        unique_ids = list(dict.fromkeys(requirement_ids))
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM requirements
+                    WHERE project_id = %s
+                      AND id = ANY(%s)
+                      AND status <> 'rejected'
+                      AND response_action = 'write_into_proposal'
+                      AND proposal_relevance = TRUE
+                      AND target_chapter IS NOT NULL
+                      AND need_generation = TRUE
+                    """,
+                    (project_id, unique_ids),
+                )
+                eligible = {row["id"] for row in cursor.fetchall()}
+                if eligible != set(unique_ids):
+                    raise SectionValidationError(
+                        "章节只能关联当前项目中与技术方案相关的要求。"
+                    )
+                cursor.execute(
+                    """
+                    INSERT INTO sections (project_id, title)
+                    VALUES (%s, %s)
+                    RETURNING id
+                    """,
+                    (project_id, title.strip()),
+                )
+                section_id = cursor.fetchone()["id"]
+                cursor.executemany(
+                    """
+                    INSERT INTO section_requirements (
+                        section_id, requirement_id
+                    )
+                    VALUES (%s, %s)
+                    """,
+                    [(section_id, item) for item in unique_ids],
+                )
+                cursor.execute(
+                    """
+                    UPDATE projects
+                    SET status = 'writing', updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (project_id,),
+                )
+        return self.get(project_id, section_id)
+
+    def list(self, project_id: UUID) -> list[dict]:
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM sections
+                    WHERE project_id = %s
+                      AND EXISTS (
+                          SELECT 1
+                          FROM section_requirements
+                          JOIN requirements
+                            ON requirements.id =
+                               section_requirements.requirement_id
+                          WHERE section_requirements.section_id = sections.id
+                            AND requirements.status <> 'rejected'
+                            AND requirements.need_generation = TRUE
+                      )
+                    ORDER BY sort_order ASC, created_at ASC
+                    """,
+                    (project_id,),
+                )
+                section_ids = [row[0] for row in cursor.fetchall()]
+        return [self.get(project_id, item) for item in section_ids]
+
+    def generate(
+        self,
+        project_id: UUID,
+        section_id: UUID,
+        generation_instruction: str | None = None,
+        case_reference_mode: str = "balanced",
+        min_chars: int = 800,
+        max_chars: int = 5000,
+    ) -> dict:
+        if min_chars > max_chars:
+            raise SectionValidationError("章节最少字数不能大于最多字数。")
+        section, requirements = self._load_generation_input(
+            project_id,
+            section_id,
+        )
+        pipeline = ControlledPipeline()
+        workflow_run_id = pipeline.start(
+            project_id,
+            initial_stage="load_enterprise_knowledge",
+        )
+        routing_rules = ModelRoutingRules.load()
+        ModelBudgetService.configure_limits(
+            workflow_run_id,
+            call_limit=routing_rules.max_attempts,
+            token_limit=180000,
+        )
+        access_context = self.knowledge_engine.access_context(project_id)
+        matches = self.knowledge_engine.match(
+            section_title=section["title"],
+            requirements=requirements,
+            exclude_document_ids=set(section["document_ids"]),
+            exclude_project_id=project_id,
+            access_context=access_context,
+        )
+        if case_reference_mode == "current_only":
+            matches = [
+                item for item in matches
+                if item.category not in {"historical_bid", "case_study"}
+            ]
+        elif case_reference_mode == "structure_only":
+            matches = [
+                item for item in matches
+                if item.category not in {"historical_bid", "case_study"}
+            ]
+        elif case_reference_mode == "closest_case":
+            matches = sorted(
+                matches,
+                key=lambda item: (
+                    item.category not in {"historical_bid", "case_study"},
+                    -item.score,
+                ),
+            )
+        KnowledgeMatchRepository.save(
+            workflow_run_id, section_id, requirements, matches
+        )
+        pipeline.record(
+            workflow_run_id,
+            "knowledge_matching",
+            knowledge_snapshot=[item.snapshot() for item in matches],
+            details={"match_count": len(matches)},
+        )
+        memory_rules = self.rule_engine.load("proposal_memory")
+        pipeline.record(
+            workflow_run_id,
+            "load_proposal_memory",
+            rule_snapshot=memory_rules.snapshot(),
+        )
+        memory_matches = self.proposal_memory_engine.match(
+            access_context=access_context,
+            section_title=section["title"],
+            requirements=requirements,
+            limit=int(
+                memory_rules.content["usage"]["max_matches"]
+            ),
+        )
+        if case_reference_mode == "current_only":
+            memory_matches = []
+        pipeline.record(
+            workflow_run_id,
+            "proposal_memory_matching",
+            knowledge_snapshot=[
+                item.snapshot() for item in memory_matches
+            ],
+            details={"match_count": len(memory_matches)},
+        )
+        writing_rules = self.rule_engine.load("writing")
+        pipeline.record(
+            workflow_run_id,
+            "load_writing_rules",
+            rule_snapshot=writing_rules.snapshot(),
+        )
+        job_id = uuid4()
+        snapshot = {
+            "section_id": str(section_id),
+            "title": section["title"],
+            "requirements": [
+                {
+                    "id": str(item["id"]),
+                    "text": item["normalized_text"],
+                    "quote": item["quote"],
+                }
+                for item in requirements
+            ],
+            "writing_rule": writing_rules.snapshot(),
+            "knowledge_matches": [item.snapshot() for item in matches],
+            "proposal_memory": [
+                item.snapshot() for item in memory_matches
+            ],
+            "generation_instruction": (
+                generation_instruction.strip()
+                if generation_instruction
+                else None
+            ),
+            "case_reference_mode": case_reference_mode,
+            "length_constraint": {
+                "min_chars": min_chars,
+                "max_chars": max_chars,
+            },
+            "format_constraints": section["format_constraints"],
+        }
+        self._create_job(
+            project_id, job_id, snapshot, workflow_run_id
+        )
+        pipeline.record(workflow_run_id, "chapter_writer")
+        try:
+            client = self.model_client or ModelClient()
+            content = client.chat(
+                self._messages(
+                    section["title"],
+                    requirements,
+                    matches,
+                    writing_rules,
+                    generation_instruction,
+                    section["format_constraints"],
+                    memory_matches=memory_matches,
+                    case_reference_mode=case_reference_mode,
+                    min_chars=min_chars,
+                    max_chars=max_chars,
+                ),
+                temperature=0.2,
+                max_tokens=min(8000, max(5000, int(max_chars * 0.8))),
+                task="writing",
+                workflow_run_id=workflow_run_id,
+            ).strip()
+            content = self.sanitize_generated_content(content)
+            if not content:
+                raise RuntimeError("模型返回空内容")
+        except Exception as exc:
+            self._fail_job(job_id, section_id, type(exc).__name__)
+            pipeline.fail(
+                workflow_run_id,
+                type(exc).__name__,
+                str(exc),
+            )
+            message = (
+                str(exc)
+                if isinstance(exc, ModelBudgetExceeded)
+                else "章节生成失败，请检查模型配置或稍后重试。"
+            )
+            raise SectionGenerationError(
+                job_id,
+                message,
+            ) from exc
+
+        compliance_rules = self.rule_engine.load("compliance")
+        pipeline.record(
+            workflow_run_id,
+            "chapter_review",
+            rule_snapshot=compliance_rules.snapshot(),
+        )
+        findings = self.review(content, compliance_rules)
+        findings.extend(
+            self.review_length(content, min_chars, max_chars)
+        )
+        provenance, case_usage = ProvenanceService.build(
+            section_title=section["title"],
+            content=content,
+            requirements=requirements,
+            matches=matches,
+        )
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version
+                    FROM section_versions
+                    WHERE section_id = %s
+                    """,
+                    (section_id,),
+                )
+                version_no = cursor.fetchone()["next_version"]
+                cursor.execute(
+                    """
+                    INSERT INTO section_versions (
+                        section_id, version_no, content, origin,
+                        input_snapshot, rule_snapshot, knowledge_snapshot,
+                        memory_snapshot
+                    )
+                    VALUES (
+                        %s, %s, %s, 'generated', %s::jsonb,
+                        %s::jsonb, %s::jsonb, %s::jsonb
+                    )
+                    RETURNING id
+                    """,
+                    (
+                        section_id,
+                        version_no,
+                        content,
+                        json.dumps(snapshot, ensure_ascii=False),
+                        json.dumps(
+                            {
+                                "writing": writing_rules.snapshot(),
+                                "compliance": compliance_rules.snapshot(),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            [item.snapshot() for item in matches],
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            [
+                                item.snapshot()
+                                for item in memory_matches
+                            ],
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+                version_id = cursor.fetchone()["id"]
+                self._insert_findings(cursor, version_id, findings)
+                cursor.execute(
+                    """
+                    UPDATE sections
+                    SET current_version_id = %s,
+                        status = 'generated',
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (version_id, section_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'succeeded', progress = 100,
+                        finished_at = NOW(), updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (job_id,),
+                )
+        ProvenanceService.persist(version_id, provenance, case_usage)
+        pipeline.succeed(workflow_run_id, "chapter_review")
+        result = self.get(project_id, section_id)
+        result["job_id"] = job_id
+        return result
+
+    def save_content(
+        self,
+        project_id: UUID,
+        section_id: UUID,
+        base_version_id: UUID,
+        content: str,
+    ) -> dict:
+        content = self.sanitize_generated_content(content)
+        if not content:
+            raise SectionValidationError("章节内容不能为空。")
+        compliance_rules = self.rule_engine.load("compliance")
+        pipeline = ControlledPipeline()
+        workflow_run_id = pipeline.latest(project_id)
+        pipeline.record(
+            workflow_run_id,
+            "chapter_review",
+            rule_snapshot=compliance_rules.snapshot(),
+            details={"origin": "edited"},
+        )
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        sections.current_version_id,
+                        sections.title,
+                        section_versions.rule_snapshot,
+                        section_versions.knowledge_snapshot,
+                        section_versions.memory_snapshot
+                    FROM sections
+                    LEFT JOIN section_versions
+                      ON section_versions.id = sections.current_version_id
+                    WHERE sections.project_id = %s
+                      AND sections.id = %s
+                    FOR UPDATE OF sections
+                    """,
+                    (project_id, section_id),
+                )
+                section = cursor.fetchone()
+                if section is None:
+                    raise SectionNotFoundError(str(section_id))
+                if section["current_version_id"] != base_version_id:
+                    raise SectionVersionConflictError(str(section_id))
+                provenance, case_usage = ProvenanceService.build(
+                    section_title=section.get("title")
+                    or "人工编辑章节",
+                    content=content,
+                    requirements=[],
+                    matches=[],
+                    origin="edited",
+                )
+                cursor.execute(
+                    """
+                    SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version
+                    FROM section_versions
+                    WHERE section_id = %s
+                    """,
+                    (section_id,),
+                )
+                version_no = cursor.fetchone()["next_version"]
+                cursor.execute(
+                    """
+                    INSERT INTO section_versions (
+                        section_id, version_no, content, origin,
+                        rule_snapshot, knowledge_snapshot, memory_snapshot
+                    )
+                    VALUES (%s, %s, %s, 'edited', %s::jsonb,
+                            %s::jsonb, %s::jsonb)
+                    RETURNING id
+                    """,
+                    (
+                        section_id,
+                        version_no,
+                        content.strip(),
+                        json.dumps(
+                            {
+                                **dict(section["rule_snapshot"] or {}),
+                                "compliance": (
+                                    compliance_rules.snapshot()
+                                ),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            section["knowledge_snapshot"] or [],
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            section.get("memory_snapshot") or [],
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+                version_id = cursor.fetchone()["id"]
+                self._insert_findings(
+                    cursor,
+                    version_id,
+                    self.review(
+                        content,
+                        compliance_rules,
+                    ),
+                )
+                cursor.execute(
+                    """
+                    UPDATE sections
+                    SET current_version_id = %s,
+                        status = 'edited',
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (version_id, section_id),
+                )
+        ProvenanceService.persist(version_id, provenance, case_usage)
+        return self.get(project_id, section_id)
+
+    def approve(self, project_id: UUID, section_id: UUID) -> dict:
+        section = self.get(project_id, section_id)
+        if section["current_version"] is None:
+            raise SectionValidationError("章节尚无可确认版本。")
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE sections
+                    SET status = 'approved', updated_at = NOW()
+                    WHERE project_id = %s AND id = %s
+                    """,
+                    (project_id, section_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE projects
+                    SET status = CASE
+                            WHEN NOT EXISTS (
+                                SELECT 1 FROM sections
+                                WHERE sections.project_id = projects.id
+                                  AND sections.status <> 'approved'
+                            ) THEN 'ready_to_export'
+                            ELSE 'writing'
+                        END,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (project_id,),
+                )
+        return self.get(project_id, section_id)
+
+    def get(self, project_id: UUID, section_id: UUID) -> dict:
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        sections.id, sections.project_id, sections.title,
+                        sections.status, sections.sort_order,
+                        sections.is_recommended, sections.created_at,
+                        sections.updated_at, sections.current_version_id,
+                        section_versions.version_no,
+                        section_versions.content,
+                        section_versions.origin,
+                        section_versions.created_at AS version_created_at
+                    FROM sections
+                    LEFT JOIN section_versions
+                        ON section_versions.id = sections.current_version_id
+                    WHERE sections.project_id = %s AND sections.id = %s
+                    """,
+                    (project_id, section_id),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise SectionNotFoundError(str(section_id))
+                cursor.execute(
+                    """
+                    SELECT requirement_id
+                    FROM section_requirements
+                    WHERE section_id = %s
+                    ORDER BY requirement_id
+                    """,
+                    (section_id,),
+                )
+                requirement_ids = [
+                    item["requirement_id"] for item in cursor.fetchall()
+                ]
+                findings = []
+                if row["current_version_id"]:
+                    cursor.execute(
+                        """
+                        SELECT id, finding_type AS type, severity, message
+                        FROM review_findings
+                        WHERE section_version_id = %s
+                        ORDER BY severity DESC, id
+                        """,
+                        (row["current_version_id"],),
+                    )
+                    findings = cursor.fetchall()
+        version = None
+        if row["current_version_id"]:
+            version = {
+                "id": row["current_version_id"],
+                "version_no": row["version_no"],
+                "content": self.sanitize_generated_content(row["content"]),
+                "origin": row["origin"],
+                "created_at": row["version_created_at"],
+            }
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "title": row["title"],
+            "status": row["status"],
+            "sort_order": row["sort_order"],
+            "is_recommended": row["is_recommended"],
+            "requirement_ids": requirement_ids,
+            "current_version": version,
+            "findings": findings,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    @staticmethod
+    def review(
+        content: str,
+        rules: RuleDocument | None = None,
+    ) -> list[ReviewFinding]:
+        active = rules or RuleEngine().load_default("compliance")
+        findings: list[ReviewFinding] = []
+        for check in active.content["checks"]:
+            kind = check["kind"]
+            value = check["value"]
+            matched = (
+                kind == "min_length" and len(content.strip()) < int(value)
+            ) or (
+                kind in {"contains", "forbidden_patterns"}
+                and any(pattern in content for pattern in value)
+            )
+            if matched:
+                findings.append(
+                    ReviewFinding(
+                        check["key"],
+                        (
+                            "warning"
+                            if check["severity"] == "blocking"
+                            else check["severity"]
+                        ),
+                        check["message"],
+                    )
+                )
+        return findings
+
+    @staticmethod
+    def review_length(
+        content: str,
+        min_chars: int,
+        max_chars: int,
+    ) -> list[ReviewFinding]:
+        length = len(re.sub(r"\s+", "", content))
+        if length < min_chars:
+            return [ReviewFinding(
+                "chapter_too_short",
+                "warning",
+                f"本章约 {length} 字，低于人工设定的 {min_chars} 字下限。",
+            )]
+        if length > max_chars:
+            return [ReviewFinding(
+                "chapter_too_long",
+                "warning",
+                f"本章约 {length} 字，超过人工设定的 {max_chars} 字上限。",
+            )]
+        return []
+
+    @staticmethod
+    def _messages(
+        title: str,
+        requirements: list[dict],
+        matches: list[KnowledgeMatch] | None = None,
+        rules: RuleDocument | None = None,
+        generation_instruction: str | None = None,
+        format_constraints: list[dict] | None = None,
+        memory_matches: list[ProposalMemoryMatch] | None = None,
+        case_reference_mode: str = "balanced",
+        min_chars: int = 800,
+        max_chars: int = 5000,
+    ) -> list[dict[str, str]]:
+        active = rules or RuleEngine().load_default("writing")
+        matched_items = matches or []
+        memory_items = memory_matches or []
+        budget = active.content.get("prompt_budget", {})
+        minimum = int(budget.get("minimum_chars_per_item", 120))
+        evidence = SectionService._bounded_blocks(
+            [
+                f"[响应事项 {index}]\n"
+                f"规范描述：{item['normalized_text']}\n"
+                f"原文证据：{item['quote']}"
+                for index, item in enumerate(requirements, 1)
+            ],
+            int(budget.get("requirements_chars", 9000)),
+            minimum,
+        )
+        knowledge = (
+            SectionService._bounded_blocks(
+                [
+                    f"[企业知识 {index}｜{item.category}]\n"
+                    f"标题：{item.title}\n"
+                    "可核验企业事实："
+                    f"{bool(item.metadata.get('verified_enterprise_fact'))}\n"
+                    f"来源角色：{item.metadata.get('source_role', 'unspecified')}\n"
+                    f"内容：{item.content}"
+                    for index, item in enumerate(matched_items, 1)
+                ],
+                int(budget.get("knowledge_chars", 5500)),
+                minimum,
+            )
+            or "无匹配企业知识；涉及企业事实时不得补写。"
+        )
+        memory = (
+            SectionService._bounded_blocks(
+                [
+                    "章节模式："
+                    + item.chapter_title
+                    + "\n可参考结构："
+                    + json.dumps(item.pattern, ensure_ascii=False)
+                    + "\n限制：只能参考结构和分析维度，不得复制或推断任何历史事实。"
+                    for item in memory_items
+                ],
+                int(budget.get("proposal_memory_chars", 2200)),
+                minimum,
+            )
+            or "无匹配方案记忆；按当前响应事项和写作规则组织本章。"
+        )
+        instruction = SectionService._truncate_text(
+            (generation_instruction or "").strip(),
+            int(budget.get("generation_instruction_chars", 1000)),
+        )
+        format_evidence = (
+            SectionService._bounded_blocks(
+                [
+                    f"- {item['normalized_text']}（原文：{item['quote']}）"
+                    for item in (format_constraints or [])
+                ],
+                int(
+                    budget.get("format_constraints_chars", 2200)
+                ),
+                minimum,
+            )
+            or "本章未识别到额外硬性格式要求。"
+        )
+        refinement = (
+            "\n\n本章用户微调要求：\n"
+            f"{instruction}\n"
+            "微调要求只能调整本章侧重点、结构、详略和表达，"
+            "不能覆盖事实边界、来源追溯、禁止虚构和隐私规则。"
+            if instruction
+            else ""
+        )
+        case_policy = active.content.get("historical_case_modes", {}).get(
+            case_reference_mode,
+            "综合参考相似案例，但不得复制旧项目事实。",
+        )
+        compact_rules = {
+            "policies": active.content.get("policies", {}),
+            "format_constraint_policy": active.content.get(
+                "format_constraint_policy", {}
+            ),
+            "chapter_style": active.content.get(
+                "chapter_styles", {}
+            ).get(title),
+        }
+        system_content = (
+            active.content["model_instruction"]
+            + "\n不得虚构任何采购事实或企业事实。"
+            + "\n历史案例使用策略：" + case_policy
+            + "\n本次已加载的版本化写作规则（本章适用部分）：\n"
+            + json.dumps(compact_rules, ensure_ascii=False)
+        )
+        user_content = (
+            active.content["user_template"].format(
+                section_title=title
+            )
+            + f"\n正文长度控制：{min_chars}-{max_chars} 个中文字符。"
+            + "应保证论证充分，但不得为凑字数重复内容或编造事实。"
+            + refinement
+            + f"\n\n响应事项证据：\n{evidence}"
+            + f"\n\n招标文件硬性格式与必写内容：\n{format_evidence}"
+            + f"\n\n匹配企业知识：\n{knowledge}"
+            + f"\n\n方案记忆结构：\n{memory}"
+        )
+        max_input_chars = int(
+            budget.get("max_input_chars", 24000)
+        )
+        user_limit = max(1000, max_input_chars - len(system_content))
+        user_content = SectionService._truncate_text(
+            user_content, user_limit
+        )
+        return [
+            {
+                "role": "system",
+                "content": system_content,
+            },
+            {
+                "role": "user",
+                "content": user_content,
+            },
+        ]
+
+    @staticmethod
+    def _truncate_text(value: str, limit: int) -> str:
+        if limit <= 0:
+            return ""
+        clean = str(value).strip()
+        if len(clean) <= limit:
+            return clean
+        if limit <= 12:
+            return clean[:limit]
+        return clean[: limit - 10].rstrip() + "…（已压缩）"
+
+    @staticmethod
+    def _bounded_blocks(
+        blocks: list[str],
+        limit: int,
+        minimum_chars: int = 120,
+    ) -> str:
+        if not blocks or limit <= 0:
+            return ""
+        remaining = limit
+        output: list[str] = []
+        for index, block in enumerate(blocks):
+            left = len(blocks) - index
+            fair_share = max(
+                minimum_chars,
+                remaining // max(1, left),
+            )
+            piece = SectionService._truncate_text(
+                block,
+                min(fair_share, remaining),
+            )
+            if not piece:
+                break
+            output.append(piece)
+            remaining -= len(piece)
+            if remaining <= 0:
+                break
+        return "\n\n".join(output)
+
+    @staticmethod
+    def sanitize_generated_content(content: str) -> str:
+        uuid_pattern = (
+            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-"
+            r"[0-9a-fA-F]{12}"
+        )
+        value = re.sub(
+            rf"[\[【（(]\s*(?:要求|Requirement)\s*[:：#]?\s*"
+            rf"(?:{uuid_pattern}|[A-Za-z]?\d{{1,6}})\s*[\]】）)]",
+            "",
+            content,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(uuid_pattern, "", value)
+        value = re.sub(
+            r"(?m)^\s*#{1,6}\s+",
+            "",
+            value,
+        )
+        value = re.sub(
+            r"(?im)^\s*(?:Requirements?|Matched Knowledge)\s*[:：]\s*",
+            "",
+            value,
+        )
+        value = re.sub(
+            r"(?m)^\s*(?:规范描述|原文证据|source_ref|requirement_id)"
+            r"\s*[:：]\s*",
+            "",
+            value,
+        )
+        value = re.sub(
+            r"[\[【（(]\s*要求\s*[:：#]?\s*[\]】）)]",
+            "",
+            value,
+        )
+        value = re.sub(
+            r"[\[【（(]\s*(?:要求|Requirement)\s*[:：#]?\s*"
+            r"(?:[A-Za-z][A-Za-z0-9_-]{1,63}|x{2,64})\s*[\]】）)]",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(r"[ \t]+\n", "\n", value)
+        value = re.sub(r"\n{3,}", "\n\n", value)
+        return value.strip()
+
+    @staticmethod
+    def _load_generation_input(project_id: UUID, section_id: UUID):
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, title
+                    FROM sections
+                    WHERE project_id = %s AND id = %s
+                    """,
+                    (project_id, section_id),
+                )
+                section = cursor.fetchone()
+                if section is None:
+                    raise SectionNotFoundError(str(section_id))
+                cursor.execute(
+                    """
+                    SELECT
+                        requirements.id,
+                        requirements.title,
+                        requirements.requirement_type AS type,
+                        requirements.normalized_text,
+                        requirements.quote
+                    FROM requirements
+                    JOIN section_requirements
+                        ON section_requirements.requirement_id =
+                           requirements.id
+                    WHERE section_requirements.section_id = %s
+                      AND requirements.status <> 'rejected'
+                      AND requirements.need_generation = TRUE
+                    ORDER BY requirements.id
+                    """,
+                    (section_id,),
+                )
+                requirements = cursor.fetchall()
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM documents
+                    WHERE project_id = %s
+                    """,
+                    (project_id,),
+                )
+                section["document_ids"] = [
+                    item["id"] for item in cursor.fetchall()
+                ]
+                cursor.execute(
+                    """
+                    SELECT normalized_text, quote
+                    FROM requirements
+                    WHERE project_id = %s
+                      AND status <> 'rejected'
+                      AND (
+                        normalized_text ~
+                          '目录|章节|编制|格式|字体|字号|行距|页数|字数|表格|签章|装订|必须包括|应包括'
+                        OR quote ~
+                          '目录|章节|编制|格式|字体|字号|行距|页数|字数|表格|签章|装订|必须包括|应包括'
+                      )
+                    ORDER BY importance = 'critical' DESC,
+                             importance = 'high' DESC,
+                             created_at
+                    LIMIT 30
+                    """,
+                    (project_id,),
+                )
+                section["format_constraints"] = [
+                    dict(item) for item in cursor.fetchall()
+                ]
+        if not requirements:
+            raise SectionValidationError("章节没有可用于技术方案生成的要求。")
+        return section, requirements
+
+    @staticmethod
+    def _create_job(
+        project_id: UUID,
+        job_id: UUID,
+        snapshot: dict,
+        workflow_run_id: UUID,
+    ) -> None:
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO processing_jobs (
+                        id, project_id, job_type, status, progress,
+                        input_snapshot, workflow_run_id
+                    )
+                    VALUES (
+                        %s, %s, 'section_generate', 'running', 10,
+                        %s::jsonb, %s
+                    )
+                    """,
+                    (
+                        job_id,
+                        project_id,
+                        json.dumps(snapshot, ensure_ascii=False),
+                        workflow_run_id,
+                    ),
+                )
+
+    @staticmethod
+    def _fail_job(job_id: UUID, section_id: UUID, error_code: str) -> None:
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'failed', error_code = %s,
+                        error_message = '章节生成失败',
+                        finished_at = NOW(), updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (error_code, job_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE sections
+                    SET status = 'generation_failed', updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (section_id,),
+                )
+
+    @staticmethod
+    def _insert_findings(cursor, version_id: UUID, findings) -> None:
+        cursor.executemany(
+            """
+            INSERT INTO review_findings (
+                section_version_id, finding_type, severity, message
+            )
+            VALUES (%s, %s, %s, %s)
+            """,
+            [
+                (
+                    version_id,
+                    item.finding_type,
+                    item.severity,
+                    item.message,
+                )
+                for item in findings
+            ],
+        )

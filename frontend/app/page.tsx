@@ -1,856 +1,2029 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type StepId = "materials" | "requirements" | "proposal" | "export";
-
+type Step = "upload" | "requirements" | "outline" | "writer" | "export";
+type RequirementView = "all" | "proposal" | "scoring" | "compliance" | "risk" | "conflicts";
+type Source = {
+  id: string;
+  filename: string;
+  locator: {
+    kind: "page" | "paragraph";
+    page?: number | null;
+    paragraph_start?: number | null;
+    paragraph_end?: number | null;
+  };
+};
 type Requirement = {
   id: string;
-  category: "评分项" | "技术要求" | "交付要求";
+  type: "technical_requirement" | "scoring_requirement" | "commercial_requirement" | "qualification_requirement" | "delivery_requirement" | "compliance_requirement" | "format_requirement" | "document_structure_requirement";
   title: string;
-  detail: string;
-  source: string;
-  page: number;
-  score?: number;
-  confirmed: boolean;
+  normalized_text: string;
+  quote: string;
+  importance: "critical" | "high" | "medium" | "low";
+  proposal_relevance: boolean;
+  proposal_value: number;
+  risk_type: "disqualification" | "qualification" | "contract" | "delivery" | null;
+  proposal_chapter: string | null;
+  response_action: "write_into_proposal" | "write_into_response_table" | "compliance_commitment" | "provide_attachment" | "risk_notice" | "ignore";
+  proposal_mapping: string | null;
+  scoring_impact: "score_item" | "qualification_pass" | "penalty_risk" | "no_score";
+  priority: "P0" | "P1" | "P2" | "P3";
+  scoring_relation: "high_score_item" | "medium_score_item" | "requirement_only" | "unknown";
+  classification_confidence: number;
+  classification_conflict: boolean;
+  target_chapter: string | null;
+  need_generation: boolean;
+  status: "pending" | "confirmed" | "rejected";
+  feedback: "pending" | "confirmed" | "not_needed" | "classification_error" | "source_mismatch" | "duplicate" | "incomplete";
+  semantic_graph?: {
+    entities: Array<{ key: string; type: string; label: string; mention: string; resolved: boolean }>;
+    relations: Array<{ subject: string; predicate: string; predicate_label: string; object: string; confidence: number }>;
+    actions: Array<{ actor: string; action: string; action_label: string; target: string | null; required: boolean }>;
+    focus_summary: string;
+    constraints: string[];
+    confidence: number;
+  };
+  sources: Source[];
+};
+type IgnoreFeedback = Exclude<Requirement["feedback"], "pending" | "confirmed">;
+type Conflict = {
+  conflict_id: string;
+  topic: string;
+  conflict_type: "positive_difference" | "compatible_difference" | "potential_conflict" | "true_conflict";
+  source_a: { document: string; text: string; role: string };
+  source_b: { document: string; text: string; role: string };
+  source_a_location: Record<string, number | string | null>;
+  source_b_location: Record<string, number | string | null>;
+  source_a_authority_level: number;
+  source_b_authority_level: number;
+  description: string;
+  risk_priority: "P0" | "P1" | "P2" | "P3";
+  resolution_status: "pending" | "resolved" | "ignored";
+  resolution_choice: "choose_a" | "choose_b" | "keep_both" | "request_clarification" | null;
+  resolved_by: string | null;
+  affected_sections: string[];
 };
 
-type Section = {
+const ignoreFeedbackLabels: Record<IgnoreFeedback, string> = {
+  not_needed: "本次不需要",
+  classification_error: "分类错误（含合规误分）",
+  source_mismatch: "与原文不符",
+  duplicate: "重复内容",
+  incomplete: "信息不完整",
+};
+type SectionVersion = {
   id: string;
-  number: string;
+  version_no: number;
+  content: string;
+  origin: "generated" | "edited";
+};
+type SectionItem = {
+  id: string;
   title: string;
-  requirementIds: string[];
-  status: "ready" | "drafting" | "reviewed";
-  words: number;
-  score?: number;
+  status: string;
+  sort_order: number;
+  is_recommended: boolean;
+  requirement_ids: string[];
+  current_version: SectionVersion | null;
+  findings: Array<{ id: string; severity: string; message: string }>;
+};
+type Workspace = {
+  id: string;
+  name: string;
+  status: string;
+  document: {
+    id: string;
+    filename: string;
+    content_type: string | null;
+    source_count: number;
+    validation_score?: number | null;
+    knowledge_status: string;
+  } | null;
+  technical_requirements: Requirement[];
+  compliance_reminder_count: number;
+  response_summary: {
+    total: number;
+    proposal: number;
+    scoring: number;
+    compliance: number;
+    risk: number;
+  };
+  outline: SectionItem[];
+  estimated_remaining_seconds_low: number | null;
+  estimated_remaining_seconds_high: number | null;
+  estimate_sample_count: number;
+  estimate_basis: string;
+  processing_error_code: string | null;
+  processing_error_message: string | null;
+  processing_retryable: boolean;
+  processing_job_status: "queued" | "running" | "succeeded" | "failed" | null;
+  processing_job_progress: number;
+  processing_job_type: string | null;
+  model_calls_used: number;
+  model_calls_limit: number;
+  model_tokens_used: number;
+  model_tokens_limit: number;
+  generation_mode: "strict_template" | "planned" | "pdf_template_manual_fill" | "template_conversion_required";
+  writer_strategy: "strict_template_writer" | "planned_proposal_writer" | null;
+  template_conversion_status: string;
+  template_conversion_report: {
+    status?: string;
+    page_count?: number;
+    paragraph_count?: number;
+    table_count?: number;
+    message?: string;
+    template_detected?: boolean;
+    structure_validation?: string;
+  };
+  historical_case_mode: "balanced" | "closest_case" | "structure_only" | "current_only";
+  template_filename: string | null;
+  template_fidelity: string | null;
+  template_fonts: string[];
+  template_font_policy: string;
+  template_required_fields: string[];
+  template_field_values: Record<string, string>;
+  template_field_decisions: Array<{
+    field_key: string;
+    canonical_key: string;
+    label: string;
+    expected_value_type: string;
+    expected_value_type_label: string;
+    type_validation: "passed" | "missing";
+    value: string | null;
+    source_type: string | null;
+    source_reference: string | null;
+    confidence: number;
+    status: "AUTO_FILL" | "REVIEW_REQUIRED" | "MISSING";
+    reason: string;
+    required: boolean;
+    evidence_title: string | null;
+    evidence_excerpt: string | null;
+    evidence_location: string | null;
+    evidence_match_count: number;
+    evidence_alternatives: string[];
+    slot: {
+      document_section?: string | null;
+      table_index?: number | null;
+      paragraph_index?: number | null;
+      row?: number | null;
+      column?: number | null;
+      surrounding_text?: string;
+    };
+    semantic_field: string | null;
+    expected_entity_type: "Organization" | "Person" | "Project" | "BusinessCase" | "Certificate" | "ResponseItem" | null;
+    expected_role: "LEGAL_REPRESENTATIVE" | "AUTHORIZED_REPRESENTATIVE" | "PROJECT_MANAGER" | "TECHNICAL_LEAD" | "CONTACT_PERSON" | "SIGNATORY" | null;
+    expected_role_label: string | null;
+    subject_organization: string | null;
+    project_name: string | null;
+    binding_status: string | null;
+    match_path: string[];
+    entity_candidates: Array<{
+      person_id: string;
+      name: string;
+      title: string | null;
+      match_basis: string;
+      source_document: string | null;
+      source_location: string | null;
+      confidence: number;
+    }>;
+    ontology_concept: string;
+    display_name: string;
+    subject_role: string | null;
+    relation_path: string[];
+    value_expression: string | null;
+    fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "auto_layout" | "generated_collection" | "knowledge_collection" | "unresolved";
+    required_actions: string[];
+  }>;
+  template_variable_decisions: Array<{
+    variable_key: string;
+    dictionary_version: string;
+    standard_name: string;
+    label: string;
+    aliases: string[];
+    semantic_field: string;
+    target_entity_type: "Organization" | "Person" | "Project" | "BusinessCase" | "Certificate" | "ResponseItem" | null;
+    target_relation: "LEGAL_REPRESENTATIVE" | "AUTHORIZED_REPRESENTATIVE" | "PROJECT_MANAGER" | "TECHNICAL_LEAD" | "CONTACT_PERSON" | "SIGNATORY" | string | null;
+    target_relations: string[];
+    entity_scope_label: string;
+    expected_value_type: string;
+    expected_value_type_label: string;
+    source_priority: string[];
+    value: string | null;
+    status: "AUTO_FILL" | "REVIEW_REQUIRED" | "MISSING";
+    reason: string;
+    confidence: number;
+    required: boolean;
+    slot_count: number;
+    affected_locations: string[];
+    slots: Array<{
+      field_key: string;
+      label: string | null;
+      display_name: string | null;
+      source_location: string;
+      document_section: string | null;
+      table_index: number | null;
+      paragraph_index: number | null;
+      row: number | null;
+      column: number | null;
+      surrounding_text: string | null;
+    }>;
+    source_type: string | null;
+    source_reference: string | null;
+    evidence_title: string | null;
+    evidence_excerpt: string | null;
+    evidence_location: string | null;
+    evidence_match_count: number;
+    evidence_alternatives: string[];
+    binding_status: string | null;
+    relation_path: string[];
+    entity_candidates: Array<{
+      person_id: string;
+      name: string;
+      title: string | null;
+      match_basis: string;
+      source_document: string | null;
+      source_location: string | null;
+      confidence: number;
+    }>;
+    fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "auto_layout" | "generated_collection" | "knowledge_collection" | "unresolved";
+    personnel_rule_results: Array<Record<string, unknown>>;
+    semantics_recognized?: boolean;
+    resolution_state: string;
+    resolution_label?: string;
+    next_action?: string;
+    review_group_key?: string;
+    review_group_label?: string;
+  }>;
+  template_actions: Array<{
+    action_id: string;
+    display_name: string;
+    source_location: string;
+    surrounding_text: string;
+    relation_path: string[];
+    required_actions: string[];
+  }>;
+  case_library_count: number;
+  case_library_name: string;
+  case_library_scope: string;
+  case_library_fact_usage: string;
+  template_outline: Array<{
+    title: string;
+    level: 1 | 2 | 3 | 4 | 5;
+    order: number;
+    source: string;
+  }>;
+};
+type ExportItem = { id: string; status: string; filename?: string | null };
+type TemplateFieldDecision = Workspace["template_field_decisions"][number];
+type TemplateVariableDecision = Workspace["template_variable_decisions"][number];
+type TemplateVariableSlot = TemplateVariableDecision["slots"][number];
+type EvidenceItem = TemplateFieldDecision | TemplateVariableDecision;
+type PreviewTarget = {
+  variable: TemplateVariableDecision;
+  slot: TemplateVariableSlot;
+  requestId: number;
 };
 
-const steps: Array<{
-  id: StepId;
-  number: string;
-  title: string;
-  subtitle: string;
-}> = [
-  { id: "materials", number: "01", title: "项目材料", subtitle: "上传与解析" },
-  { id: "requirements", number: "02", title: "招标要求", subtitle: "提取与确认" },
-  { id: "proposal", number: "03", title: "技术方案", subtitle: "目录与章节" },
-  { id: "export", number: "04", title: "导出结果", subtitle: "审核与交付" },
+function variableResolutionLabel(item: TemplateVariableDecision) {
+  return item.resolution_label?.trim()
+    || (item.value ? "已匹配，待核验" : "待系统继续处理");
+}
+
+function variableNextAction(item: TemplateVariableDecision) {
+  return item.next_action?.trim()
+    || (item.value
+      ? "请核验当前值及来源后继续。"
+      : "字段含义已保留，系统不会猜写；请等待资料匹配或人工审核。"
+    );
+}
+
+function variableResolutionClass(item: TemplateVariableDecision) {
+  return /^[a-z0-9_-]+$/i.test(item.resolution_state)
+    ? item.resolution_state
+    : "value_resolution_pending";
+}
+type ProposalReview = {
+  overall: {
+    recommended_for_delivery: boolean;
+    has_blocking_risk: boolean;
+    requirement_coverage_rate: number;
+    scoring_coverage_rate: number;
+    traceability_rate: number;
+    enterprise_fact_verification_rate: number;
+    unverified_assertion_count: number;
+    internal_identifier_leak_count: number;
+    high_risk_count: number;
+    blocking_risk_count: number;
+  };
+  classification_quality: {
+    quality_rate: number;
+    total_count: number;
+    high_confidence_ratio: number;
+    low_confidence_count: number;
+    unmapped_count: number;
+    conflict_count: number;
+  };
+};
+type ResponseSupport = {
+  manual_action_archive: {
+    total: number;
+    pending: number;
+    completed: number;
+    items: Array<{
+      key: string;
+      category: "variable" | "format_review" | "material_review" | "content_review" | "conflict_review";
+      title: string;
+      instruction: string;
+      status: "pending" | "completed";
+      field_key: string | null;
+      value_preview: string | null;
+      blocking_scope: string;
+    }>;
+  };
+  response_groups: Array<{
+    group_key: string;
+    item_count: number;
+    titles: string[];
+    response_action: Requirement["response_action"];
+    target_chapter: string | null;
+  }>;
+  format_requirements: Array<{
+    requirement_id: string;
+    title: string;
+    instruction: string;
+    fidelity: "exact_template" | "structure_preserved";
+    manual_check_required: boolean;
+    source_text: string;
+    sources: Source[];
+  }>;
+  qualification_responses: Array<{
+    requirement_id: string;
+    requirement: string;
+    status: "matched_verified" | "manual_material_required";
+    matches: Array<{
+      title: string;
+      score: number;
+      verified: boolean;
+      holder: string | null;
+      valid_until: string | null;
+      asset_kind: "image" | "document";
+      asset_available: boolean;
+      source_file: string;
+      source_location: string | null;
+      source_page: number | null;
+      source_excerpt: string | null;
+      target_location: string;
+      insertion_status: "ready_for_review" | "source_location_required" | "asset_required";
+      rationale: string;
+    }>;
+  }>;
+  traceability: {
+    requirements: Array<{
+      requirement_id: string;
+      title: string;
+      source_text: string;
+      sources: Source[];
+      response_action: Requirement["response_action"];
+      generated_sections: string[];
+    }>;
+    generated_paragraphs: Array<{
+      section_id: string;
+      section_title: string;
+      paragraph_index: number;
+      generated_text: string;
+      origin: "generated" | "edited" | "auto_fixed";
+      sources: Array<{
+        source_type: string;
+        source_title: string;
+        source_location: string | null;
+        source_excerpt: string | null;
+        usage_description: string;
+        verification_status: string;
+      }>;
+    }>;
+  };
+};
+type AccessStatus = {
+  required: boolean;
+  authorized: boolean;
+};
+
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1").replace(/\/$/, "");
+const READY_WORKSPACE_STATUSES = new Set([
+  "outline_ready",
+  "writing",
+  "ready_to_export",
+  "exported",
+]);
+const workspaceStatusLabels: Record<string, string> = {
+  validating: "正在检查招标文件有效性",
+  extracting: "正在提取技术要求与评分点",
+  planning: "正在生成推荐目录",
+};
+const steps: Array<{ id: Step; title: string; subtitle: string }> = [
+  { id: "upload", title: "上传文件", subtitle: "自动识别与解析" },
+  { id: "requirements", title: "招标响应分析", subtitle: "响应事项与评分点" },
+  { id: "outline", title: "推荐目录", subtitle: "确认章节结构" },
+  { id: "writer", title: "章节写作", subtitle: "生成、编辑、校核" },
+  { id: "export", title: "导出 Word", subtitle: "交付技术方案" },
 ];
-
-const initialRequirements: Requirement[] = [
-  {
-    id: "REQ-001",
-    category: "评分项",
-    title: "总体服务实施方案",
-    detail:
-      "针对本项目提供完整的总体服务方案，包括服务目标、工作原则、实施路径及成果体系。",
-    source:
-      "供应商应结合项目实际情况，制定完整、科学、可执行的总体服务实施方案……",
-    page: 38,
-    score: 12,
-    confirmed: true,
-  },
-  {
-    id: "REQ-002",
-    category: "技术要求",
-    title: "项目组织与人员配置",
-    detail:
-      "明确项目负责人、专业团队、职责分工以及内部协同和专家支持机制。",
-    source:
-      "项目团队应具有完成本项目所需的专业能力，人员配置合理、职责分工清晰……",
-    page: 25,
-    confirmed: true,
-  },
-  {
-    id: "REQ-003",
-    category: "评分项",
-    title: "进度计划与节点控制",
-    detail:
-      "提供分阶段进度计划，明确里程碑、成果交付节点及延期应对措施。",
-    source:
-      "根据采购人时间要求制定详细工作进度，进度安排合理得 8 分……",
-    page: 40,
-    score: 8,
-    confirmed: false,
-  },
-  {
-    id: "REQ-004",
-    category: "交付要求",
-    title: "成果质量保障",
-    detail:
-      "建立三级质量审核机制，说明过程控制、成果复核和问题整改方法。",
-    source:
-      "所有咨询成果须经过内部质量审核，确保成果内容完整、数据准确……",
-    page: 27,
-    confirmed: true,
-  },
-  {
-    id: "REQ-005",
-    category: "技术要求",
-    title: "项目重难点分析",
-    detail:
-      "结合项目背景识别关键难点，并逐项提出具有针对性的解决措施。",
-    source:
-      "供应商应充分理解项目特点，对重点、难点进行分析并提出合理化建议……",
-    page: 26,
-    confirmed: false,
-  },
+const templateSteps: Array<{ id: Step; title: string; subtitle: string }> = [
+  { id: "upload", title: "上传文件", subtitle: "自动识别格式" },
+  { id: "export", title: "回填与审核", subtitle: "查看依据并导出" },
 ];
-
-const initialSections: Section[] = [
-  {
-    id: "SEC-01",
-    number: "第一章",
-    title: "项目理解与总体思路",
-    requirementIds: ["REQ-001"],
-    status: "reviewed",
-    words: 2860,
-    score: 91,
-  },
-  {
-    id: "SEC-02",
-    number: "第二章",
-    title: "项目组织与人员配置",
-    requirementIds: ["REQ-002"],
-    status: "reviewed",
-    words: 2140,
-    score: 88,
-  },
-  {
-    id: "SEC-03",
-    number: "第三章",
-    title: "服务实施方案",
-    requirementIds: ["REQ-001", "REQ-003"],
-    status: "drafting",
-    words: 1680,
-  },
-  {
-    id: "SEC-04",
-    number: "第四章",
-    title: "项目重难点及解决措施",
-    requirementIds: ["REQ-005"],
-    status: "ready",
-    words: 0,
-  },
-  {
-    id: "SEC-05",
-    number: "第五章",
-    title: "进度计划与节点控制",
-    requirementIds: ["REQ-003"],
-    status: "ready",
-    words: 0,
-  },
-  {
-    id: "SEC-06",
-    number: "第六章",
-    title: "质量保障与成果交付",
-    requirementIds: ["REQ-004"],
-    status: "ready",
-    words: 0,
-  },
+const typeLabels: Record<Requirement["type"], string> = {
+  technical_requirement: "技术要求",
+  scoring_requirement: "评分要求",
+  commercial_requirement: "商务要求",
+  qualification_requirement: "资格要求",
+  delivery_requirement: "交付要求",
+  compliance_requirement: "合规要求",
+  format_requirement: "格式要求",
+  document_structure_requirement: "文档结构要求",
+};
+const responseActionLabels: Record<Requirement["response_action"], string> = {
+  write_into_proposal: "写入技术方案",
+  write_into_response_table: "加入响应表",
+  compliance_commitment: "商务/合规承诺",
+  provide_attachment: "提供附件材料",
+  risk_notice: "风险提醒",
+  ignore: "忽略",
+};
+const scoringImpactLabels: Record<Requirement["scoring_impact"], string> = {
+  score_item: "影响评分",
+  qualification_pass: "资格通过项",
+  penalty_risk: "不响应存在风险",
+  no_score: "不直接计分",
+};
+const requirementTabs: Array<{ id: RequirementView; label: string }> = [
+  { id: "all", label: "全部" },
+  { id: "proposal", label: "技术方案" },
+  { id: "scoring", label: "评分响应" },
+  { id: "compliance", label: "商务合规" },
+  { id: "risk", label: "风险提醒" },
+  { id: "conflicts", label: "冲突事项" },
 ];
+const importanceLabels: Record<Requirement["importance"], string> = {
+  critical: "关键",
+  high: "重要",
+  medium: "一般",
+  low: "低",
+};
+const importanceRank: Record<Requirement["importance"], number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+function entityLabel(item: Requirement, key: string | null) {
+  return item.semantic_graph?.entities.find((entity) => entity.key === key)?.label ?? "相关主体";
+}
+const priorityRank: Record<Requirement["priority"], number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+  P3: 3,
+};
 
-const sampleContent = `本项目将坚持“目标牵引、问题导向、协同推进、成果落地”的总体原则，围绕采购人核心诉求建立全过程服务体系。
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.error?.message ?? `操作失败（${response.status}）`);
+  }
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
 
-项目启动后，工作团队首先完成基础材料核验与需求访谈，形成项目任务清单和成果边界；实施阶段按照“资料研究—专题分析—成果编制—内部复核—沟通完善”的路径推进，确保每项工作均有明确责任人、时间节点和验收标准。
+function sourceLabel(source: Source) {
+  if (source.locator.kind === "page") return `第 ${source.locator.page} 页`;
+  const start = source.locator.paragraph_start;
+  const end = source.locator.paragraph_end;
+  return `第 ${start === end ? start : `${start}-${end}`} 段`;
+}
 
-针对跨专业协同和成果一致性要求，项目负责人将组织周例会及关键节点专题会，统一技术口径，动态识别进度、质量和沟通风险。所有正式成果执行编制人自校、专业负责人复核、项目负责人审定的三级审核机制。`;
+function isInternalEvidenceLabel(value: string | null | undefined) {
+  return Boolean(value && /^(?:current_project|manual_verified|historical_case|tender_document|custom_)/i.test(value));
+}
 
-function requirementTag(category: Requirement["category"]) {
-  if (category === "评分项") return "score";
-  if (category === "交付要求") return "delivery";
-  return "technical";
+function visibleEvidenceSource(item: EvidenceItem) {
+  if (item.evidence_title && !isInternalEvidenceLabel(item.evidence_title)) return item.evidence_title;
+  if (item.source_type === "tender_document") return "当前采购文件";
+  if (item.source_type === "manual_verified") return "人工已确认的机构私有资料";
+  if (item.source_type === "historical_case") return "大岳五案例私有库";
+  return "机构私有资料库";
+}
+
+function visibleEvidenceLocation(item: EvidenceItem) {
+  if (item.evidence_location && !isInternalEvidenceLabel(item.evidence_location)) return item.evidence_location;
+  return item.source_type === "tender_document"
+    ? "当前采购文件（来源记录暂未提供页码或段落）"
+    : "机构私有资料（来源记录暂未提供章节、页码或附件位置）";
+}
+
+function highlightedEvidence(text: string, value: string | null) {
+  if (!value) return text;
+  const index = text.toLocaleLowerCase().indexOf(value.toLocaleLowerCase());
+  if (index < 0) return text;
+  return <>{text.slice(0, index)}<mark>{text.slice(index, index + value.length)}</mark>{text.slice(index + value.length)}</>;
+}
+
+function WordDocumentPreview({
+  workspace,
+  target,
+  busy,
+  onSave,
+}: {
+  workspace: Workspace;
+  target: PreviewTarget | null;
+  busy: boolean;
+  onSave: (variableKey: string, value: string) => Promise<void>;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [previewState, setPreviewState] = useState<"loading" | "ready" | "error">("loading");
+  const [editValue, setEditValue] = useState("");
+  const revision = (workspace.template_field_decisions ?? [])
+    .map((item) => `${item.field_key}:${item.status}:${item.value ?? ""}`)
+    .join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    let resizeObserver: ResizeObserver | null = null;
+    setPreviewState("loading");
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/workspaces/${workspace.id}/template-preview`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("preview unavailable");
+        const data = await response.arrayBuffer();
+        const { renderAsync } = await import("docx-preview");
+        if (cancelled || !containerRef.current) return;
+        containerRef.current.replaceChildren();
+        await renderAsync(data, containerRef.current, undefined, {
+          className: "word-page",
+          inWrapper: true,
+          breakPages: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+        });
+        const updateScale = () => {
+          if (!containerRef.current) return;
+          const page = containerRef.current.querySelector<HTMLElement>("section.docx");
+          if (!page) return;
+          const availableWidth = Math.max(280, containerRef.current.clientWidth - 24);
+          const naturalWidth = page.offsetWidth || 794;
+          containerRef.current.style.setProperty(
+            "--word-preview-scale",
+            String(Math.min(1, availableWidth / naturalWidth)),
+          );
+        };
+        updateScale();
+        resizeObserver = new ResizeObserver(updateScale);
+        resizeObserver.observe(containerRef.current);
+        if (!cancelled) setPreviewState("ready");
+      } catch {
+        if (!cancelled) setPreviewState("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      resizeObserver?.disconnect();
+    };
+  }, [workspace.id, revision]);
+
+  useEffect(() => {
+    setEditValue(target?.variable.value ?? "");
+    if (!target || previewState !== "ready" || !containerRef.current) return;
+    const container = containerRef.current;
+    container.querySelectorAll(".word-slot-highlight").forEach((element) => {
+      element.classList.remove("word-slot-highlight");
+    });
+    const slot = target.slot;
+    let located: HTMLElement | null = null;
+    if (slot.table_index != null && slot.row != null && slot.column != null) {
+      const table = container.querySelectorAll<HTMLTableElement>("table")[slot.table_index];
+      located = table?.rows[slot.row]?.cells[slot.column] ?? null;
+    }
+    if (!located && slot.paragraph_index != null) {
+      located = container.querySelectorAll<HTMLElement>("p")[slot.paragraph_index] ?? null;
+    }
+    if (!located) {
+      const hint = (slot.label || slot.display_name || "").replace(/\s+/g, "");
+      located = [...container.querySelectorAll<HTMLElement>("td, p")].find(
+        (element) => hint && (element.textContent || "").replace(/\s+/g, "").includes(hint),
+      ) ?? null;
+    }
+    if (!located) return;
+    located.classList.add("word-slot-highlight");
+    located.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  }, [target, previewState, revision]);
+
+  return <div className="word-preview-shell">
+    {previewState === "loading" && <div className="word-preview-status">正在生成 Word 页面预览…</div>}
+    {previewState === "error" && <div className="word-preview-status error">Word 预览暂时未生成，请刷新重试；原格式导出不受影响。</div>}
+    {target && <section className="preview-inline-editor">
+      <div><strong>{target.variable.standard_name}</strong><small>{target.slot.source_location}</small></div>
+      <input aria-label={`修改${target.variable.standard_name}`} value={editValue} maxLength={500} onChange={(event) => setEditValue(event.target.value)} placeholder="在当前项目中修正该回填值" />
+      <button className="primary compact" disabled={busy || !editValue.trim()} onClick={() => void onSave(target.variable.variable_key, editValue.trim())}>保存并同步 {target.variable.slot_count} 处</button>
+      <small>人工修正仅用于当前项目，会记录修正人、时间和原模板位置，不会改写企业知识库。</small>
+    </section>}
+    <div ref={containerRef} className="word-preview-canvas" aria-label="实际回填 Word 文档预览" />
+  </div>;
+}
+
+function SourceDocumentPreview({
+  workspace,
+  target,
+  onClose,
+}: {
+  workspace: Workspace;
+  target: PreviewTarget;
+  onClose: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const document = workspace.document;
+  const isPdf = Boolean(document && (document.content_type === "application/pdf" || document.filename.toLowerCase().endsWith(".pdf")));
+
+  useEffect(() => {
+    if (!document) {
+      setState("error");
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setState("loading");
+    setPdfUrl(null);
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/workspaces/${workspace.id}/documents/${document.id}/source`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("source unavailable");
+        const data = await response.arrayBuffer();
+        if (cancelled) return;
+        if (isPdf) {
+          objectUrl = URL.createObjectURL(new Blob([data], { type: "application/pdf" }));
+          setPdfUrl(objectUrl);
+          setState("ready");
+          return;
+        }
+        if (!containerRef.current) return;
+        const { renderAsync } = await import("docx-preview");
+        containerRef.current.replaceChildren();
+        await renderAsync(data, containerRef.current, undefined, {
+          className: "source-word-page",
+          inWrapper: true,
+          breakPages: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+        });
+        if (cancelled || !containerRef.current) return;
+        const slot = target.slot;
+        let located: HTMLElement | null = null;
+        if (slot.table_index != null && slot.row != null && slot.column != null) {
+          const table = containerRef.current.querySelectorAll<HTMLTableElement>("table")[slot.table_index];
+          located = table?.rows[slot.row]?.cells[slot.column] ?? null;
+        }
+        if (!located && slot.paragraph_index != null) {
+          located = containerRef.current.querySelectorAll<HTMLElement>("p")[slot.paragraph_index] ?? null;
+        }
+        if (!located) {
+          const hint = (slot.label || slot.display_name || "").replace(/\s+/g, "");
+          located = [...containerRef.current.querySelectorAll<HTMLElement>("td, p")].find(
+            (element) => hint && (element.textContent || "").replace(/\s+/g, "").includes(hint),
+          ) ?? null;
+        }
+        located?.classList.add("word-slot-highlight");
+        located?.scrollIntoView({ block: "center", inline: "center" });
+        setState("ready");
+      } catch {
+        if (!cancelled) setState("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [document, isPdf, target, workspace.id]);
+
+  return <div className="source-preview-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="source-preview-modal" role="dialog" aria-modal="true" aria-labelledby="source-preview-title" onMouseDown={(event) => event.stopPropagation()}>
+      <header>
+        <div><span className="panel-label">PROCUREMENT SOURCE</span><h3 id="source-preview-title">采购文件原文</h3><p>{document?.filename} · {target.slot.source_location}</p></div>
+        <button aria-label="关闭采购文件原文" onClick={onClose}>×</button>
+      </header>
+      {state === "loading" && <div className="word-preview-status">正在打开采购文件原文…</div>}
+      {state === "error" && <div className="word-preview-status error">采购文件原文暂时无法打开，请稍后重试。</div>}
+      {isPdf && pdfUrl && <iframe className="source-pdf-preview" title="采购文件 PDF 原文" src={pdfUrl} />}
+      {!isPdf && <div ref={containerRef} className="word-preview-canvas source-word-preview" aria-label="采购文件 Word 原文预览" />}
+    </section>
+  </div>;
+}
+
+function estimateLabel(item: Workspace) {
+  const low = item.estimated_remaining_seconds_low;
+  const high = item.estimated_remaining_seconds_high;
+  if (low == null || high == null) {
+    return "暂无可靠预计时长，系统正在记录本次真实耗时";
+  }
+  if (high <= 0) return "即将完成";
+  const lowMinutes = Math.max(1, Math.ceil(low / 60));
+  const highMinutes = Math.max(lowMinutes, Math.ceil(high / 60));
+  const range = lowMinutes === highMinutes
+    ? `约 ${highMinutes} 分钟`
+    : `约 ${lowMinutes}–${highMinutes} 分钟`;
+  return `预计还需 ${range}（基于 ${item.estimate_sample_count} 次本机历史工作量）`;
 }
 
 export default function Home() {
-  const [activeStep, setActiveStep] = useState<StepId>("materials");
-  const [requirements, setRequirements] =
-    useState<Requirement[]>(initialRequirements);
-  const [sections, setSections] = useState<Section[]>(initialSections);
-  const [selectedRequirement, setSelectedRequirement] = useState("REQ-001");
-  const [selectedSection, setSelectedSection] = useState("SEC-03");
-  const [fileName, setFileName] = useState(
-    "自贡市智慧文旅新型基础设施建设项目采购文件.docx",
-  );
-  const [isParsing, setIsParsing] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedContent, setGeneratedContent] = useState(sampleContent);
+  const [accessState, setAccessState] = useState<"checking" | "required" | "authorized">("checking");
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteError, setInviteError] = useState("");
+  const [authorizing, setAuthorizing] = useState(false);
+  const [step, setStep] = useState<Step>("upload");
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  const [requirementView, setRequirementView] = useState<RequirementView>("all");
+  const [ignoreMenuId, setIgnoreMenuId] = useState("");
+  const [sections, setSections] = useState<SectionItem[]>([]);
+  const [activeSectionId, setActiveSectionId] = useState("");
+  const [editorContent, setEditorContent] = useState("");
+  const [generationInstruction, setGenerationInstruction] = useState("");
+  const [minChapterChars, setMinChapterChars] = useState(800);
+  const [maxChapterChars, setMaxChapterChars] = useState(5000);
+  const [exportItem, setExportItem] = useState<ExportItem | null>(null);
+  const [proposalReview, setProposalReview] = useState<ProposalReview | null>(null);
+  const [responseSupport, setResponseSupport] = useState<ResponseSupport | null>(null);
+  const [caseReferenceMode, setCaseReferenceMode] = useState<"balanced" | "closest_case" | "structure_only" | "current_only">("balanced");
+  const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [evidenceItem, setEvidenceItem] = useState<EvidenceItem | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
+  const [sourcePreviewTarget, setSourcePreviewTarget] = useState<PreviewTarget | null>(null);
 
-  const currentRequirement = requirements.find(
-    (item) => item.id === selectedRequirement,
-  );
-  const currentSection = sections.find((item) => item.id === selectedSection);
-  const confirmedCount = requirements.filter((item) => item.confirmed).length;
-  const reviewedCount = sections.filter(
-    (item) => item.status === "reviewed",
-  ).length;
-  const totalScore = requirements.reduce(
-    (total, item) => total + (item.score ?? 0),
-    0,
-  );
-  const readyToExport = sections.every((item) => item.status === "reviewed");
-
-  const projectProgress = useMemo(() => {
-    if (readyToExport) return 100;
-    if (reviewedCount > 2) return 76;
-    if (reviewedCount > 0) return 58;
-    if (confirmedCount === requirements.length) return 42;
-    return 28;
-  }, [confirmedCount, readyToExport, requirements.length, reviewedCount]);
-
-  function flash(message: string) {
-    setNotice(message);
-    window.setTimeout(() => setNotice(""), 2600);
-  }
-
-  function selectFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
-    setIsParsing(true);
-    window.setTimeout(() => {
-      setIsParsing(false);
-      flash("文件解析完成，已识别 5 项关键要求");
-    }, 1200);
-  }
-
-  function toggleRequirement(id: string) {
-    setRequirements((items) =>
-      items.map((item) =>
-        item.id === id ? { ...item, confirmed: !item.confirmed } : item,
-      ),
-    );
-  }
-
-  function confirmAllRequirements() {
-    setRequirements((items) =>
-      items.map((item) => ({ ...item, confirmed: true })),
-    );
-    flash("招标要求已全部确认，可以开始规划技术方案");
-  }
-
-  function generateSection() {
-    if (!currentSection) return;
-    setIsGenerating(true);
-    setSections((items) =>
-      items.map((item) =>
-        item.id === currentSection.id
-          ? { ...item, status: "drafting" }
-          : item,
-      ),
-    );
-    window.setTimeout(() => {
-      setGeneratedContent(sampleContent);
-      setSections((items) =>
-        items.map((item) =>
-          item.id === currentSection.id
-            ? { ...item, status: "reviewed", words: 2380, score: 90 }
-            : item,
-        ),
-      );
-      setIsGenerating(false);
-      flash("章节生成并校核完成，综合评分 90 分");
-    }, 1500);
-  }
-
-  function finishAllSections() {
-    setSections((items) =>
-      items.map((item, index) => ({
-        ...item,
-        status: "reviewed",
-        words: item.words || 1800 + index * 120,
-        score: item.score ?? 86 + (index % 4),
-      })),
-    );
-    flash("演示章节已全部生成并通过校核");
-  }
-
-  function downloadDemo() {
-    const body = sections
-      .map(
-        (section) =>
-          `${section.number} ${section.title}\n\n${sampleContent}\n\n`,
-      )
-      .join("");
-    const blob = new Blob([`技术方案（演示稿）\n\n${body}`], {
-      type: "text/plain;charset=utf-8",
+  const activeSection = sections.find((item) => item.id === activeSectionId);
+  const feedbackSummary = useMemo(() => ({
+    confirmed: requirements.filter((item) => item.feedback === "confirmed").length,
+    ignored: requirements.filter((item) => item.feedback !== "pending" && item.feedback !== "confirmed").length,
+    issues: requirements.filter((item) => ["classification_error", "source_mismatch", "duplicate", "incomplete"].includes(item.feedback)).length,
+    pending: requirements.filter((item) => item.feedback === "pending").length,
+  }), [requirements]);
+  const grouped = useMemo(() => {
+    const sorted = [...requirements].sort((left, right) => {
+      const otherDelta = Number(left.type === "compliance_requirement") - Number(right.type === "compliance_requirement");
+      if (otherDelta) return otherDelta;
+      const priorityDelta = priorityRank[left.priority] - priorityRank[right.priority];
+      if (priorityDelta) return priorityDelta;
+      const importanceDelta = importanceRank[left.importance] - importanceRank[right.importance];
+      if (importanceDelta) return importanceDelta;
+      return right.proposal_value - left.proposal_value;
     });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "技术方案-演示稿.txt";
-    anchor.click();
-    URL.revokeObjectURL(url);
-    flash("演示稿已下载；正式版本将导出为 Word");
+    const groups = sorted.reduce<Record<string, Requirement[]>>((result, item) => {
+      const chapter = requirementView !== "proposal"
+        ? typeLabels[item.type]
+        : item.proposal_mapping ?? "其他技术要求";
+      result[chapter] = [...(result[chapter] ?? []), item];
+      return result;
+    }, {});
+    return Object.fromEntries(
+      Object.entries(groups).sort(([leftChapter, leftItems], [rightChapter, rightItems]) => {
+        const otherDelta = Number(leftChapter.includes("其他")) - Number(rightChapter.includes("其他"));
+        if (otherDelta) return otherDelta;
+        return Math.min(...leftItems.map((item) => importanceRank[item.importance]))
+          - Math.min(...rightItems.map((item) => importanceRank[item.importance]));
+      }),
+    );
+  }, [requirements, requirementView]);
+  const usesTemplateFlow = workspace?.generation_mode !== "planned";
+  const conversionPending = workspace?.generation_mode === "template_conversion_required"
+    || workspace?.generation_mode === "pdf_template_manual_fill";
+  const visibleSteps = !workspace
+    ? [templateSteps[0]]
+    : usesTemplateFlow ? templateSteps : steps;
+  const progress = workspace
+    ? Math.max(20, ((visibleSteps.findIndex((item) => item.id === step) + 1) / visibleSteps.length) * 100)
+    : 0;
+  const missingTemplateDecisions = (workspace?.template_variable_decisions ?? []).filter(
+    (item) => item.required && item.status === "MISSING",
+  );
+  const templateVariableGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; items: TemplateVariableDecision[] }>();
+    for (const item of workspace?.template_variable_decisions ?? []) {
+      if (item.resolution_state === "layout_managed") continue;
+      const key = item.review_group_key || item.variable_key;
+      const existing = groups.get(key);
+      if (existing) existing.items.push(item);
+      else groups.set(key, { key, label: item.review_group_label || item.entity_scope_label, items: [item] });
+    }
+    return [...groups.values()].map((group) => ({
+      ...group,
+      statusLabel: variableResolutionLabel(
+        group.items.find((item) => item.resolution_state !== "resolved")
+          ?? group.items[0],
+      ),
+    }));
+  }, [workspace?.template_variable_decisions]);
+  const templateResolutionSummary = useMemo(() => {
+    const decisions = workspace?.template_variable_decisions ?? [];
+    return {
+      recognized: decisions.filter((item) => item.semantics_recognized !== false).length,
+      semanticReview: decisions.filter((item) => item.resolution_state === "semantic_review_required").length,
+      enterprisePending: decisions.filter((item) => item.resolution_state === "enterprise_fact_pending").length,
+      personGroupsPending: templateVariableGroups.filter((group) => group.items.some((item) => ["person_binding_pending", "person_fact_pending"].includes(item.resolution_state))).length,
+      responsePending: decisions.filter((item) => item.resolution_state === "response_generation_pending").length,
+      knowledgePending: templateVariableGroups.filter((group) => group.items.some((item) => item.resolution_state === "knowledge_match_pending")).length,
+      layoutManaged: decisions.filter((item) => item.resolution_state === "layout_managed").length,
+      otherPending: decisions.filter((item) => item.required && ![
+        "resolved", "review_required", "enterprise_fact_pending",
+        "person_binding_pending", "person_fact_pending",
+        "response_generation_pending", "knowledge_match_pending",
+        "layout_managed", "semantic_review_required",
+      ].includes(item.resolution_state)).length,
+    };
+  }, [workspace?.template_variable_decisions, templateVariableGroups]);
+
+  useEffect(() => {
+    let active = true;
+    void request<AccessStatus>("/access/status")
+      .then((result) => {
+        if (!active) return;
+        setAccessState(result.authorized ? "authorized" : "required");
+      })
+      .catch(() => {
+        if (active) {
+          setAccessState("required");
+          setInviteError("暂时无法验证访问权限，请稍后重试。");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function authorizeInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthorizing(true);
+    setInviteError("");
+    try {
+      await request<{ authorized: boolean }>("/access/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: inviteCode }),
+      });
+      setInviteCode("");
+      setAccessState("authorized");
+    } catch (caught) {
+      setInviteError(
+        caught instanceof Error ? caught.message : "邀请码验证失败。",
+      );
+    } finally {
+      setAuthorizing(false);
+    }
+  }
+
+  async function openCompletedWorkspace(completed: Workspace, message?: string) {
+    const [allRequirements, support] = await Promise.all([
+      request<Requirement[]>(`/workspaces/${completed.id}/requirements?view=proposal`),
+      request<ResponseSupport>(`/workspaces/${completed.id}/response-support`),
+    ]);
+    setWorkspace(completed);
+    setRequirements(allRequirements);
+    setResponseSupport(support);
+    setRequirementView("proposal");
+    setSections(completed.outline);
+    setActiveSectionId(completed.outline[0]?.id ?? "");
+    setEditorContent(completed.outline[0]?.current_version?.content ?? "");
+    setStep(completed.generation_mode === "planned" ? "requirements" : "export");
+    setNotice(
+      message
+      ?? `处理完成，已分析 ${completed.response_summary.total} 条响应事项。`,
+    );
+  }
+
+  async function waitForWorkspace(workspaceId: string, initial: Workspace) {
+    let completed = initial;
+    let consecutiveNetworkErrors = 0;
+    let lastPollingError = "";
+    while (!READY_WORKSPACE_STATUSES.has(completed.status)) {
+      if (completed.status === "draft") {
+        throw new Error(
+          completed.processing_error_message
+          ?? "文件已上传并解析，但后台处理未完成，可点击“继续处理”重试。",
+        );
+      }
+      const stageLabel = workspaceStatusLabels[completed.status] ?? "正在处理招标文件";
+      setBusy(`${stageLabel} · ${estimateLabel(completed)}，完成后自动打开`);
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      try {
+        completed = await request<Workspace>(`/workspaces/${workspaceId}`);
+        consecutiveNetworkErrors = 0;
+        setWorkspace(completed);
+      } catch (caught) {
+        consecutiveNetworkErrors += 1;
+        lastPollingError = caught instanceof Error
+          ? caught.message
+          : "无法读取处理进度";
+        if (consecutiveNetworkErrors >= 5) {
+          throw new Error(
+            `处理进度读取失败：${lastPollingError}。后台任务可能仍在运行，请保持当前页面并稍后重试。`,
+          );
+        }
+      }
+    }
+    return completed;
+  }
+
+  const run = useCallback(async (label: string, action: () => Promise<void>) => {
+    setBusy(label);
+    setError("");
+    setNotice("");
+    try {
+      await action();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "操作失败，请稍后重试。");
+    } finally {
+      setBusy("");
+    }
+  }, []);
+
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    await run("正在识别、解析并规划技术方案", async () => {
+      const form = new FormData();
+      form.append("file", file);
+      const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
+      setWorkspace(created);
+      let completed = await waitForWorkspace(created.id, created);
+      if (
+        completed.generation_mode === "strict_template"
+        && completed.outline.length > 0
+      ) {
+        completed = await request<Workspace>(
+          `/workspaces/${completed.id}/generate-draft`,
+          { method: "POST" },
+        );
+        while (
+          completed.processing_job_type === "autonomous_draft"
+          && ["queued", "running"].includes(completed.processing_job_status ?? "")
+        ) {
+          setBusy(`正在按原格式自动生成 · ${completed.processing_job_progress}%`);
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          completed = await request<Workspace>(`/workspaces/${completed.id}`);
+        }
+        if (completed.processing_job_status === "failed") {
+          throw new Error(completed.processing_error_message ?? "自动生成失败，已保留成功结果。");
+        }
+      }
+      await openCompletedWorkspace(
+        completed,
+        completed.generation_mode === "strict_template"
+          ? "已识别可编辑响应格式并完成自动预填，请审核候选值及来源。"
+          : completed.generation_mode === "planned"
+            ? `已确认文件无响应模板，分析 ${completed.response_summary.total} 条响应事项。`
+            : "检测到 PDF，但尚无法可靠转换为可编辑 Word。系统未进入目录生成。",
+      );
+    });
+  }
+
+  async function retryWorkspace() {
+    if (!workspace) return;
+    await run("正在从中断位置继续处理", async () => {
+      const resumed = await request<Workspace>(
+        `/workspaces/${workspace.id}/retry`,
+        { method: "POST" },
+      );
+      setWorkspace(resumed);
+      const completed = await waitForWorkspace(workspace.id, resumed);
+      await openCompletedWorkspace(completed, "已从中断位置继续并完成目录规划。");
+    });
+  }
+
+  async function showRequirements(view: RequirementView) {
+    if (!workspace) return;
+    await run("正在读取响应事项", async () => {
+      if (view === "conflicts") {
+        const items = await request<Conflict[]>(`/workspaces/${workspace.id}/conflicts`);
+        setConflicts(items);
+        setRequirementView(view);
+        setNotice(items.length === 0 ? "未发现需要关注的文件差异。" : "");
+        return;
+      }
+      const items = await request<Requirement[]>(`/workspaces/${workspace.id}/requirements?view=${view}`);
+      setRequirements(items);
+      setRequirementView(view);
+      setNotice(items.length === 0 ? "当前分类下没有响应事项。" : "");
+    });
+  }
+
+  async function resolveConflict(
+    item: Conflict,
+    choice: "choose_a" | "choose_b" | "keep_both" | "request_clarification",
+  ) {
+    if (!workspace) return;
+    await run("正在保存冲突处理口径", async () => {
+      await request<Conflict>(
+        `/workspaces/${workspace.id}/conflicts/${item.conflict_id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            choice,
+            resolved_by: "当前最终确认人",
+          }),
+        },
+      );
+      const items = await request<Conflict[]>(`/workspaces/${workspace.id}/conflicts`);
+      setConflicts(items);
+      setNotice(
+        choice === "request_clarification"
+          ? "已提交澄清；只暂停受影响章节。"
+          : "最终响应口径已保存。",
+      );
+    });
+  }
+
+  async function recordRequirementFeedback(
+    item: Requirement,
+    feedback: Requirement["feedback"],
+  ) {
+    if (!workspace) return;
+    await run("正在保存人工确认", async () => {
+      const updated = await request<Requirement>(
+        `/workspaces/${workspace.id}/requirements/${item.id}/feedback`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ feedback }),
+        },
+      );
+      const refreshed = await request<Workspace>(
+        `/workspaces/${workspace.id}`,
+      );
+      setRequirements((items) => items.map((current) => current.id === updated.id ? updated : current));
+      setWorkspace({
+        ...refreshed,
+        technical_requirements: refreshed.technical_requirements.map(
+          (requirement) => requirement.id === updated.id
+            ? updated
+            : requirement,
+        ),
+      });
+      setSections(refreshed.outline);
+      setActiveSectionId((current) => (
+        refreshed.outline.some((section) => section.id === current)
+          ? current
+          : refreshed.outline[0]?.id ?? ""
+      ));
+      setIgnoreMenuId("");
+      setNotice(
+        feedback === "source_mismatch"
+          ? "已记录为与原文不符；相同错误内容下次将被自动过滤。"
+          : feedback === "classification_error"
+          ? "已记录分类错误，后续分类复核将使用这条反馈。"
+          : feedback === "duplicate"
+          ? "已记录为重复内容。"
+          : feedback === "incomplete"
+          ? "已记录为信息不完整，后续需要重新核对原文。"
+          : "人工确认结果已保存。",
+      );
+    });
+  }
+
+  async function updateRequirementStrategy(
+    item: Requirement,
+    target: "proposal" | "compliance",
+  ) {
+    if (!workspace) return;
+    await run("正在调整响应策略", async () => {
+      await request<Requirement>(
+        `/workspaces/${workspace.id}/requirements/${item.id}/strategy`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target }),
+        },
+      );
+      const [refreshed, visibleItems] = await Promise.all([
+        request<Workspace>(`/workspaces/${workspace.id}`),
+        request<Requirement[]>(
+          `/workspaces/${workspace.id}/requirements?view=${requirementView}`,
+        ),
+      ]);
+      setWorkspace(refreshed);
+      setRequirements(visibleItems);
+      setSections(refreshed.outline);
+      setActiveSectionId((current) => (
+        refreshed.outline.some((section) => section.id === current)
+          ? current
+          : refreshed.outline[0]?.id ?? ""
+      ));
+      setNotice(
+        target === "proposal"
+          ? "已转入技术方案，并同步到推荐目录。"
+          : "已转入商务合规，不再进入技术方案正文。",
+      );
+    });
+  }
+
+  function updateChapter(index: number, title: string) {
+    setSections((items) => items.map((item, current) => current === index ? { ...item, title } : item));
+  }
+
+  function moveChapter(index: number, direction: -1 | 1) {
+    setSections((items) => {
+      const target = index + direction;
+      if (target < 0 || target >= items.length) return items;
+      const copy = [...items];
+      [copy[index], copy[target]] = [copy[target], copy[index]];
+      return copy.map((item, position) => ({ ...item, sort_order: position + 1 }));
+    });
+  }
+
+  async function saveOutline() {
+    if (!workspace) return;
+    await run("正在保存目录", async () => {
+      const eligibleRequirementIds = new Set(
+        workspace.technical_requirements
+          .filter((item) => item.status !== "rejected")
+          .map((item) => item.id),
+      );
+      const chapters = sections
+        .map((item) => ({
+          title: item.title,
+          requirement_ids: item.requirement_ids.filter(
+            (requirementId) => eligibleRequirementIds.has(requirementId),
+          ),
+        }))
+        .filter((item) => item.requirement_ids.length > 0);
+      if (chapters.length === 0) {
+        throw new Error("当前没有需要写入技术方案的内容，请返回调整处理方式。");
+      }
+      const saved = await request<SectionItem[]>(`/workspaces/${workspace.id}/outline`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chapters }),
+      });
+      setSections(saved);
+      setActiveSectionId(saved[0]?.id ?? "");
+      setStep("writer");
+      setNotice("目录已确认，可以按章节生成。");
+    });
+  }
+
+  function selectSection(section: SectionItem) {
+    setActiveSectionId(section.id);
+    setEditorContent(section.current_version?.content ?? "");
+    setGenerationInstruction("");
+  }
+
+  async function generateSection(section: SectionItem) {
+    if (!workspace) return;
+    await run(`正在生成《${section.title}》`, async () => {
+      let current = await request<Workspace>(
+        `/workspaces/${workspace.id}/sections/${section.id}/generate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instruction: generationInstruction.trim() || null,
+            case_reference_mode: caseReferenceMode,
+            min_chars: minChapterChars,
+            max_chars: maxChapterChars,
+          }),
+        },
+      );
+      while (
+        current.processing_job_type === "section_generation"
+        && ["queued", "running"].includes(current.processing_job_status ?? "")
+      ) {
+        setBusy(`正在后台生成《${section.title}》 · ${current.processing_job_progress}%`);
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        current = await request<Workspace>(`/workspaces/${workspace.id}`);
+      }
+      if (current.processing_job_status === "failed") {
+        throw new Error(
+          current.processing_error_message
+          ?? "章节生成失败，已保留现有内容，可继续重试。",
+        );
+      }
+      const generated = current.outline.find((item) => item.id === section.id);
+      if (!generated?.current_version) throw new Error("章节生成未完成，请稍后重试。");
+      setWorkspace(current);
+      setSections(current.outline);
+      setActiveSectionId(generated.id);
+      setEditorContent(generated.current_version?.content ?? "");
+      setGenerationInstruction("");
+      setNotice("章节已生成，请人工检查并补充企业真实信息。");
+    });
+  }
+
+  async function generateCompleteDraft() {
+    if (!workspace) return;
+    await run("正在后台生成整本初稿", async () => {
+      let current = await request<Workspace>(
+        `/workspaces/${workspace.id}/generate-draft`,
+        { method: "POST" },
+      );
+      while (
+        current.processing_job_type === "autonomous_draft"
+        && ["queued", "running"].includes(current.processing_job_status ?? "")
+      ) {
+        setBusy(`正在后台生成整本初稿 · ${current.processing_job_progress}%`);
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        current = await request<Workspace>(`/workspaces/${workspace.id}`);
+      }
+      if (current.processing_job_status === "failed") {
+        throw new Error(
+          current.processing_error_message
+          ?? "整本初稿生成失败，已保留成功章节，可继续重试。",
+        );
+      }
+      setWorkspace(current);
+      setSections(current.outline);
+      const selected = current.outline.find((item) => !item.current_version)
+        ?? current.outline[0];
+      setActiveSectionId(selected?.id ?? "");
+      setEditorContent(selected?.current_version?.content ?? "");
+      setNotice("整本初稿已生成并完成自动校核，请逐章人工确认后导出。");
+    });
+  }
+
+  async function saveSection() {
+    if (!workspace || !activeSection?.current_version) return;
+    await run("正在保存人工修改", async () => {
+      const saved = await request<SectionItem>(
+        `/workspaces/${workspace.id}/sections/${activeSection.id}/content`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base_version_id: activeSection.current_version?.id,
+            content: editorContent,
+          }),
+        },
+      );
+      setSections((items) => items.map((item) => item.id === saved.id ? saved : item));
+      setEditorContent(saved.current_version?.content ?? "");
+      setNotice("人工修改已保存，并已重新执行合规校核。");
+    });
+  }
+
+  async function approveSection() {
+    if (!workspace || !activeSection) return;
+    await run("正在确认章节", async () => {
+      const approved = await request<SectionItem>(
+        `/workspaces/${workspace.id}/sections/${activeSection.id}/approve`,
+        { method: "POST" },
+      );
+      setSections((items) => items.map((item) => item.id === approved.id ? approved : item));
+      setNotice("章节已确认，可导出 Word。");
+    });
+  }
+
+  async function createExport() {
+    if (!workspace) return;
+    await run("正在校核并生成 Word", async () => {
+      const created = await request<ExportItem>(`/workspaces/${workspace.id}/exports`, {
+        method: "POST",
+      });
+      const review = await request<ProposalReview>(
+        `/workspaces/${workspace.id}/review`,
+      );
+      const support = await request<ResponseSupport>(
+        `/workspaces/${workspace.id}/response-support`,
+      );
+      setExportItem(created);
+      setProposalReview(review);
+      setResponseSupport(support);
+      setNotice(
+        workspace.generation_mode === "strict_template" && missingTemplateDecisions.length > 0
+          ? `Word 已生成；${missingTemplateDecisions.length} 项仍待资料匹配、人员绑定或响应生成，系统未猜写。`
+          : review.overall.recommended_for_delivery
+          ? "校核完成，Word 文件已经生成。"
+          : `Word 已生成，有 ${review.overall.blocking_risk_count} 项建议人工留意。`,
+      );
+    });
+  }
+
+  async function approveTemplateAndExport() {
+    if (!workspace) return;
+    await run("正在确认预填结果并生成 Word", async () => {
+      let currentSections = [...sections];
+      for (const section of currentSections) {
+        if (section.current_version && section.status !== "approved") {
+          const approved = await request<SectionItem>(
+            `/workspaces/${workspace.id}/sections/${section.id}/approve`,
+            { method: "POST" },
+          );
+          currentSections = currentSections.map((item) => item.id === approved.id ? approved : item);
+        }
+      }
+      setSections(currentSections);
+      const created = await request<ExportItem>(
+        `/workspaces/${workspace.id}/exports`,
+        { method: "POST" },
+      );
+      setExportItem(created);
+      setNotice("审核结果已记录，原格式 Word 已生成。");
+    });
+  }
+
+  async function reviewTemplateVariable(
+    variableKey: string,
+    action: "confirm" | "reset",
+    value?: string,
+  ) {
+    if (!workspace) return;
+    await run(action === "confirm" ? "正在确认业务变量" : "正在恢复审核", async () => {
+      const updated = await request<Workspace>(
+        `/workspaces/${workspace.id}/template-variables/review`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ variable_key: variableKey, action, value }),
+        },
+      );
+      setWorkspace(updated);
+      if (previewTarget?.variable.variable_key === variableKey) {
+        const nextVariable = updated.template_variable_decisions.find(
+          (item) => item.variable_key === variableKey,
+        );
+        const nextSlot = nextVariable?.slots.find(
+          (item) => item.field_key === previewTarget.slot.field_key,
+        ) ?? nextVariable?.slots[0];
+        setPreviewTarget(
+          nextVariable && nextSlot
+            ? { variable: nextVariable, slot: nextSlot, requestId: Date.now() }
+            : null,
+        );
+      }
+      setNotice(
+        action === "confirm"
+          ? value
+            ? "已保存本项目人工修正，并同步到全部关联位置。"
+            : "业务变量已一次确认并同步全部模板位置。"
+          : "业务变量已恢复为待审核状态。",
+      );
+    });
+  }
+
+  function locatePreviewSlot(
+    variable: TemplateVariableDecision,
+    slot: TemplateVariableSlot = variable.slots[0],
+  ) {
+    if (!slot) return;
+    setPreviewTarget({ variable, slot, requestId: Date.now() });
+  }
+
+  function openSourceSlot(
+    variable: TemplateVariableDecision,
+    slot: TemplateVariableSlot = variable.slots[0],
+  ) {
+    if (!slot) return;
+    setSourcePreviewTarget({ variable, slot, requestId: Date.now() });
+  }
+
+  async function bindEntityRole(
+    item: TemplateVariableDecision,
+    candidate: TemplateVariableDecision["entity_candidates"][number],
+  ) {
+    const role = item.target_relation;
+    if (!workspace || !role || !["LEGAL_REPRESENTATIVE", "AUTHORIZED_REPRESENTATIVE", "PROJECT_MANAGER", "TECHNICAL_LEAD", "CONTACT_PERSON", "SIGNATORY"].includes(role)) return;
+    await run(`正在绑定${item.standard_name}`, async () => {
+      const updated = await request<Workspace>(
+        `/workspaces/${workspace.id}/role-bindings`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role,
+            person_id: candidate.person_id,
+          }),
+        },
+      );
+      setWorkspace(updated);
+      setNotice(`已将${candidate.name}绑定到${item.standard_name}。`);
+    });
+  }
+
+  function renderTemplateVariableDecision(item: TemplateVariableDecision) {
+    return (
+      <article key={item.variable_key} className={`fill-decision ${variableResolutionClass(item)}`} data-resolution-state={item.resolution_state}>
+        <div><strong>{item.standard_name}</strong><span>{variableResolutionLabel(item)}</span></div>
+        <p>{item.value || variableNextAction(item)}</p>
+        <small>{item.entity_scope_label} · 系统联动 {item.slot_count} 个原模板位置，无需逐格确认 · 应填：{item.expected_value_type_label}</small>
+        {item.semantic_field && (
+          <div className="entity-resolution-card">
+            <div><span>识别字段</span><strong>{item.standard_name}</strong></div>
+            {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
+            <div><span>当前状态</span><strong>{variableResolutionLabel(item)}</strong></div>
+            <div><span>下一步</span><strong>{variableNextAction(item)}</strong></div>
+            <details className="variable-slot-details"><summary>需要抽查时查看 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位产出文件</button><button className="text-button" onClick={() => openSourceSlot(item, slot)}>打开采购原文</button></article>)}</details>
+            {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
+              <div className="entity-candidates">
+                <span>候选人员</span>
+                {item.entity_candidates.map((candidate) => (
+                  <article key={candidate.person_id}>
+                    <div><strong>{candidate.name}</strong><small>{candidate.title || "职务待核验"}</small></div>
+                    <p>{candidate.match_basis}</p>
+                    {(candidate.source_document || candidate.source_location) && <small>依据：{candidate.source_document || "已核验人员库"}{candidate.source_location ? ` · ${candidate.source_location}` : ""}</small>}
+                    <button className="secondary compact" disabled={Boolean(busy)} onClick={() => bindEntityRole(item, candidate)}>选择并建立角色绑定</button>
+                  </article>
+                ))}
+              </div>
+            )}
+            {item.target_entity_type === "Person" && item.binding_status !== "resolved" && (item.entity_candidates ?? []).length === 0 && <p className="template-field-warning">当前没有可选的已核验人员，系统不会随机选择；请先补充或授权人员资料。</p>}
+          </div>
+        )}
+        {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
+        {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看匹配依据</button>}
+        <div className="field-review-actions">
+          {item.slots.length > 0 && <button className="secondary compact preview-locate-button" disabled={Boolean(busy)} onClick={() => locatePreviewSlot(item)}>在产出预览中定位</button>}
+          {item.slots.length > 0 && workspace?.document && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => openSourceSlot(item)}>查看采购文件原文</button>}
+          {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "confirm")}>一次确认并同步 {item.slot_count} 处</button>}
+          {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "reset")}>重新审核</button>}
+        </div>
+      </article>
+    );
+  }
+
+  if (accessState !== "authorized") {
+    return (
+      <main className="invite-shell">
+        <section className="invite-card">
+          <div className="brand-seal invite-seal">岳</div>
+          <span className="panel-label">PRIVATE PREVIEW</span>
+          <h1>技术方案工作台</h1>
+          {accessState === "checking" ? (
+            <p>正在验证访问权限…</p>
+          ) : (
+            <>
+              <p>本工作台仅向受邀用户开放。请输入邀请人提供的邀请码。</p>
+              <form onSubmit={authorizeInvite}>
+                <label htmlFor="invite-code">邀请码</label>
+                <input
+                  id="invite-code"
+                  value={inviteCode}
+                  minLength={4}
+                  maxLength={128}
+                  autoComplete="one-time-code"
+                  onChange={(event) => setInviteCode(event.target.value)}
+                  placeholder="请输入邀请码"
+                  required
+                />
+                {inviteError && <div className="invite-error">{inviteError}</div>}
+                <button
+                  className="primary large"
+                  type="submit"
+                  disabled={authorizing}
+                >
+                  {authorizing ? "正在验证…" : "进入工作台"}
+                </button>
+              </form>
+              <small>邀请码不会保存在浏览器页面中，请勿转发给无关人员。</small>
+            </>
+          )}
+        </section>
+      </main>
+    );
   }
 
   return (
-    <main className="app-shell">
-      {notice ? <div className="toast">{notice}</div> : null}
-
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">岳</span>
-          <div>
-            <p>DAYUE · BID INTELLIGENCE</p>
-            <h1>标书智能工作台</h1>
-          </div>
+    <main className="workbench">
+      <header className="masthead">
+        <div className="brand-lockup">
+          <div className="brand-seal">岳</div>
+          <div><small>DAYUE BID AGENT</small><h1>技术方案工作台</h1></div>
         </div>
-        <div className="project-summary">
-          <div>
-            <span className="summary-label">当前项目</span>
-            <strong>自贡市智慧文旅咨询服务项目</strong>
-          </div>
-          <span className="demo-badge">演示模式</span>
-          <button className="avatar" aria-label="用户菜单">
-            ZL
-          </button>
+        <div className="project-switcher">
+          <span>{workspace ? workspace.name : "上传招标文件即可开始"}</span>
+          <b className="live-badge">机构私有</b>
         </div>
       </header>
 
-      <div className="app-body">
-        <aside className="sidebar">
-          <div className="progress-card">
-            <div className="progress-heading">
-              <span>项目进度</span>
-              <strong>{projectProgress}%</strong>
-            </div>
-            <div className="progress-track">
-              <i style={{ width: `${projectProgress}%` }} />
-            </div>
+      <div className="workspace">
+        <aside className="rail">
+          <div className="progress-box">
+            <span>方案进度</span><strong>{progress}%</strong>
+            <i><em style={{ width: `${progress}%` }} /></i>
           </div>
-
-          <nav className="step-nav" aria-label="方案编制步骤">
-            {steps.map((step, index) => {
-              const activeIndex = steps.findIndex(
-                (item) => item.id === activeStep,
-              );
-              const isComplete = index < activeIndex;
-              return (
-                <button
-                  key={step.id}
-                  className={`${activeStep === step.id ? "active" : ""} ${
-                    isComplete ? "complete" : ""
-                  }`}
-                  onClick={() => setActiveStep(step.id)}
-                >
-                  <span className="step-dot">
-                    {isComplete ? "✓" : step.number}
-                  </span>
-                  <span>
-                    <strong>{step.title}</strong>
-                    <small>{step.subtitle}</small>
-                  </span>
-                </button>
-              );
-            })}
+          <nav>
+            {visibleSteps.map((item, index) => (
+              <button
+                key={item.id}
+                className={step === item.id ? "active" : ""}
+                disabled={!workspace && item.id !== "upload"}
+                onClick={() => setStep(item.id)}
+              >
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <div><strong>{item.title}</strong><small>{item.subtitle}</small></div>
+              </button>
+            ))}
           </nav>
-
-          <div className="sidebar-help">
-            <span>?</span>
-            <div>
-              <strong>使用帮助</strong>
-              <p>按四个步骤完成技术方案</p>
-            </div>
+          <div className="privacy-note">
+            <strong>私有知识库边界</strong>
+            <p>页面刷新或重新打开后会回到上传入口，不显示历史方案或历史导出文件。其他 IP 无法读取或下载。</p>
           </div>
         </aside>
 
-        <section className="content">
-          {activeStep === "materials" && (
-            <div className="page-enter">
-              <div className="page-heading">
-                <div>
-                  <span className="kicker">STEP 01 · 项目材料</span>
-                  <h2>从招标文件开始</h2>
-                  <p>上传采购文件，系统将保留原文页码并提取技术要求与评分点。</p>
-                </div>
-                <button
-                  className="primary-button"
-                  onClick={() => setActiveStep("requirements")}
-                >
-                  查看提取结果 <span>→</span>
-                </button>
-              </div>
+        <section className="stage">
+          <div className="stage-header">
+            <div>
+              <span className="eyebrow">CONTROLLED PROPOSAL WORKFLOW</span>
+              <h2>{visibleSteps.find((item) => item.id === step)?.title}</h2>
+              <p>{!workspace ? "PDF 先转为可编辑 Word，再自动判断是否存在响应模板。" : workspace.generation_mode === "strict_template" ? "已检测到可编辑响应模板：系统自动预填，业务人员只审核。" : workspace.generation_mode === "planned" ? "已确认无响应模板：进入目录与方案生成。" : "PDF 转 Word 尚未通过结构验证：未进入任何写作引擎。"}</p>
+            </div>
+            {busy && <div className="busy-pill" role="status" aria-live="polite"><i />{busy}</div>}
+          </div>
+          {error && (
+            <div className="message error">
+              <span>{error}</span>
+              {workspace?.status === "draft" && workspace.processing_retryable && (
+                <button onClick={retryWorkspace}>继续处理</button>
+              )}
+            </div>
+          )}
+          {notice && <div className="message success">{notice}</div>}
 
-              <div className="material-grid">
-                <div className="upload-card">
-                  <div className="upload-icon">↑</div>
-                  <h3>上传招标文件</h3>
-                  <p>支持 PDF、DOCX，单个文件不超过 20MB</p>
-                  <label className="file-button">
-                    选择文件
-                    <input
-                      type="file"
-                      accept=".pdf,.docx"
-                      onChange={selectFile}
-                    />
-                  </label>
-                  <small>也可以将文件拖放到此区域</small>
-                </div>
-
-                <div className="document-card">
-                  <div className="card-title-row">
-                    <div>
-                      <span className="section-label">已上传材料</span>
-                      <h3>项目资料清单</h3>
-                    </div>
-                    <span className="count-chip">1 份文件</span>
-                  </div>
-                  <div className="document-row">
-                    <span className="file-type">DOC</span>
-                    <div className="file-info">
-                      <strong>{fileName}</strong>
-                      <span>4.8 MB · 2026-07-28 上传</span>
-                      <div className="file-meta">
-                        <i>{isParsing ? "正在解析" : "解析完成"}</i>
-                        <span>86 页</span>
-                        <span>312 个段落</span>
-                      </div>
-                    </div>
-                    <button className="more-button" aria-label="文件操作">
-                      ···
-                    </button>
-                  </div>
-                  <div className="parse-summary">
-                    <div>
-                      <span>5</span>
-                      <p>关键要求</p>
-                    </div>
-                    <div>
-                      <span>2</span>
-                      <p>评分项</p>
-                    </div>
-                    <div>
-                      <span>20</span>
-                      <p>相关分值</p>
-                    </div>
-                    <div>
-                      <span>100%</span>
-                      <p>页码可追溯</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="info-strip">
-                <span className="info-icon">i</span>
-                <div>
-                  <strong>当前是可交互的前端演示</strong>
-                  <p>
-                    页面已内置一份示例招标文件及解析结果。后续接入后端后，上传和解析状态会替换为真实数据。
-                  </p>
-                </div>
+          {step === "upload" && (
+            <div className="upload-hero">
+              <span className="panel-label">START FROM THE TENDER</span>
+              <h3>只需上传招标文件</h3>
+              <p>DOCX 直接检测；PDF 先在私有环境转成可编辑 Word 再检测。有模板严格回填，确认无模板才生成目录。</p>
+              <label className={`upload-zone hero ${busy ? "disabled" : ""}`}>
+                <input type="file" accept=".pdf,.docx" disabled={Boolean(busy)} onChange={upload} />
+                <strong>选择 PDF 或 DOCX 招标文件</strong>
+                <span>文件仅在机构私有环境中处理</span>
+              </label>
+              <div className="pipeline">
+                {["文件检查", "格式识别", "数据匹配", "自动预填", "人工审核"].map((item, index) => (
+                  <div key={item}><b>{index + 1}</b><span>{item}</span></div>
+                ))}
               </div>
             </div>
           )}
 
-          {activeStep === "requirements" && (
-            <div className="page-enter">
-              <div className="page-heading compact">
-                <div>
-                  <span className="kicker">STEP 02 · 招标要求</span>
-                  <h2>确认系统提取的要求</h2>
-                  <p>逐项核对要求及原文依据，确认后用于目录规划和章节审核。</p>
-                </div>
-                <div className="heading-actions">
-                  <span className="confirmed-stat">
-                    <strong>{confirmedCount}</strong> / {requirements.length} 已确认
-                  </span>
+          {step === "requirements" && (
+            <div className="requirement-layout">
+              <div className="section-toolbar response-summary">
+                <div><strong>{workspace?.response_summary?.total ?? 0}</strong><span>总响应事项</span></div>
+                <div><strong>{workspace?.response_summary?.proposal ?? 0}</strong><span>技术方案事项</span></div>
+                <div><strong>{workspace?.response_summary?.scoring ?? 0}</strong><span>评分响应事项</span></div>
+                <div><strong>{workspace?.response_summary?.compliance ?? 0}</strong><span>商务合规事项</span></div>
+                <div><strong>{workspace?.response_summary?.risk ?? 0}</strong><span>P0 风险事项</span></div>
+                <button className="primary" disabled={Boolean(busy)} onClick={() => setStep("outline")}>下一步：查看推荐目录</button>
+              </div>
+              <div className="requirement-tabs" role="tablist" aria-label="要求分类">
+                {requirementTabs.map((tab) => (
                   <button
-                    className="primary-button"
-                    onClick={confirmAllRequirements}
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={requirementView === tab.id}
+                    className={requirementView === tab.id ? "active" : ""}
+                    disabled={Boolean(busy)}
+                    onClick={() => showRequirements(tab.id)}
                   >
-                    全部确认
+                    {tab.label}
                   </button>
+                ))}
+              </div>
+              <div className="requirement-guidance">
+                <div>
+                  <strong>响应事项分析</strong>
+                  <span>这里回答“如何响应、写在哪里、有什么风险”；人工切换归类会同步更新推荐目录。</span>
+                </div>
+                <div className="feedback-summary" aria-label="人工确认进度">
+                  <span><b>{feedbackSummary.pending}</b> 待判断</span>
+                  <span><b>{feedbackSummary.ignored}</b> 已忽略</span>
+                  {feedbackSummary.issues > 0 && <span className="warning"><b>{feedbackSummary.issues}</b> 条问题反馈</span>}
                 </div>
               </div>
-
-              <div className="requirement-layout">
-                <div className="requirement-list">
-                  <div className="list-toolbar">
-                    <span>要求清单</span>
-                    <div>
-                      <button className="filter-button active">全部</button>
-                      <button className="filter-button">评分项</button>
-                      <button className="filter-button">待确认</button>
-                    </div>
-                  </div>
-                  {requirements.map((item) => (
-                    <button
-                      key={item.id}
-                      className={`requirement-item ${
-                        selectedRequirement === item.id ? "selected" : ""
-                      }`}
-                      onClick={() => setSelectedRequirement(item.id)}
-                    >
-                      <span
-                        className={`check-box ${
-                          item.confirmed ? "checked" : ""
-                        }`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleRequirement(item.id);
-                        }}
-                      >
-                        {item.confirmed ? "✓" : ""}
-                      </span>
-                      <span className="requirement-copy">
-                        <span className="requirement-meta">
-                          <i className={requirementTag(item.category)}>
-                            {item.category}
-                          </i>
-                          <small>{item.id}</small>
-                          {item.score ? <b>{item.score} 分</b> : null}
-                        </span>
+              {responseSupport && (responseSupport.format_requirements.length > 0 || responseSupport.qualification_responses.length > 0) && (
+                <div className="support-overview">
+                  <details open={responseSupport.format_requirements.some((item) => item.fidelity === "exact_template")}>
+                    <summary>交付格式清单 <b>{responseSupport.format_requirements.length}</b></summary>
+                    {responseSupport.format_requirements.length === 0 ? <p>未识别到独立格式约束。</p> : responseSupport.format_requirements.map((item) => (
+                      <article key={item.requirement_id}>
                         <strong>{item.title}</strong>
-                        <p>{item.detail}</p>
+                        <span>{item.fidelity === "exact_template" ? "必须按原模板填写，导出后人工复核" : "保持字段和结构一致"}</span>
+                        <p>{item.instruction}</p>
+                        <details><summary>查看招标原文</summary><blockquote>{item.source_text}</blockquote></details>
+                      </article>
+                    ))}
+                  </details>
+                  <details>
+                    <summary>资格材料响应 <b>{responseSupport.qualification_responses.length}</b></summary>
+                    {responseSupport.qualification_responses.length === 0 ? <p>当前未识别到资格附件事项。</p> : responseSupport.qualification_responses.map((item) => (
+                      <article key={item.requirement_id}>
+                        <strong>{item.requirement}</strong>
+                        <span>{item.status === "matched_verified" ? "已匹配核验材料" : "未找到已核验材料，需人工补充"}</span>
+                        {item.matches.map((match, matchIndex) => (
+                          <details key={`${match.title}-${matchIndex}`}>
+                            <summary>{match.title} · 匹配 {Math.round(match.score * 100)}% · {match.verified ? "事实已核验" : "待核验"}</summary>
+                            <p>材料：{match.asset_kind === "image" ? "图片/扫描件" : "文档附件"} · {match.asset_available ? "文件已关联" : "尚未关联真实文件"}</p>
+                            <p>来源：{match.source_file}{match.source_page ? ` · 第 ${match.source_page} 页` : ""}{match.source_location ? ` · ${match.source_location}` : " · 尚缺原文件位置"}</p>
+                            <p>回填位置：{match.target_location} · {match.insertion_status === "ready_for_review" ? "可进入人工审核" : "补齐文件及定位后再回填"}</p>
+                            {match.source_excerpt && <blockquote>{match.source_excerpt}</blockquote>}
+                          </details>
+                        ))}
+                      </article>
+                    ))}
+                  </details>
+                </div>
+              )}
+              {requirementView === "conflicts" && conflicts.map((item) => (
+                <article className={`requirement-card ${item.risk_priority === "P0" ? "scoring-card" : ""}`} key={item.conflict_id}>
+                  <div className="requirement-top">
+                    <div className="requirement-tags">
+                      <span className="type-tag compliance_requirement">
+                        {item.conflict_type === "true_conflict" ? "真实冲突" : item.conflict_type === "positive_difference" ? "评分增强项" : item.conflict_type === "potential_conflict" ? "待复核差异" : "兼容差异"}
                       </span>
-                      <span className="row-arrow">›</span>
+                      <span className="importance-tag high">{item.risk_priority}</span>
+                    </div>
+                    <span className="confidence">{item.resolution_status === "resolved" ? "已解决" : "待处理"}</span>
+                  </div>
+                  <h3>{item.topic}</h3>
+                  <p>{item.description}</p>
+                  <div className="strategy-grid">
+                    <div><span>来源 A · 权威等级 {item.source_a_authority_level}</span><strong>{item.source_a.document}</strong></div>
+                    <div><span>来源 B · 权威等级 {item.source_b_authority_level}</span><strong>{item.source_b.document}</strong></div>
+                    <div><span>影响章节</span><strong>{item.affected_sections.join("、") || "不影响技术章节"}</strong></div>
+                  </div>
+                  <details>
+                    <summary>查看两处原文</summary>
+                    <blockquote>{item.source_a.text}</blockquote>
+                    <blockquote>{item.source_b.text}</blockquote>
+                  </details>
+                  {item.conflict_type === "true_conflict" && (
+                    <div className="card-actions feedback-actions">
+                      <button disabled={Boolean(busy)} onClick={() => resolveConflict(item, "choose_a")}>采用 A</button>
+                      <button disabled={Boolean(busy)} onClick={() => resolveConflict(item, "choose_b")}>采用 B</button>
+                      <button disabled={Boolean(busy)} onClick={() => resolveConflict(item, "keep_both")}>分别响应</button>
+                      <button disabled={Boolean(busy)} onClick={() => resolveConflict(item, "request_clarification")}>提交澄清</button>
+                    </div>
+                  )}
+                </article>
+              ))}
+              {requirementView !== "conflicts" && Object.entries(grouped).map(([chapter, items]) => (
+                <details className="requirement-group" key={chapter} open={Object.keys(grouped).length <= 3}>
+                  <summary><h3>{chapter}<small>{items.length} 条同类响应事项</small></h3><span>{responseActionLabels[items[0].response_action]} · 一起归类和写入</span></summary>
+                  <div className="requirement-list">
+                    {items.map((item) => (
+                      <article className={`requirement-card feedback-${item.feedback} ${item.scoring_impact === "score_item" ? "scoring-card" : ""}`} key={item.id}>
+                        <div className="requirement-top">
+                          <div className="requirement-tags">
+                            <span className={`type-tag ${item.type}`}>{typeLabels[item.type]}</span>
+                            <span className={`importance-tag ${item.importance}`}>{importanceLabels[item.importance]}</span>
+                          </div>
+                          <span className="confidence">判断置信度 {Math.round(item.classification_confidence * 100)}%</span>
+                        </div>
+                        <h3>{item.title}</h3>
+                        <p>{item.normalized_text}</p>
+                        {item.semantic_graph?.focus_summary && (
+                          <details className="requirement-semantics">
+                            <summary>查看业务实体与关系</summary>
+                            <strong>{item.semantic_graph.focus_summary}</strong>
+                            {item.semantic_graph.relations.length > 0 && <ul>{item.semantic_graph.relations.map((relation, index) => (
+                              <li key={`${relation.predicate}-${index}`}>{entityLabel(item, relation.subject)} → {relation.predicate_label} → {entityLabel(item, relation.object)}</li>
+                            ))}</ul>}
+                            {item.semantic_graph.actions.length > 0 && <p>响应动作：{Array.from(new Set(item.semantic_graph.actions.map((action) => action.action_label))).join("、")}</p>}
+                            {item.semantic_graph.constraints.length > 0 && <p>签字、盖章等仅作为办理约束：{item.semantic_graph.constraints.join("、")}</p>}
+                          </details>
+                        )}
+                        <div className="strategy-grid">
+                          <div><span>类型</span><strong>{typeLabels[item.type]}</strong></div>
+                          <div><span>响应方式</span><strong>{responseActionLabels[item.response_action]}</strong></div>
+                          <div><span>影响</span><strong>{scoringImpactLabels[item.scoring_impact]}</strong></div>
+                          <div><span>优先级</span><strong>{item.priority}</strong></div>
+                          <div><span>方案价值</span><strong>{item.proposal_value > 0 ? "★".repeat(item.proposal_value) : "不进入正文"}</strong></div>
+                          <div><span>是否进入技术正文</span><strong>{item.response_action === "write_into_proposal" ? "是" : "否"}</strong></div>
+                          {item.proposal_mapping && <div><span>章节</span><strong>{item.proposal_mapping}</strong></div>}
+                        </div>
+                        <details><summary>查看原文依据</summary><blockquote>{item.quote}</blockquote>
+                          <div className="source-row">{item.sources.map((source) => <span key={source.id}>{source.filename} · {sourceLabel(source)}</span>)}</div>
+                        </details>
+                        <div className="card-actions feedback-actions" aria-label="人工确认">
+                          <span>
+                            {item.feedback === "pending"
+                              ? "请选择处理方式"
+                              : item.feedback === "confirmed"
+                              ? "已确认当前处理"
+                              : `已忽略 · ${ignoreFeedbackLabels[item.feedback as IgnoreFeedback]}`}
+                          </span>
+                          <button
+                            className={item.feedback === "confirmed" ? "selected" : ""}
+                            disabled={Boolean(busy)}
+                            onClick={() => recordRequirementFeedback(item, "confirmed")}
+                          >确认当前处理</button>
+                          <button
+                            disabled={Boolean(busy)}
+                            onClick={() => updateRequirementStrategy(
+                              item,
+                              item.response_action === "write_into_proposal"
+                                ? "compliance"
+                                : "proposal",
+                            )}
+                          >
+                            {item.response_action === "write_into_proposal"
+                              ? "转为商务合规"
+                              : "转为技术方案"}
+                          </button>
+                          <button
+                            className={item.feedback !== "pending" && item.feedback !== "confirmed" ? "selected warning" : ""}
+                            disabled={Boolean(busy)}
+                            onClick={() => setIgnoreMenuId((current) => current === item.id ? "" : item.id)}
+                          >忽略</button>
+                        </div>
+                        {ignoreMenuId === item.id && (
+                          <div className="ignore-reasons" role="group" aria-label="选择忽略原因">
+                            <strong>为什么忽略？</strong>
+                            {(Object.entries(ignoreFeedbackLabels) as [IgnoreFeedback, string][]).map(([value, label]) => (
+                              <button
+                                key={value}
+                                className={item.feedback === value ? "selected" : ""}
+                                disabled={Boolean(busy)}
+                                onClick={() => recordRequirementFeedback(item, value)}
+                              >{label}</button>
+                            ))}
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
+
+          {step === "outline" && (
+            <div className="outline-layout">
+              {workspace?.template_outline?.length > 0 && (
+                <section className="panel template-outline-panel">
+                  <div>
+                    <span className="panel-label">TENDER RESPONSE FORMAT</span>
+                    <h3>招标文件规定的投标文件格式</h3>
+                    <p>已从原文件识别 {workspace.template_outline.length} 个标题，最多保留五级层次。正式装配时以此结构为准，不由 AI 擅自改名。</p>
+                  </div>
+                  <ol className="template-outline-tree">
+                    {workspace.template_outline.map((item) => (
+                      <li key={`${item.order}-${item.title}`} data-level={item.level}>
+                        <b>{item.order}</b><span>{item.title}</span><small>{item.level} 级</small>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              )}
+              <div className="section-toolbar">
+                <div><strong>{sections.length}</strong><span>个推荐章节</span></div>
+                <p>可改名和调整顺序，不需要逐条确认要求。</p>
+                <button className="primary" onClick={saveOutline}>确认目录并开始写作</button>
+              </div>
+              <div className="outline-list">
+                {sections.map((section, index) => (
+                  <article key={section.id}>
+                    <b>{String(index + 1).padStart(2, "0")}</b>
+                    <input value={section.title} onChange={(event) => updateChapter(index, event.target.value)} />
+                    <span>映射 {section.requirement_ids.length} 条要求</span>
+                    <button onClick={() => moveChapter(index, -1)} disabled={index === 0}>↑</button>
+                    <button onClick={() => moveChapter(index, 1)} disabled={index === sections.length - 1}>↓</button>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {step === "writer" && (
+            <div className="writer-layout">
+              <aside className="panel writer-sidebar">
+                <span className="panel-label">CHAPTERS</span>
+                <h3>技术方案目录</h3>
+                <button
+                  className="primary"
+                  disabled={Boolean(busy) || sections.length === 0}
+                  onClick={generateCompleteDraft}
+                >一键生成整本初稿</button>
+                <p>后台按章生成和校核，断线不丢失；不会自动代替人工确认。</p>
+                <div className="saved-sections">
+                  {sections.map((section, index) => (
+                    <button key={section.id} className={section.id === activeSectionId ? "active" : ""} onClick={() => selectSection(section)}>
+                      <strong>{index + 1}. {section.title}</strong><span>{section.status === "approved" ? "已确认" : section.current_version ? "待确认" : "待生成"}</span>
                     </button>
                   ))}
                 </div>
-
-                <aside className="source-panel">
-                  <div className="source-heading">
+              </aside>
+              <div className="editor-panel">
+                {activeSection ? <>
+                  <div className="editor-bar">
+                    <div><strong>{activeSection.title}</strong><span>响应 {activeSection.requirement_ids.length} 条要求</span></div>
                     <div>
-                      <span className="section-label">原文依据</span>
-                      <h3>{currentRequirement?.title}</h3>
+                      <button className="primary" onClick={() => generateSection(activeSection)}>{activeSection.current_version ? "按要求重新生成" : "生成本章"}</button>
+                      {activeSection.current_version && <button className="secondary" onClick={saveSection}>保存修改</button>}
+                      {activeSection.current_version && <button className="primary" onClick={approveSection}>人工确认</button>}
                     </div>
-                    <span className="page-chip">
-                      第 {currentRequirement?.page} 页
-                    </span>
                   </div>
-                  <blockquote>“{currentRequirement?.source}”</blockquote>
-                  <div className="source-location">
-                    <span>采购文件</span>
-                    <i>›</i>
-                    <span>第五章 采购需求</span>
-                    <i>›</i>
-                    <strong>技术要求</strong>
+                  <div className="generation-instruction">
+                    <label htmlFor="generation-instruction">本章微调要求（可选）</label>
+                    <div className="length-controls">
+                      <label>最少字数<input type="number" min={200} max={20000} value={minChapterChars} onChange={(event) => setMinChapterChars(Number(event.target.value))} /></label>
+                      <label>最多字数<input type="number" min={200} max={20000} value={maxChapterChars} onChange={(event) => setMaxChapterChars(Number(event.target.value))} /></label>
+                    </div>
+                    <select value={caseReferenceMode} onChange={(event) => setCaseReferenceMode(event.target.value as typeof caseReferenceMode)} aria-label="历史案例参考方式">
+                      <option value="balanced">综合参考多个相似案例</option>
+                      <option value="closest_case">尽量贴近最相似案例</option>
+                      <option value="structure_only">仅参考案例结构</option>
+                      <option value="current_only">不参考历史案例</option>
+                    </select>
+                    <textarea
+                      id="generation-instruction"
+                      value={generationInstruction}
+                      maxLength={1000}
+                      onChange={(event) => setGenerationInstruction(event.target.value)}
+                      placeholder="例如：更突出进度控制；语言简洁一些；按准备、实施、验收三个阶段展开。不能要求系统虚构企业事实。"
+                    />
+                    <span>{generationInstruction.length}/1000</span>
                   </div>
-                  <button className="secondary-button">在原文件中查看</button>
-                  <div className="trace-note">
-                    <span>✓</span>
-                    <p>该要求已关联原始文件、页码和原文片段，生成章节时将自动保留响应关系。</p>
-                  </div>
-                </aside>
-              </div>
-
-              <div className="bottom-action">
-                <div>
-                  <strong>确认无遗漏后进入技术方案</strong>
-                  <span>未确认项仍可保留，但不会进入自动生成范围。</span>
-                </div>
-                <button
-                  className="primary-button"
-                  onClick={() => setActiveStep("proposal")}
-                >
-                  生成方案目录 <span>→</span>
-                </button>
+                  {activeSection.findings.length > 0 && <div className="findings">{activeSection.findings.map((item) => <p className="warning" key={item.id}>{item.message}</p>)}</div>}
+                  <textarea
+                    value={editorContent}
+                    onChange={(event) => setEditorContent(event.target.value)}
+                    placeholder="点击“生成本章”，系统将严格依据本章映射的技术要求撰写。"
+                    disabled={!activeSection.current_version}
+                  />
+                </> : <div className="empty-state">请先确认推荐目录。</div>}
               </div>
             </div>
           )}
 
-          {activeStep === "proposal" && (
-            <div className="page-enter proposal-page">
-              <div className="page-heading compact">
-                <div>
-                  <span className="kicker">STEP 03 · 技术方案</span>
-                  <h2>按章节生成和审核</h2>
-                  <p>每章对应明确的招标要求，生成后自动检查覆盖度与内容质量。</p>
-                </div>
-                <button className="secondary-button" onClick={finishAllSections}>
-                  完成全部章节（演示）
-                </button>
+          {step === "export" && (
+            <div className={`export-layout ${usesTemplateFlow ? "strict-export" : ""}`}>
+              <div className="delivery-card">
+                <div className="delivery-icon">W</div>
+                <div><span className="panel-label">DELIVERABLE</span><h3>{workspace?.name ?? "技术方案"}</h3><p>{conversionPending ? "PDF 转换未通过结构验证，已停止后续写作，避免生成一套错误目录。" : workspace?.generation_mode === "strict_template" && sections.length === 0 ? "系统将直接在原投标文件格式中回填已匹配字段，不额外虚构技术章节。" : "系统将按目录顺序合并所有已人工确认章节，并附技术要求来源总表。"}</p></div>
+                <span className={`approval ${(workspace?.generation_mode === "strict_template" && sections.length === 0) || (sections.length > 0 && sections.every((item) => item.status === "approved")) ? "ready" : ""}`}>{conversionPending ? "转换待处理" : workspace?.generation_mode === "strict_template" && sections.length === 0 ? "原格式字段待审核" : sections.length > 0 && sections.every((item) => item.status === "approved") ? "全部章节已确认" : "需逐章生成并确认"}</span>
               </div>
-
-              <div className="proposal-layout">
-                <aside className="outline-panel">
-                  <div className="outline-heading">
+              <div className="panel export-actions">
+                <h3>生成交付文件</h3>
+                <p>一次完成来源校核、真实性检查和 Word 生成；阻断问题必须处理后才能正式导出。</p>
+                {conversionPending && (
+                  <div className="message error conversion-status-card">
                     <div>
-                      <span className="section-label">方案目录</span>
-                      <h3>技术方案</h3>
+                      <strong>检测到 PDF，但尚无法可靠转换</strong>
+                      <p>{workspace?.template_conversion_report?.message || "转换后的 Word 未通过可编辑结构验证。"}</p>
+                      <small>系统已保留原 PDF 和解析结果，且未调用目录写作引擎。请上传该文件的可编辑 DOCX 版。</small>
                     </div>
-                    <button aria-label="添加章节">＋</button>
                   </div>
-                  <div className="outline-progress">
-                    <span>{reviewedCount} / {sections.length} 章已完成</span>
+                )}
+                {responseSupport?.manual_action_archive && workspace?.generation_mode === "planned" && (
+                  <details className="manual-archive" open={responseSupport.manual_action_archive.pending > 0}>
+                    <summary>
+                      人工事项档案
+                      <b>{responseSupport.manual_action_archive.pending} 项待处理</b>
+                    </summary>
+                    <p>系统集中记录需要补充到企业数据库或人工审核的内容；业务人员只审核，不在此页重复录入。</p>
                     <div>
-                      <i
-                        style={{
-                          width: `${(reviewedCount / sections.length) * 100}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="section-list">
-                    {sections.map((section) => (
-                      <button
-                        key={section.id}
-                        className={
-                          selectedSection === section.id ? "selected" : ""
-                        }
-                        onClick={() => {
-                          setSelectedSection(section.id);
-                          setGeneratedContent(
-                            section.words > 0 ? sampleContent : "",
-                          );
-                        }}
-                      >
-                        <span
-                          className={`section-state ${section.status}`}
-                          aria-label={section.status}
-                        >
-                          {section.status === "reviewed"
-                            ? "✓"
-                            : section.status === "drafting"
-                              ? "◐"
-                              : "·"}
-                        </span>
-                        <span>
-                          <small>{section.number}</small>
-                          <strong>{section.title}</strong>
-                          <i>
-                            {section.words
-                              ? `${section.words.toLocaleString()} 字`
-                              : "等待生成"}
-                          </i>
-                        </span>
-                        {section.score ? (
-                          <b className="section-score">{section.score}</b>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
-                </aside>
-
-                <section className="editor-panel">
-                  <div className="editor-heading">
-                    <div>
-                      <span>
-                        {currentSection?.number} · {currentSection?.id}
-                      </span>
-                      <h3>{currentSection?.title}</h3>
-                    </div>
-                    <div className="editor-actions">
-                      <button className="ghost-button">调整要求</button>
-                      <button
-                        className="primary-button"
-                        onClick={generateSection}
-                        disabled={isGenerating}
-                      >
-                        {isGenerating ? "正在生成…" : "生成本章"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="response-map">
-                    <span>本章响应</span>
-                    {currentSection?.requirementIds.map((id) => {
-                      const requirement = requirements.find(
-                        (item) => item.id === id,
-                      );
-                      return (
-                        <button
-                          key={id}
-                          onClick={() => {
-                            setSelectedRequirement(id);
-                            setActiveStep("requirements");
-                          }}
-                        >
-                          {id} · {requirement?.title}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {isGenerating ? (
-                    <div className="generating-state">
-                      <div className="generating-orbit">
-                        <i />
-                      </div>
-                      <h3>正在编写“{currentSection?.title}”</h3>
-                      <p>检索历史材料 → 组织章节结构 → 生成正文 → 自动校核</p>
-                    </div>
-                  ) : generatedContent ? (
-                    <article className="document-editor">
-                      <div className="editor-toolbar">
-                        <span>正文预览</span>
-                        <div>
-                          <button>B</button>
-                          <button>H2</button>
-                          <button>≡</button>
-                          <button>↗</button>
-                        </div>
-                        <small>{currentSection?.words || 2380} 字</small>
-                      </div>
-                      <h2>{currentSection?.title}</h2>
-                      {generatedContent.split("\n\n").map((paragraph) => (
-                        <p key={paragraph}>{paragraph}</p>
+                      {responseSupport.manual_action_archive.items.map((item) => (
+                        <article key={item.key} className={item.status}>
+                          <span>{item.status === "completed" ? "已完成" : "待处理"}</span>
+                          <strong>{item.title}</strong>
+                          <p>{item.instruction}</p>
+                          <small>影响范围：{item.blocking_scope}</small>
+                        </article>
                       ))}
-                    </article>
-                  ) : (
-                    <div className="empty-editor">
-                      <span>✦</span>
-                      <h3>该章节尚未生成</h3>
-                      <p>系统将根据关联要求和历史案例逐章编写，不会一次生成整本方案。</p>
-                      <button className="primary-button" onClick={generateSection}>
-                        开始生成本章
-                      </button>
                     </div>
-                  )}
-                </section>
-
-                <aside className="review-panel">
-                  <div className="review-heading">
-                    <span className="section-label">自动校核</span>
-                    <h3>章节质量</h3>
-                  </div>
-                  <div className="score-ring">
-                    <div>
-                      <strong>{currentSection?.score ?? "--"}</strong>
-                      <span>综合评分</span>
-                    </div>
-                  </div>
-                  <div className="review-list">
-                    <div>
-                      <span className="review-status good">✓</span>
-                      <p>
-                        <strong>要求覆盖</strong>
-                        <small>关联要求已完整响应</small>
-                      </p>
-                    </div>
-                    <div>
-                      <span className="review-status good">✓</span>
-                      <p>
-                        <strong>事实检查</strong>
-                        <small>未发现虚构案例或参数</small>
-                      </p>
-                    </div>
-                    <div>
-                      <span className="review-status warn">!</span>
-                      <p>
-                        <strong>内容建议</strong>
-                        <small>可补充成果交付时间表</small>
-                      </p>
-                    </div>
-                  </div>
-                  <button className="secondary-button full">查看审核详情</button>
-                </aside>
-              </div>
-
-              <div className="bottom-action">
-                <div>
-                  <strong>章节可随时重写或人工编辑</strong>
-                  <span>所有生成结果和审核记录都会保留版本。</span>
-                </div>
-                <button
-                  className="primary-button"
-                  onClick={() => setActiveStep("export")}
-                >
-                  查看导出结果 <span>→</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {activeStep === "export" && (
-            <div className="page-enter export-page">
-              <div className="page-heading">
-                <div>
-                  <span className="kicker">STEP 04 · 导出结果</span>
-                  <h2>交付前最后检查</h2>
-                  <p>确认章节完整性和审核状态，然后生成可继续编辑的 Word 文档。</p>
-                </div>
-              </div>
-
-              <div className="export-grid">
-                <div className="export-preview">
-                  <div className="paper">
-                    <span className="paper-brand">大岳咨询</span>
-                    <div className="paper-rule" />
-                    <p>自贡市智慧文旅新型基础设施建设项目</p>
-                    <h3>技术方案</h3>
-                    <span className="paper-subtitle">咨询服务采购项目响应文件</span>
-                    <div className="paper-seal">岳</div>
-                    <small>二〇二六年七月</small>
-                  </div>
-                </div>
-
-                <div className="export-summary">
-                  <span className="section-label">交付检查</span>
-                  <h3>技术方案已准备就绪</h3>
-                  <p className="export-description">
-                    文档共 {sections.length} 个章节，预计 38 页。正式导出将套用公司 Word
-                    模板并生成自动目录。
-                  </p>
-
-                  <div className="checklist">
-                    <div>
-                      <span className="check-icon">✓</span>
-                      <p>
-                        <strong>招标要求</strong>
-                        <small>{requirements.length} 项要求已建立原文追溯</small>
-                      </p>
-                      <b>{confirmedCount}/{requirements.length}</b>
-                    </div>
-                    <div>
-                      <span
-                        className={`check-icon ${
-                          readyToExport ? "" : "pending"
-                        }`}
-                      >
-                        {readyToExport ? "✓" : "!"}
-                      </span>
-                      <p>
-                        <strong>方案章节</strong>
-                        <small>逐章生成并完成自动校核</small>
-                      </p>
-                      <b>{reviewedCount}/{sections.length}</b>
-                    </div>
-                    <div>
-                      <span className="check-icon">✓</span>
-                      <p>
-                        <strong>事实安全</strong>
-                        <small>未发现无依据的案例、资质和参数</small>
-                      </p>
-                      <b>通过</b>
-                    </div>
-                    <div>
-                      <span className="check-icon">✓</span>
-                      <p>
-                        <strong>格式规范</strong>
-                        <small>标题层级、页码和自动目录已配置</small>
-                      </p>
-                      <b>通过</b>
+                  </details>
+                )}
+                {workspace?.generation_mode === "strict_template" && (
+                  <div className="template-fields">
+                    <div className="strict-fill-workbench">
+                      <section className="fill-preview-pane">
+                        <header><span className="panel-label">OUTPUT PREVIEW</span><h3>当前产出文件预览</h3><small>《AI投标文件_{workspace.name}》审阅稿</small></header>
+                        <WordDocumentPreview
+                          workspace={workspace}
+                          target={previewTarget}
+                          busy={Boolean(busy)}
+                          onSave={(variableKey, value) => reviewTemplateVariable(variableKey, "confirm", value)}
+                        />
+                      </section>
+                      <section className="fill-review-pane">
+                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验实体关系并导出</h3><p>左侧始终预览当前产出文件。“在产出预览中定位”用于核验回填结果；只有点击“查看采购文件原文”才打开采购文件出处。</p><a className="ontology-link" href="/ontology">打开业务关系图</a></header>
+                        <div className="font-fidelity-note">
+                          <b>已自动继承原模板字体</b>
+                          <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>
+                          <small>回填字段和生成正文均继承所在模板样式，不再强制替换为系统默认字体。</small>
+                        </div>
+                        <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
+                        {(workspace.template_actions ?? []).length > 0 && <div className="case-library-note"><b>已识别 {(workspace.template_actions ?? []).length} 项签章动作</b><span>{workspace.template_actions.map((action) => action.display_name).filter((value, index, values) => values.indexOf(value) === index).join("、")}；动作不再冒充待填文字。</span></div>}
+                        <div className="case-library-note"><b>{templateVariableGroups.length} 个待审核业务对象</b><span>表格按整表或业务对象处理，不要求逐格确认；页眉、页脚和原版式只继承保真，不进入回填清单。</span></div>
+                        <div className="fill-resolution-summary">
+                          <span>待匹配企业资料 {templateResolutionSummary.enterprisePending}</span>
+                          <span>待处理人员 {templateResolutionSummary.personGroupsPending} 组</span>
+                          <span>待生成响应 {templateResolutionSummary.responsePending}</span>
+                          {templateResolutionSummary.knowledgePending > 0 && <span>待整表匹配 {templateResolutionSummary.knowledgePending} 组</span>}
+                          {templateResolutionSummary.layoutManaged > 0 && <span>系统管理版式 {templateResolutionSummary.layoutManaged} 项</span>}
+                          {templateResolutionSummary.otherPending > 0 && <span>其他待处理 {templateResolutionSummary.otherPending}</span>}
+                          <span className={templateResolutionSummary.semanticReview ? "warning" : "ready"}>字段含义待确认 {templateResolutionSummary.semanticReview}</span>
+                        </div>
+                        {templateResolutionSummary.semanticReview > 0 ? <p className="template-field-warning">有 {templateResolutionSummary.semanticReview} 个空位无法从上下文唯一判断含义，需要人工确认；其他空位均已识别业务含义。</p> : missingTemplateDecisions.length > 0 ? <p className="template-field-ready">字段含义已全部识别。系统正在匹配对应资料，未取得可信值的空位不会猜写。</p> : <p className="template-field-ready">全部业务变量已匹配，请审核后导出。</p>}
+                        <div className="fill-decision-list">
+                          {templateVariableGroups.map((group) => group.items.length > 1 ? (
+                            <details key={group.key} className="fill-variable-group">
+                              <summary><span><strong>{group.label}</strong><small>{group.items.length} 个关联变量 · 点击展开横向核验</small></span><b>{group.statusLabel}</b></summary>
+                              <p>{group.items[0].target_entity_type === "Person" ? "同一对象的不同属性横向展示；确定人员后，姓名、职务、证书等资料将从同一人员档案自动联动。" : "同一对象的不同属性横向展示；系统分别匹配属性值，前端集中审核，不会重复创建对象。"}</p>
+                              <div className="fill-variable-group-items">{group.items.map(renderTemplateVariableDecision)}</div>
+                            </details>
+                          ) : renderTemplateVariableDecision(group.items[0]))}
+                        </div>
+                        {!exportItem && <button className="primary strict-export-button" disabled={Boolean(busy)} onClick={approveTemplateAndExport}>审核已匹配内容并生成原格式 Word</button>}
+                      </section>
                     </div>
                   </div>
-
-                  <div className="export-options">
-                    <label>
-                      <input type="checkbox" defaultChecked />
-                      包含要求响应索引
-                    </label>
-                    <label>
-                      <input type="checkbox" defaultChecked />
-                      包含自动目录和页码
-                    </label>
+                )}
+                {proposalReview && (
+                  <div className="review-summary ready">
+                    <strong>{proposalReview.overall.recommended_for_delivery ? "校核完成" : "校核完成，请留意建议"}</strong>
+                    <span>需求覆盖 {(proposalReview.overall.requirement_coverage_rate * 100).toFixed(0)}%</span>
+                    <span>评分点覆盖 {(proposalReview.overall.scoring_coverage_rate * 100).toFixed(0)}%</span>
+                    <span>来源追溯 {(proposalReview.overall.traceability_rate * 100).toFixed(0)}%</span>
+                    <span>重点提醒 {proposalReview.overall.blocking_risk_count}</span>
+                    <span>分类质量 {(proposalReview.classification_quality.quality_rate * 100).toFixed(0)}%</span>
+                    <span>低置信分类 {proposalReview.classification_quality.low_confidence_count}</span>
+                    <span>未映射章节 {proposalReview.classification_quality.unmapped_count}</span>
+                    <span>分类冲突 {proposalReview.classification_quality.conflict_count}</span>
+                    <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=md`}>下载可读 Review</a>
+                    <a href={`${API_BASE}/workspaces/${workspace?.id}/review/download?format=json`}>下载 JSON</a>
                   </div>
-
-                  <button className="export-button" onClick={downloadDemo}>
-                    <span>W</span>
-                    下载技术方案演示稿
-                  </button>
-                  <small className="export-note">
-                    当前下载 TXT 演示稿；DOCX 导出接口将在后端阶段接入。
-                  </small>
-                </div>
+                )}
+                {responseSupport && responseSupport.traceability.requirements.length > 0 && (
+                  <details className="traceability-map">
+                    <summary>查看 AI 响应与原文定位</summary>
+                    {responseSupport.traceability.requirements.map((item) => (
+                      <article key={item.requirement_id}>
+                        <strong>{item.title}</strong>
+                        <span>{item.generated_sections.length > 0 ? `AI 已响应：${item.generated_sections.join("、")}` : "未进入技术方案正文"}</span>
+                        <details>
+                          <summary>打开采购原文</summary>
+                          <blockquote>{item.source_text}</blockquote>
+                          <div className="source-row">{item.sources.map((source) => <span key={source.id}>{source.filename} · {sourceLabel(source)}</span>)}</div>
+                        </details>
+                      </article>
+                    ))}
+                    <details className="generated-trace-list">
+                      <summary>查看 AI 正文逐段来源</summary>
+                      {responseSupport.traceability.generated_paragraphs.map((item) => (
+                        <article key={`${item.section_id}-${item.paragraph_index}`}>
+                          <strong>{item.section_title} · 第 {item.paragraph_index + 1} 段</strong>
+                          <p>{item.generated_text}</p>
+                          {item.sources.length === 0 ? <span>未直接匹配输入证据，需人工复核</span> : item.sources.map((source, index) => (
+                            <details key={`${source.source_title}-${index}`}>
+                              <summary>{source.source_title} · {source.verification_status === "verified" ? "已核验" : "待核验"}</summary>
+                              {source.source_excerpt && <blockquote>{source.source_excerpt}</blockquote>}
+                              {source.source_location && <span>{source.source_location}</span>}
+                            </details>
+                          ))}
+                        </article>
+                      ))}
+                    </details>
+                  </details>
+                )}
+                {workspace?.generation_mode === "planned" && <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>}
+                {exportItem?.status === "succeeded" && workspace && (
+                  <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
+                )}
               </div>
             </div>
           )}
         </section>
       </div>
+      {workspace && sourcePreviewTarget && (
+        <SourceDocumentPreview
+          workspace={workspace}
+          target={sourcePreviewTarget}
+          onClose={() => setSourcePreviewTarget(null)}
+        />
+      )}
+      {evidenceItem && (
+        <div className="evidence-modal-backdrop" role="presentation" onMouseDown={() => setEvidenceItem(null)}>
+          <section className="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header><div><span className="panel-label">MATCH EVIDENCE</span><h3 id="evidence-modal-title">{evidenceItem.label} · 匹配依据</h3></div><button aria-label="关闭匹配依据" onClick={() => setEvidenceItem(null)}>×</button></header>
+            <dl><div><dt>来源文件</dt><dd>{visibleEvidenceSource(evidenceItem)}</dd></div><div><dt>原文位置</dt><dd>{visibleEvidenceLocation(evidenceItem)}</dd></div>{evidenceItem.evidence_match_count > 1 && <div><dt>一致匹配</dt><dd>{evidenceItem.evidence_match_count} 处</dd></div>}{(evidenceItem.evidence_alternatives ?? []).length > 0 && <div><dt>其他候选</dt><dd>{evidenceItem.evidence_alternatives.join("、")}</dd></div>}</dl>
+            <div className="evidence-context"><strong>原文上下文</strong><blockquote>{highlightedEvidence(evidenceItem.evidence_excerpt || evidenceItem.value || "当前来源记录暂无可展示的上下文。", evidenceItem.value)}</blockquote></div>
+            <p>黄色标记为本次自动匹配内容。仅展示该项目已获授权的原文片段，不暴露内部路径和系统字段。</p>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

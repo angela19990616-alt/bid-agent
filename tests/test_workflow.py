@@ -1,4 +1,12 @@
 from app.database.vector_store import SearchResult
+from app.workflows.controlled_pipeline import STAGES
+
+
+def test_response_strategy_stage_is_part_of_controlled_workflow():
+    assert "response_strategy_analysis" in STAGES
+    assert STAGES.index("proposal_classification") < STAGES.index(
+        "response_strategy_analysis"
+    ) < STAGES.index("load_enterprise_knowledge")
 from app.workflows.bid_workflow import build_graph
 
 
@@ -41,4 +49,3 @@ def test_bid_workflow_runs_all_steps():
     assert result["retrieval"] == "检索到 1 条知识库材料"
     assert result["sources"][0].filename == "案例.docx"
     assert "来源数：1" in result["answer"]
-

@@ -4,9 +4,16 @@ import redis
 from app.config.settings import settings
 
 
+def connect():
+    return psycopg.connect(
+        settings.postgres_dsn,
+        connect_timeout=settings.database_connect_timeout,
+    )
+
+
 def check_postgres() -> dict:
     try:
-        with psycopg.connect(settings.postgres_dsn, connect_timeout=5) as conn:
+        with connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT current_database(), version();")
                 database, version = cur.fetchone()
@@ -19,7 +26,7 @@ def check_postgres() -> dict:
     except Exception as exc:
         return {
             "status": "unhealthy",
-            "error": str(exc),
+            "error": type(exc).__name__,
         }
 
 
@@ -40,5 +47,5 @@ def check_redis() -> dict:
     except Exception as exc:
         return {
             "status": "unhealthy",
-            "error": str(exc),
+            "error": type(exc).__name__,
         }

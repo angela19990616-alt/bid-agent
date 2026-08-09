@@ -1,6 +1,26 @@
-from openai import OpenAI
+from typing import Any
+from uuid import UUID
 
 from app.config.settings import settings
+from app.core.model_routing import ModelRoutingRules
+from app.core.privacy_sanitizer import PrivacySanitizer
+from app.services.model_budget_service import ModelBudgetService
+
+
+# The OpenAI-compatible SDK exports thousands of generated schema classes.
+# Loading all of them during ordinary service/test imports adds minutes on
+# slower filesystems, even when no model call is made.  Keep this symbol
+# patchable for tests and resolve the SDK only when a real client is needed.
+OpenAI: Any | None = None
+
+
+def _openai_client_class() -> Any:
+    global OpenAI
+    if OpenAI is None:
+        from openai import OpenAI as sdk_client
+
+        OpenAI = sdk_client
+    return OpenAI
 
 
 class ModelConfigurationError(RuntimeError):
@@ -12,26 +32,64 @@ class ModelClient:
         self,
         api_key: str | None = None,
         base_url: str | None = None,
+        client: Any | None = None,
     ):
+        self._injected_client = client
+        if client is not None:
+            self.client = client
+            return
         resolved_key = api_key or settings.model_api_key
-        if not resolved_key:
+        if not resolved_key and not settings.deepseek_api_key:
             raise ModelConfigurationError(
-                "未配置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY"
+                "未配置 DEEPSEEK_API_KEY、DASHSCOPE_API_KEY 或 OPENAI_API_KEY"
             )
-        self.client = OpenAI(
-            api_key=resolved_key,
-            base_url=base_url or settings.openai_base_url,
+        client_class = _openai_client_class()
+        self.client = (
+            client_class(
+                api_key=resolved_key,
+                base_url=base_url or settings.openai_base_url,
+                timeout=settings.model_request_timeout_seconds,
+                # Retry and switching are controlled by ModelRoutingRules.
+                max_retries=0,
+            )
+            if resolved_key
+            else None
         )
+        self.deepseek_client = (
+            client_class(
+                api_key=settings.deepseek_api_key,
+                base_url=settings.deepseek_base_url,
+                timeout=settings.model_request_timeout_seconds,
+                max_retries=0,
+            )
+            if settings.deepseek_api_key
+            else None
+        )
+
+    def _client_for_model(
+        self, model: str, routing: ModelRoutingRules
+    ) -> Any | None:
+        if self._injected_client is not None:
+            return self._injected_client
+        if routing.provider_for(model) == "deepseek":
+            return self.deepseek_client
+        return self.client
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        if self.client is None:
+            raise ModelConfigurationError(
+                "向量检索需要配置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY"
+            )
+        sanitizer = PrivacySanitizer.load()
+        safe_texts = [sanitizer.sanitize_text(text)[0] for text in texts]
         embeddings: list[list[float]] = []
         batch_size = settings.embedding_batch_size
         for start in range(0, len(texts), batch_size):
             response = self.client.embeddings.create(
                 model=settings.embedding_model,
-                input=texts[start : start + batch_size],
+                input=safe_texts[start : start + batch_size],
                 dimensions=settings.embedding_dimensions,
                 encoding_format="float",
             )
@@ -45,14 +103,102 @@ class ModelClient:
         *,
         temperature: float = 0.2,
         max_tokens: int = 4000,
+        task: str = "default",
+        workflow_run_id: UUID | None = None,
     ) -> str:
-        response = self.client.chat.completions.create(
-            model=settings.llm_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
+        routing = ModelRoutingRules.load()
+        sanitizer = PrivacySanitizer.load()
+        safe_messages, privacy_mapping = sanitizer.sanitize_messages(messages)
+        models = routing.models_for_task(
+            task,
+            settings.model_for_task(task),
         )
-        content = response.choices[0].message.content
-        if not content:
-            raise RuntimeError("模型返回了空内容")
-        return content
+        models = [
+            model
+            for model in models
+            if self._client_for_model(model, routing) is not None
+        ]
+        if not models:
+            raise RuntimeError(
+                "当前任务的模型均处于临时冷却状态，请稍后重试。"
+            )
+        last_error: Exception | None = None
+        billable_failures = 0
+        for index, model in enumerate(models):
+            reservation = None
+            if workflow_run_id is not None:
+                reservation = ModelBudgetService.reserve(
+                    workflow_run_id,
+                    task=task,
+                    model=model,
+                    estimated_tokens=ModelBudgetService.estimate(
+                        safe_messages, max_tokens
+                    ),
+                )
+            try:
+                provider_client = self._client_for_model(model, routing)
+                if provider_client is None:
+                    continue
+                request_options: dict[str, Any] = {
+                    "model": model,
+                    "messages": safe_messages,
+                    "temperature": temperature,
+                    "max_tokens": routing.output_limit(
+                        model, max_tokens
+                    ),
+                }
+                if (
+                    routing.provider_for(model) == "deepseek"
+                    and model.startswith("deepseek-v4-")
+                ):
+                    request_options["extra_body"] = {
+                        "thinking": {
+                            "type": (
+                                "enabled"
+                                if model == "deepseek-v4-pro"
+                                and task in {"writing", "review"}
+                                else "disabled"
+                            )
+                        }
+                    }
+                response = provider_client.chat.completions.create(
+                    **request_options,
+                )
+            except Exception as exc:
+                last_error = exc
+                if reservation is not None:
+                    ModelBudgetService.finish(
+                        reservation,
+                        actual_tokens=(
+                            0 if routing.known_zero_usage(exc) else None
+                        ),
+                        error_type=type(exc).__name__,
+                    )
+                zero_usage = routing.known_zero_usage(exc)
+                routing.mark_failure(model, exc)
+                if not zero_usage:
+                    billable_failures += 1
+                if (
+                    index + 1 >= len(models)
+                    or not routing.is_retryable(exc)
+                    or (
+                        billable_failures
+                        >= routing.max_billable_failures
+                    )
+                ):
+                    raise
+                continue
+            if reservation is not None:
+                usage = getattr(response, "usage", None)
+                ModelBudgetService.finish(
+                    reservation,
+                    actual_tokens=getattr(usage, "total_tokens", None),
+                )
+            content = response.choices[0].message.content
+            if not content:
+                raise RuntimeError("模型返回了空内容")
+            routing.mark_success(task, model)
+            return sanitizer.restore(content, privacy_mapping)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("没有可用的模型路由。")

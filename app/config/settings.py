@@ -20,13 +20,41 @@ class Settings:
     redis_host: str = os.getenv("REDIS_HOST", "127.0.0.1")
     redis_port: int = int(os.getenv("REDIS_PORT", "6379"))
     redis_db: int = int(os.getenv("REDIS_DB", "0"))
+    neo4j_enabled: bool = os.getenv("NEO4J_ENABLED", "false").lower() == "true"
+    neo4j_uri: str = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
+    neo4j_user: str = os.getenv("NEO4J_USER", "neo4j")
+    neo4j_password: str = os.getenv("NEO4J_PASSWORD", "")
+    neo4j_database: str = os.getenv("NEO4J_DATABASE", "neo4j")
     dashscope_api_key: str = os.getenv("DASHSCOPE_API_KEY", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+    deepseek_base_url: str = os.getenv(
+        "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
+    )
     openai_base_url: str = os.getenv(
         "OPENAI_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
-    llm_model: str = os.getenv("LLM_MODEL", "qwen-plus")
+    llm_model: str = os.getenv("LLM_MODEL", "deepseek-v4-flash")
+    extraction_model: str = os.getenv(
+        "EXTRACTION_MODEL", "deepseek-v4-flash"
+    )
+    classification_model: str = os.getenv(
+        "CLASSIFICATION_MODEL", "deepseek-v4-flash"
+    )
+    writing_model: str = os.getenv(
+        "WRITING_MODEL", "deepseek-v4-pro"
+    )
+    review_model: str = os.getenv("REVIEW_MODEL", "deepseek-v4-pro")
+    max_model_calls_per_workflow: int = int(
+        os.getenv("MAX_MODEL_CALLS_PER_WORKFLOW", "40")
+    )
+    max_model_tokens_per_workflow: int = int(
+        os.getenv("MAX_MODEL_TOKENS_PER_WORKFLOW", "300000")
+    )
+    model_request_timeout_seconds: float = float(
+        os.getenv("MODEL_REQUEST_TIMEOUT_SECONDS", "180")
+    )
     embedding_model: str = os.getenv(
         "EMBEDDING_MODEL",
         "text-embedding-v4",
@@ -36,10 +64,40 @@ class Settings:
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "1200"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "200"))
     max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20"))
+    storage_root: str = os.getenv("STORAGE_ROOT", "storage")
+    export_root: str = os.getenv("EXPORT_ROOT", "exports")
+    rules_root: str = os.getenv("RULES_ROOT", "config/rules")
+    database_connect_timeout: int = int(
+        os.getenv("DATABASE_CONNECT_TIMEOUT", "5")
+    )
+    edge_proxy_secret: str = os.getenv("BID_AGENT_EDGE_SECRET", "")
+    invite_code: str = os.getenv("BID_AGENT_INVITE_CODE", "")
+    invite_access_ttl_hours: int = int(
+        os.getenv("BID_AGENT_INVITE_ACCESS_TTL_HOURS", "168")
+    )
+    enable_legacy_api: bool = (
+        os.getenv(
+            "ENABLE_LEGACY_API",
+            (
+                "false"
+                if os.getenv("APP_ENV", "development") == "production"
+                else "true"
+            ),
+        ).lower()
+        == "true"
+    )
 
     @property
     def model_api_key(self) -> str:
         return self.dashscope_api_key or self.openai_api_key
+
+    def model_for_task(self, task: str) -> str:
+        return {
+            "extraction": self.extraction_model,
+            "classification": self.classification_model,
+            "writing": self.writing_model,
+            "review": self.review_model,
+        }.get(task, self.llm_model)
 
     @property
     def postgres_dsn(self) -> str:
@@ -50,6 +108,32 @@ class Settings:
             f"user={self.postgres_user} "
             f"password={self.postgres_password}"
         )
+
+    def validate_runtime(self) -> list[str]:
+        errors: list[str] = []
+        if self.app_env == "production" and not self.postgres_password:
+            errors.append("POSTGRES_PASSWORD is required in production")
+        if self.app_env == "production" and not self.edge_proxy_secret:
+            errors.append("BID_AGENT_EDGE_SECRET is required in production")
+        if self.app_env == "production" and not self.invite_code:
+            errors.append("BID_AGENT_INVITE_CODE is required in production")
+        if self.invite_access_ttl_hours < 1:
+            errors.append(
+                "BID_AGENT_INVITE_ACCESS_TTL_HOURS must be positive"
+            )
+        if self.chunk_overlap >= self.chunk_size:
+            errors.append("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
+        if self.max_model_calls_per_workflow < 1:
+            errors.append(
+                "MAX_MODEL_CALLS_PER_WORKFLOW must be positive"
+            )
+        if self.max_model_tokens_per_workflow < 1000:
+            errors.append(
+                "MAX_MODEL_TOKENS_PER_WORKFLOW must be at least 1000"
+            )
+        if self.neo4j_enabled and not self.neo4j_password:
+            errors.append("NEO4J_PASSWORD is required when Neo4j is enabled")
+        return errors
 
 
 settings = Settings()

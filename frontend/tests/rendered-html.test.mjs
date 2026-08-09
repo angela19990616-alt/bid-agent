@@ -23,34 +23,139 @@ async function render() {
   );
 }
 
-test("renders the bid proposal workspace", async () => {
+test("renders the private preview access gate", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /标书智能工作台/);
-  assert.match(html, /项目材料/);
-  assert.match(html, /招标要求/);
-  assert.match(html, /技术方案/);
-  assert.match(html, /导出结果/);
+  assert.match(html, /技术方案工作台/);
+  assert.match(html, /PRIVATE PREVIEW/);
+  assert.match(html, /正在验证访问权限/);
+  assert.doesNotMatch(html, /选择 PDF 或 DOCX 招标文件/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 });
 
-test("keeps the simplified V1 workflow in the client source", async () => {
-  const [page, css, layout] = await Promise.all([
+test("keeps the consolidated V2 workflow in the client source", async () => {
+  const [page, ontology, css, layout, worker, nginx] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/ontology/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../nginx.conf", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /materials.*requirements.*proposal.*export/s);
+  assert.match(page, /upload.*requirements.*outline.*writer.*export/s);
+  assert.match(page, /本章微调要求/);
+  assert.match(page, /按要求重新生成/);
+  assert.match(page, /READY_WORKSPACE_STATUSES/);
+  assert.match(page, /ready_to_export/);
+  assert.match(page, /exported/);
   assert.match(page, /Requirement/);
   assert.match(page, /Section/);
-  assert.match(page, /原文依据/);
-  assert.match(page, /逐章生成/);
-  assert.match(page, /自动校核/);
-  assert.match(page, /下载技术方案演示稿/);
-  assert.match(css, /@media \(max-width: 900px\)/);
+  assert.match(page, /API_BASE/);
+  assert.match(page, /只需上传招标文件/);
+  assert.match(page, /PDF 先在私有环境转成可编辑 Word 再检测/);
+  assert.match(page, /有模板严格回填，确认无模板才生成目录/);
+  assert.match(page, /检测到 PDF，但尚无法可靠转换/);
+  assert.match(page, /strict_template_writer/);
+  assert.match(page, /planned_proposal_writer/);
+  assert.match(page, /查看匹配依据/);
+  assert.match(page, /查看采购文件原文/);
+  assert.match(page, /在产出预览中定位/);
+  assert.match(page, /实际取值关系/);
+  assert.match(page, /打开业务关系图/);
+  assert.match(ontology, /BUSINESS ONTOLOGY/);
+  assert.match(ontology, /Neo4j 图投影已连接/);
+  assert.match(ontology, /原模板目录/);
+  assert.match(ontology, /实际取值关系/);
+  assert.doesNotMatch(ontology, /person_id|project_id|custom_/);
+  assert.match(page, /签章动作/);
+  assert.match(page, /其他候选/);
+  assert.match(page, /原文位置/);
+  assert.match(page, /来源记录暂未提供页码或段落/);
+  assert.match(page, /图片\/扫描件/);
+  assert.match(page, /回填位置/);
+  assert.match(page, /当前产出文件预览/);
+  assert.match(page, /WordDocumentPreview/);
+  assert.match(page, /SourceDocumentPreview/);
+  assert.match(page, /template-preview/);
+  assert.match(page, /documents\/\$\{document\.id\}\/source/);
+  assert.match(page, /docx-preview/);
+  assert.match(page, /evidence-modal/);
+  assert.match(page, /visibleEvidenceSource/);
+  assert.doesNotMatch(page, /current_project_manual_archive/);
+  assert.match(page, /响应事项分析/);
+  assert.match(page, /技术方案事项/);
+  assert.match(page, /评分响应/);
+  assert.match(page, /商务合规/);
+  assert.match(page, /风险提醒/);
+  assert.match(page, /转为技术方案/);
+  assert.match(page, /转为商务合规/);
+  assert.match(page, /查看原文依据/);
+  assert.match(page, /生成本章/);
+  assert.match(page, /校核并生成 Word/);
+  assert.doesNotMatch(page, /执行交付审查/);
+  assert.match(page, /阻断问题必须处理后才能正式导出/);
+  assert.match(page, /已自动继承原模板字体/);
+  assert.match(page, /不再强制替换为系统默认字体/);
+  assert.match(page, /一次确认并同步/);
+  assert.match(page, /人工确认来源/);
+  assert.match(page, /待审核业务对象/);
+  assert.match(page, /表格按整表或业务对象处理/);
+  assert.match(page, /页眉、页脚和原版式只继承保真/);
+  assert.match(page, /待匹配企业资料/);
+  assert.match(page, /person_binding_pending/);
+  assert.match(page, /response_generation_pending/);
+  assert.match(page, /semantic_review_required/);
+  assert.match(page, /同一人员档案自动联动/);
+  assert.match(page, /fill-variable-group/);
+  assert.match(css, /repeat\(auto-fit, minmax\(230px, 1fr\)\)/);
+  assert.match(page, /在产出预览中定位/);
+  assert.match(page, /定位产出文件/);
+  assert.match(page, /打开采购原文/);
+  assert.match(page, /保存并同步/);
+  assert.match(page, /word-slot-highlight/);
+  assert.match(page, /原模板位置/);
+  assert.match(page, /选择并建立角色绑定/);
+  assert.match(page, /需要抽查时查看/);
+  assert.doesNotMatch(page, /保存并确认/);
+  assert.doesNotMatch(page, />custom_/);
+  assert.match(page, /ResizeObserver/);
+  assert.match(page, /--word-preview-scale/);
+  assert.match(css, /zoom: var\(--word-preview-scale/);
+  assert.match(page, /下载可读 Review/);
+  assert.match(page, /recommended_for_delivery/);
+  assert.doesNotMatch(page, /createProject|创建项目/);
+  assert.doesNotMatch(page, /演示模式|sampleContent/);
+  assert.match(page, /workspaces\/\$\{workspaceId\}/);
+  assert.match(
+    page,
+    /!READY_WORKSPACE_STATUSES\.has\(completed\.status\)/,
+  );
+  assert.match(page, /完成后自动打开/);
+  assert.doesNotMatch(page, /bid-agent-active-workspace/);
+  assert.doesNotMatch(page, /正在恢复上次方案进度/);
+  assert.doesNotMatch(page, /sessionStorage|localStorage/);
+  assert.match(page, /不显示历史方案或历史导出文件/);
+  assert.match(page, /预计还需/);
+  assert.match(page, /历史工作量/);
+  assert.doesNotMatch(page, /恢复最近一次方案/);
+  assert.doesNotMatch(page, /workspaces\/recent\/latest/);
+  assert.doesNotMatch(page, /attempt < 180/);
+  assert.doesNotMatch(page, /处理时间较长，请稍后重新打开/);
+  assert.doesNotMatch(page, /网络连接暂时中断/);
+  assert.match(page, /处理进度读取失败/);
+  assert.match(page, /workspaces\/\$\{workspace\.id\}\/retry/);
+  assert.match(page, /继续处理/);
+  assert.match(css, /@media \(max-width: 980px\)/);
   assert.match(layout, /标书智能工作台/);
+  assert.match(worker, /url\.pathname\.startsWith\("\/api\/v1\/"\)/);
+  assert.match(worker, /BID_AGENT_API_ORIGIN/);
+  assert.match(page, /access\/status/);
+  assert.match(page, /access\/invite/);
+  assert.match(nginx, /proxy_read_timeout 300s/);
+  assert.match(page, /本工作台仅向受邀用户开放/);
+  assert.match(css, /invite-card/);
 });

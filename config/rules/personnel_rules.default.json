@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "name": "投标项目人员资格规则",
+  "defaults": {
+    "require_active_employment": true,
+    "unknown_data_status": "REVIEW_REQUIRED",
+    "unmet_rule_status": "REVIEW_REQUIRED"
+  },
+  "supported_constraints": [
+    "required_certificates",
+    "minimum_experience_years",
+    "active_employment",
+    "certificate_validity",
+    "same_bidder_organization"
+  ]
+}

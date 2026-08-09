@@ -1,0 +1,27 @@
+{
+  "rule_type": "response_prioritization",
+  "key": "default-response-prioritization",
+  "name": "响应价值排序规则",
+  "version": 1,
+  "description": "风险等级与技术方案价值分开判断。",
+  "proposal_value": {
+    "5": "核心得分项",
+    "4": "重点响应项",
+    "3": "必须覆盖项",
+    "2": "优化增强项",
+    "1": "背景说明项",
+    "0": "不进入技术方案"
+  },
+  "hard_rules": {
+    "score_item_with_source": 5,
+    "explicit_detailed_plan": 4,
+    "required_proposal_coverage": 3,
+    "quality_enhancement": 2,
+    "background": 1,
+    "not_in_proposal": 0
+  },
+  "p0_evidence_keywords": [
+    "无效投标", "废标", "否决投标", "资格不通过",
+    "实质性响应", "不得分包", "不得转包"
+  ]
+}

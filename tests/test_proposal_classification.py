@@ -1,0 +1,346 @@
+from dataclasses import replace
+from uuid import uuid4
+
+from app.agents.output_quality import (
+    OutputReviewAgent,
+    ReviewedDebugPipeline,
+)
+from app.agents.requirement_agent import AgentRequirement
+from app.agents.requirement_classifier import (
+    ClassificationReviewer,
+    RequirementClassifier,
+)
+from app.agents.proposal_planner import ProposalPlanner
+from app.rules.engine import RuleEngine
+from app.services.proposal_review_service import ProposalReviewService
+
+
+def requirement(text: str, legacy_type: str = "technical"):
+    return AgentRequirement(
+        source_id=uuid4(),
+        title=text[:30],
+        normalized_text=text,
+        quote=text,
+        requirement_type=legacy_type,
+        importance="medium",
+        confidence=0.9,
+    )
+
+
+def classify(text: str, legacy_type: str = "technical"):
+    rules = RuleEngine().load_default("classification")
+    initial = RequirementClassifier.classify_by_rules(
+        requirement(text, legacy_type), rules
+    )
+    return ClassificationReviewer().review_one(initial, rules)
+
+
+def test_function_controls_map_to_system_function_design():
+    result = classify("系统支持用户管理、权限控制、日志审计")
+    assert result.requirement_type == "functional_requirement"
+    assert result.proposal_chapter == "系统功能设计"
+
+
+def test_consulting_context_does_not_treat_function_positioning_as_software():
+    rules = RuleEngine().load_default("classification")
+    item = requirement(
+        "研究轨道交通线网功能定位与规划实施路径"
+    )
+    initial = RequirementClassifier.classify_by_rules(
+        item,
+        rules,
+        project_context="轨道交通十五五规划咨询服务项目",
+    )
+    result = ClassificationReviewer().review_one(
+        initial,
+        rules,
+        project_context="轨道交通十五五规划咨询服务项目",
+    )
+
+    assert result.requirement_type == "technical_capability"
+    assert result.proposal_chapter == "服务范围与工作内容"
+
+
+def test_consulting_context_keeps_explicit_software_function_requirement():
+    rules = RuleEngine().load_default("classification")
+    item = requirement("信息系统须支持用户管理和权限控制")
+    result = RequirementClassifier.classify_by_rules(
+        item,
+        rules,
+        project_context="规划咨询服务项目",
+    )
+
+    assert result.requirement_type == "functional_requirement"
+    assert result.proposal_chapter == "系统功能设计"
+
+
+def test_reviewer_overrides_high_confidence_model_software_misclassification():
+    rules = RuleEngine().load_default("classification")
+    source = requirement("供应商应分析轨道交通行业政策与市场环境")
+    model_result = RequirementClassifier._model_result(
+        RequirementClassifier.classify_by_rules(
+            source,
+            rules,
+            project_context="轨道交通十五五规划咨询服务项目",
+        ),
+        {
+            "requirement_type": "functional_requirement",
+            "proposal_chapter": "系统功能设计",
+            "scoring_relation": "requirement_only",
+            "importance": "high",
+            "confidence": 0.9,
+            "knowledge_support_required": False,
+            "rationale": "模型误判为系统功能。",
+        },
+        rules,
+    )
+
+    result = ClassificationReviewer().review_one(
+        model_result,
+        rules,
+        project_context="轨道交通十五五规划咨询服务项目",
+    )
+
+    assert result.requirement_type == "technical_capability"
+    assert result.proposal_chapter == "服务范围与工作内容"
+    assert result.conflict is True
+
+
+def test_implementation_period_maps_to_implementation_plan():
+    result = classify("项目实施周期180日历天")
+    assert result.requirement_type == "implementation_requirement"
+    assert result.proposal_chapter == "实施计划"
+
+
+def test_round_the_clock_service_maps_to_operation_maintenance():
+    result = classify("提供7×24小时运维服务")
+    assert result.requirement_type == "operation_maintenance"
+    assert result.proposal_chapter == "运维保障方案"
+
+
+def test_dishonesty_constraint_is_compliance_only():
+    result = classify(
+        "供应商不得存在失信情况", legacy_type="qualification"
+    )
+    assert result.requirement_type == "qualification_requirement"
+    assert result.proposal_chapter is None
+
+
+def test_hard_format_constraint_stays_out_of_proposal_body():
+    result = classify(
+        "技术方案章节顺序必须包括项目理解和实施计划",
+        legacy_type="compliance",
+    )
+    assert result.requirement_type == "other"
+    assert result.proposal_chapter is None
+
+
+def test_statutory_technical_capacity_commitment_is_qualification_only():
+    result = classify(
+        "供应商应具有履行合同所必须的设备和专业技术能力"
+    )
+    assert result.requirement_type == "qualification_requirement"
+    assert result.proposal_chapter is None
+
+
+def test_registry_filing_is_not_system_architecture():
+    result = classify(
+        "供应商须在全国投资项目在线审批监管平台"
+        "工程咨询单位名录中备案"
+    )
+    assert result.requirement_type == "qualification_requirement"
+    assert result.proposal_chapter is None
+
+
+def test_procurement_announcement_query_is_not_system_function():
+    result = classify(
+        "供应商应在递交截止时间前查询本项目更正公告"
+    )
+    assert result.requirement_type == "other"
+    assert result.proposal_chapter is None
+
+
+def test_hypothetical_sample_clause_is_not_performance_requirement():
+    result = classify(
+        "若需提供样品，供应商应对样品性能和质量负责"
+    )
+    assert result.requirement_type == "other"
+    assert result.proposal_chapter is None
+
+
+def test_supplier_profile_form_is_not_proposal_chapter():
+    result = classify(
+        "供应商应在其他响应文件中提供供应商简介，格式自拟"
+    )
+    assert result.requirement_type == "other"
+    assert result.proposal_chapter is None
+
+
+def test_consulting_scope_maps_to_service_scope_chapter():
+    result = classify(
+        "供应商须编制本项目的可行性研究报告"
+    )
+    assert result.requirement_type == "technical_capability"
+    assert result.proposal_chapter == "服务范围与工作内容"
+
+
+def test_consulting_deliverable_maps_to_delivery_chapter():
+    result = classify(
+        "供应商应提交《可行性研究报告》作为成果之一"
+    )
+    assert result.requirement_type == "delivery_requirement"
+    assert result.proposal_chapter == "成果交付与验收"
+
+
+def test_service_plan_form_maps_to_quality_implementation_chapter():
+    result = classify(
+        "供应商应提交服务方案（格式14），包括实施计划安排、"
+        "重点难点分析、服务质量保证"
+    )
+    assert result.requirement_type == "implementation_requirement"
+    assert result.proposal_chapter == "实施方案与质量保障"
+
+
+def test_key_personnel_form_maps_to_project_management():
+    result = classify(
+        "供应商应提交主要人员情况表（格式13）"
+    )
+    assert result.requirement_type == "project_management"
+    assert result.proposal_chapter == "项目组织管理"
+
+
+def test_reviewer_never_routes_other_type_into_proposal():
+    rule_result = classify("供应商应查询本项目更正公告")
+    wrong = replace(
+        rule_result,
+        requirement_type="other",
+        proposal_chapter="系统功能设计",
+    )
+    reviewed = ClassificationReviewer().review_one(wrong)
+    assert reviewed.requirement_type == "other"
+    assert reviewed.proposal_chapter is None
+    assert reviewed.conflict is True
+
+
+def test_strong_rule_item_still_receives_fresh_model_classification():
+    class RecordingClient:
+        called = False
+
+        def chat(self, *_args, **_kwargs):
+            self.called = True
+            return """{"classifications":[{
+                "source_ref":"R1",
+                "requirement_type":"operation_maintenance",
+                "proposal_chapter":"运维保障方案",
+                "scoring_relation":"requirement_only",
+                "importance":"high",
+                "confidence":0.93,
+                "knowledge_support_required":false,
+                "rationale":"需要形成持续服务响应。"
+            }]}"""
+
+    item = requirement("提供7×24小时运维服务")
+    client = RecordingClient()
+    result = RequirementClassifier(client).classify(
+        [item], RuleEngine().load_default("classification")
+    )
+    assert client.called is True
+    assert result[0].proposal_chapter == "运维保障方案"
+
+
+def test_reviewer_does_not_override_semantic_model_with_soft_keyword_rule():
+    rule_result = classify("项目实施周期180日历天")
+    wrong = replace(
+        rule_result,
+        requirement_type="functional_requirement",
+        proposal_chapter="系统功能设计",
+    )
+    reviewed = ClassificationReviewer().review_one(wrong)
+    assert reviewed.requirement_type == "functional_requirement"
+    assert reviewed.proposal_chapter == "系统功能设计"
+    assert reviewed.conflict is False
+
+
+def test_planner_prefers_proposal_chapter():
+    result = ProposalPlanner().plan(
+        [{
+            "id": uuid4(),
+            "proposal_chapter": "实施计划",
+            "target_chapter": "旧章节",
+            "need_generation": True,
+        }],
+        RuleEngine().load_default("writing"),
+    )
+    assert result[0].title == "实施计划"
+
+
+def test_planner_applies_explicit_tender_chapter_order():
+    first_id = uuid4()
+    second_id = uuid4()
+    result = ProposalPlanner().plan(
+        [
+            {
+                "id": first_id,
+                "proposal_chapter": "服务范围与工作内容",
+                "need_generation": True,
+            },
+            {
+                "id": second_id,
+                "proposal_chapter": "实施计划与进度安排",
+                "need_generation": True,
+            },
+        ],
+        RuleEngine().load_default("writing"),
+        format_constraints=[
+            {
+                "normalized_text": (
+                    "章节顺序为实施计划与进度安排、服务范围与工作内容"
+                ),
+                "quote": "",
+            }
+        ],
+    )
+    assert [item.title for item in result] == [
+        "实施计划与进度安排",
+        "服务范围与工作内容",
+    ]
+
+
+def test_review_debug_review_removes_internal_labels():
+    classified = classify("项目实施周期180日历天")
+    polluted = replace(
+        classified,
+        item=replace(
+            classified.item,
+            title="（要求代码 REQ-12）项目实施周期",
+            normalized_text=(
+                "requirement_id: "
+                "123e4567-e89b-12d3-a456-426614174000 项目实施周期"
+            ),
+        ),
+    )
+    fixed = ReviewedDebugPipeline().run([polluted])[0]
+    assert OutputReviewAgent.review(fixed) == []
+    assert "REQ-12" not in fixed.item.title
+    assert "requirement_id" not in fixed.item.normalized_text
+
+
+def test_new_scoring_type_is_counted_by_proposal_review():
+    item = {
+        "public_key": "R0001",
+        "type": "scoring_requirement",
+        "title": "实施方案评分10分",
+        "normalized_text": "实施方案完整可得10分",
+        "quote": "实施方案完整可得10分",
+        "source_location": "采购文件，第1页",
+    }
+    report = ProposalReviewService.review(
+        {
+            "project_name": "测试项目",
+            "requirements": [item],
+            "sections": [],
+        },
+        RuleEngine().load_default("compliance"),
+        phase="final",
+    )
+    assert len(report["scoring_coverage"]) == 1

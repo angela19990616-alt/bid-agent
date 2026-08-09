@@ -1,0 +1,59 @@
+{
+  "key": "default-compliance",
+  "rule_type": "compliance",
+  "version": 4,
+  "name": "技术方案合规校核规则",
+  "description": "在章节生成或人工编辑后执行确定性质量检查，结果用于提醒和自动修复，不阻断用户操作。",
+  "checks": [
+    {"key": "content_too_short", "severity": "warning", "kind": "min_length", "value": 200, "message": "章节内容较短，请人工检查是否充分响应要求。"},
+    {"key": "unsupported_claim", "severity": "warning", "kind": "forbidden_patterns", "value": ["我公司拥有", "成功案例", "国家级资质", "百分之百保证"], "message": "这段内容可能需要补充企业资料依据，请人工核对。"},
+    {"key": "placeholder", "severity": "warning", "kind": "contains", "value": ["待补充"], "message": "章节包含待补充内容，请在确认前完善。"}
+  ],
+  "required_traceability": {
+    "requirement_mapping": true,
+    "knowledge_mapping_when_claimed": true
+  },
+  "deliverability_gate": {
+    "minimum_requirement_coverage": 0.9,
+    "minimum_scoring_coverage": 1.0,
+    "minimum_traceability_rate": 0.8,
+    "block_on_internal_identifier": true,
+    "block_on_sensitive_information": true,
+    "block_on_unverified_enterprise_fact": true,
+    "require_initial_review": true,
+    "require_auto_fix": true,
+    "require_final_review": true
+  },
+  "truth_review": {
+    "high_risk_enterprise_facts": [
+      "法定代表人", "成立于", "成立年份", "注册资本", "企业资质",
+      "员工人数", "项目数量", "合同金额", "客户名称",
+      "中标记录", "获奖情况", "市场排名", "项目业绩数据",
+      "我公司拥有", "成功案例", "国家级资质"
+    ],
+    "unverified_project_specifics": [
+      "国家发改委《地方政府专项债券项目资金绩效管理办法》",
+      "财政部《地方政府专项债券项目审核标准指引》",
+      "四川省最新申报口径",
+      "省级行业主管部门", "省发改委", "省财政厅",
+      "3个工作日", "48小时", "第150日历天", "预留15日历天",
+      "三级联审", "质量总监", "会计师事务所", "律师事务所",
+      "合同第九章第四条第3款", "第九章第七条",
+      "纸质文档一式4份", "PDF含目录书签"
+    ],
+    "unverified_fact_action": "remove_or_block",
+    "unknown_policy_action": "remove_or_block"
+  },
+  "language_review": {
+    "forbidden_decorative_symbols": ["✅", "✔", "➡", "→", "★", "⭐", "🔹"],
+    "discouraged_slogans": [
+      "严格确保", "全面确保", "精准响应", "高质量完成",
+      "无缝衔接", "刚性达成", "形成闭环"
+    ],
+    "mechanical_template_labels": [
+      "核心任务", "输入依据", "具体动作", "交付成果",
+      "责任边界", "风险控制"
+    ],
+    "maximum_repeated_template_labels": 3
+  }
+}

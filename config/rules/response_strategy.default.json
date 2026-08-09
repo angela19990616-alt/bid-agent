@@ -1,0 +1,123 @@
+{
+  "rule_type": "response_strategy",
+  "key": "default-response-strategy",
+  "name": "投标响应策略规则",
+  "version": 1,
+  "description": "在 Requirement 分类后决定投标文件中的响应动作、章节、评分影响和优先级。",
+  "actions": [
+    "write_into_proposal",
+    "write_into_response_table",
+    "compliance_commitment",
+    "provide_attachment",
+    "risk_notice",
+    "ignore"
+  ],
+  "hard_rules": [
+    {
+      "keywords": ["不得分包", "禁止分包", "不得转包", "禁止转包"],
+      "requirement_type": "commercial_requirement",
+      "response_action": "compliance_commitment",
+      "proposal_mapping": null,
+      "scoring_impact": "penalty_risk",
+      "priority": "P0"
+    },
+    {
+      "keywords": ["服务方案应包含团队分工", "团队分工", "人员分工"],
+      "requirement_type": "technical_requirement",
+      "response_action": "write_into_proposal",
+      "proposal_mapping": "项目组织管理",
+      "scoring_impact": "no_score",
+      "priority": "P2"
+    },
+    {
+      "keywords": ["提供保密承诺", "保密承诺", "保密义务"],
+      "requirement_type": "compliance_requirement",
+      "response_action": "compliance_commitment",
+      "proposal_mapping": null,
+      "scoring_impact": "penalty_risk",
+      "priority": "P0"
+    },
+    {
+      "keywords": ["180日历天", "实施周期", "服务期限", "项目周期"],
+      "requirement_type": "delivery_requirement",
+      "response_action": "write_into_proposal",
+      "proposal_mapping": "实施计划",
+      "scoring_impact": "no_score",
+      "priority": "P2"
+    }
+  ],
+  "format_keywords": ["字体", "字号", "行距", "页数", "字数", "装订", "签章", "密封"],
+  "document_structure_keywords": ["目录格式", "章节顺序", "响应文件组成", "文件结构", "章节组成", "必须包括"],
+  "type_defaults": {
+    "technical_requirement": {
+      "response_action": "write_into_proposal",
+      "proposal_mapping": "项目理解与总体思路",
+      "scoring_impact": "no_score"
+    },
+    "scoring_requirement": {
+      "response_action": "write_into_proposal",
+      "proposal_mapping": "技术评分点响应",
+      "scoring_impact": "score_item"
+    },
+    "commercial_requirement": {
+      "response_action": "compliance_commitment",
+      "scoring_impact": "no_score"
+    },
+    "qualification_requirement": {
+      "response_action": "provide_attachment",
+      "scoring_impact": "qualification_pass"
+    },
+    "delivery_requirement": {
+      "response_action": "write_into_proposal",
+      "proposal_mapping": "实施计划",
+      "scoring_impact": "no_score"
+    },
+    "compliance_requirement": {
+      "response_action": "compliance_commitment",
+      "scoring_impact": "no_score"
+    },
+    "format_requirement": {
+      "response_action": "risk_notice",
+      "scoring_impact": "penalty_risk"
+    },
+    "document_structure_requirement": {
+      "response_action": "risk_notice",
+      "scoring_impact": "penalty_risk"
+    }
+  },
+  "legacy_type_mapping": {
+    "technical_capability": "technical_requirement",
+    "functional_requirement": "technical_requirement",
+    "system_architecture": "technical_requirement",
+    "security_requirement": "technical_requirement",
+    "performance_requirement": "technical_requirement",
+    "implementation_requirement": "technical_requirement",
+    "project_management": "technical_requirement",
+    "operation_maintenance": "technical_requirement",
+    "training_requirement": "technical_requirement",
+    "technical": "technical_requirement",
+    "scoring": "scoring_requirement",
+    "commercial": "commercial_requirement",
+    "qualification": "qualification_requirement",
+    "delivery": "delivery_requirement",
+    "other": "compliance_requirement"
+  },
+  "manual_proposal_chapters": [
+    {"keywords": ["团队", "人员", "分工", "组织"], "chapter": "项目组织管理"},
+    {"keywords": ["周期", "进度", "实施", "工期"], "chapter": "实施计划"},
+    {"keywords": ["成果", "交付", "验收"], "chapter": "质量保障与验收方案"},
+    {"keywords": ["培训"], "chapter": "培训方案"},
+    {"keywords": ["运维", "维护", "售后"], "chapter": "运维与持续服务"},
+    {"keywords": ["安全", "保密", "权限"], "chapter": "安全保障"},
+    {"keywords": ["评分", "得分", "分值"], "chapter": "技术评分点响应"},
+    {"keywords": ["服务内容", "工作内容", "服务范围"], "chapter": "服务范围与工作内容"}
+  ],
+  "manual_default_chapter": "项目理解与总体思路",
+  "priority_policy": {
+    "penalty_risk": "P0",
+    "qualification_pass": "P0",
+    "score_item": "P1",
+    "proposal_quality": "P2",
+    "general": "P3"
+  }
+}
