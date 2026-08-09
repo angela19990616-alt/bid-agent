@@ -22,6 +22,7 @@ from app.knowledge.enterprise_fact_resolver import EnterpriseFactResolver
 from app.knowledge.case_fact_resolver import CaseFactResolver
 from app.services.response_template_service import ResponseTemplateService
 from app.services.section_service import SectionService
+from app.services.entity_resolution_service import EntityResolutionService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -53,6 +54,7 @@ class ExportService:
             {"project_name": data["project_name"]},
             EnterpriseFactResolver().resolve(project_id),
             CaseFactResolver().resolve(project_id),
+            EntityResolutionService().resolve_project(project_id),
         )
         preview_values = {
             item["field_key"]: item["value"]
@@ -132,6 +134,9 @@ class ExportService:
                     profile,
                     {"project_name": data["project_name"]},
                     EnterpriseFactResolver().resolve(project_id),
+                    entity_context=(
+                        EntityResolutionService().resolve_project(project_id)
+                    ),
                 )
                 approved_values = {
                     item["field_key"]: item["value"]

@@ -147,15 +147,20 @@ class ProjectDocumentService:
                     filename=result.filename,
                     content=content,
                 )
-            except Exception:
-                # Parsing and persistence have already committed. Do not turn
-                # a generation-profile problem into a false upload failure or
-                # delete the source file. The workspace falls back to planned
-                # generation and the profile can be rebuilt deterministically.
+            except Exception as exc:
                 logger.exception(
                     "generation profile inspection failed for document %s",
                     result.id,
                 )
+                if extension == ".pdf":
+                    # An inspection error is not proof that a PDF has no
+                    # response template. Persist an explicit stopped state so
+                    # the planner cannot silently invent a replacement outline.
+                    GenerationProfileService.record_pdf_conversion_failure(
+                        project_id=project_id,
+                        document_id=result.id,
+                        message=f"PDF转Word检查失败：{type(exc).__name__}",
+                    )
             return result
         except DocumentParseFailedError:
             raise

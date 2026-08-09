@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import hashlib
 from collections import Counter
 from copy import deepcopy
 from dataclasses import asdict, dataclass
@@ -18,6 +17,7 @@ from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
 from app.core.strict_fill import StrictFillDecisionEngine
+from app.core.entity_resolution import SlotContextClassifier
 
 
 TEMPLATE_MARKERS = (
@@ -34,8 +34,15 @@ FIELD_ALIASES = {
     "bidder_name": (
         "供应商名称", "投标人名称", "响应人名称", "企业名称", "单位名称",
     ),
-    "legal_representative": ("法定代表人",),
-    "authorized_representative": ("授权代表", "委托代理人"),
+    "legal_representative": ("法定代表人", "法定代表", "法人代表"),
+    "authorized_representative": (
+        "授权代表", "授权代理人", "委托代理人", "被授权人", "受托人",
+    ),
+    "project_manager_name": ("项目负责人", "项目经理"),
+    "technical_lead_name": ("技术负责人", "技术总监"),
+    "signatory_name": ("签字人", "签署人"),
+    "person_id_number": ("身份证号码", "身份证号"),
+    "person_title": ("职务", "职位", "岗位"),
     "date": ("日期", "响应日期", "投标日期"),
     "registered_address": ("注册地址", "供应商地址", "投标人地址"),
     "postal_code": ("邮政编码", "邮编"),
@@ -448,8 +455,19 @@ class ResponseTemplateService:
             return ()
         fields: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
+        field_key_counts: Counter[str] = Counter()
 
-        def append(label: str, location: str) -> None:
+        def append(
+            label: str,
+            location: str,
+            *,
+            surrounding_text: str,
+            document_section: str | None,
+            table_index: int | None = None,
+            paragraph_index: int | None = None,
+            row: int | None = None,
+            column: int | None = None,
+        ) -> None:
             display_label = re.sub(r"\s+", " ", label).strip().strip("：:")
             semantic_label = re.split(
                 r"(?:[_＿]{2,}|…+|\.{3,})", display_label, maxsplit=1
@@ -467,8 +485,8 @@ class ResponseTemplateService:
             ):
                 return
             if not re.search(
-                r"名称|编号|代表|日期|金额|报价|地址|电话|手机|邮箱|联系人|"
-                r"证书|资质|签字|盖章|账号|开户行|工期|期限",
+                r"名称|姓名|编号|代表|日期|金额|报价|地址|电话|手机|邮箱|联系人|"
+                r"职务|职位|身份证号|证书|资质|签字|盖章|账号|开户行|工期|期限",
                 clean,
             ):
                 return
@@ -481,15 +499,30 @@ class ResponseTemplateService:
             ]
             if candidates:
                 canonical = max(candidates)[2]
-            field_key = canonical or (
-                "custom_" + hashlib.sha256(clean.encode()).hexdigest()[:12]
+            slot = SlotContextClassifier.classify(
+                label=display_label,
+                surrounding_text=surrounding_text,
+                source_location=location,
+                document_section=document_section,
+                table_index=table_index,
+                paragraph_index=paragraph_index,
+                row=row,
+                column=column,
+                canonical_hint=canonical,
             )
-            identity = (field_key, location)
+            canonical_key = slot.canonical_key
+            identity = (canonical_key, location)
             if identity in seen:
                 return
             seen.add(identity)
+            field_key_counts[canonical_key] += 1
+            field_key = (
+                canonical_key
+                if field_key_counts[canonical_key] == 1
+                else f"{canonical_key}__{slot.slot_id}"
+            )
             source_type = "manual_input"
-            if field_key in {"project_name", "project_number", "date"}:
+            if canonical_key in {"project_name", "project_number", "date"}:
                 source_type = "tender_document"
             elif re.search(r"报价|金额|价格", clean):
                 source_type = "pricing_database"
@@ -499,37 +532,73 @@ class ResponseTemplateService:
                 source_type = "company_profile"
             fields.append({
                 "field_key": field_key,
+                "canonical_key": canonical_key,
                 "label": display_label,
                 "required": not bool(re.search(r"可选|如有|若有", clean)),
                 "expected_source": source_type,
                 "source_location": location,
+                **slot.snapshot(),
             })
 
         blocks = list(document.element.body.iterchildren())
         table_index = 0
         paragraph_index = 0
+        current_section: str | None = None
         for block in blocks[start_block:end_block]:
             if block.tag.endswith("}tbl"):
                 table_index += 1
                 table = Table(block, document)
                 for row_index, row in enumerate(table.rows, start=1):
+                    row_context = " | ".join(
+                        cell.text.strip() for cell in row.cells
+                        if cell.text.strip()
+                    )
                     for cell_index, cell in enumerate(row.cells[:-1], start=1):
                         target = row.cells[cell_index].text.strip()
                         if target and not PLACEHOLDER_RE.search(target):
                             continue
                         append(
                             cell.text,
-                            f"表格{table_index}/第{row_index}行/第{cell_index}列",
+                            f"表格{table_index}/第{row_index}行/第{cell_index + 1}列",
+                            surrounding_text=row_context,
+                            document_section=current_section,
+                            table_index=table_index,
+                            row=row_index,
+                            column=cell_index + 1,
                         )
             elif block.tag.endswith("}p"):
                 paragraph_index += 1
-                text = Paragraph(block, document).text.strip()
+                paragraph = Paragraph(block, document)
+                text = paragraph.text.strip()
+                heading_level, _ = cls._heading_level(paragraph, text)
+                if heading_level is not None and len(text) <= 120:
+                    current_section = cls._display_heading(text)
                 match = re.match(
                     r"^(.{2,40}?)[：:]\s*(?:[_＿]{2,}|…+|\.{3,})?\s*$",
                     text,
                 )
                 if match:
-                    append(match.group(1), f"第{paragraph_index}段")
+                    append(
+                        match.group(1),
+                        f"第{paragraph_index}段",
+                        surrounding_text=text,
+                        document_section=current_section,
+                        paragraph_index=paragraph_index,
+                    )
+                for slot_index, inline in enumerate(
+                    re.finditer(
+                        r"(?:[_＿]{2,}|…+|\.{3,})\s*[（(]([^）)]{1,30})[）)]",
+                        text,
+                    ),
+                    start=1,
+                ):
+                    append(
+                        inline.group(1),
+                        f"第{paragraph_index}段/第{slot_index}个空位",
+                        surrounding_text=text,
+                        document_section=current_section,
+                        paragraph_index=paragraph_index,
+                    )
         return tuple(fields)
 
     @classmethod
@@ -651,25 +720,44 @@ class ResponseTemplateService:
             )
 
         normalized_values = self._normalized_values(field_values)
+        descriptor_fields = tuple(data.get("fields") or ())
+        descriptor_keys = {
+            str(item.get("canonical_key") or item.get("field_key"))
+            for item in descriptor_fields
+            if item.get("field_key")
+        }
+        canonical_counts = Counter(
+            str(item.get("canonical_key") or item.get("field_key"))
+            for item in descriptor_fields
+            if item.get("field_key")
+        )
+        placeholder_values = {
+            key: value for key, value in normalized_values.items()
+            if canonical_counts.get(key, 0) <= 1
+        }
         filled: set[str] = set()
         unresolved: set[str] = set()
         for paragraph in self._all_paragraphs(document):
             replaced, used, missing = self._replace_placeholders(
-                paragraph.text, normalized_values
+                paragraph.text, placeholder_values
             )
             if replaced != paragraph.text:
                 self._replace_paragraph_text(paragraph, replaced)
             filled.update(used)
             unresolved.update(missing)
-        self._fill_label_paragraphs(document, normalized_values, filled)
-        self._fill_label_cells(document, normalized_values, filled)
         self._fill_descriptor_fields(
             document,
-            data.get("fields") or (),
+            descriptor_fields,
             normalized_values,
             filled,
         )
-        self._replace_legacy_x_placeholders(document, normalized_values, filled)
+        legacy_values = {
+            key: value for key, value in normalized_values.items()
+            if key not in descriptor_keys
+        }
+        self._fill_label_paragraphs(document, legacy_values, filled)
+        self._fill_label_cells(document, legacy_values, filled)
+        self._replace_legacy_x_placeholders(document, legacy_values, filled)
         descriptor_labels = set(data.get("field_labels") or ())
         for key, aliases in FIELD_ALIASES.items():
             if any(alias in descriptor_labels for alias in aliases):
@@ -835,25 +923,79 @@ class ResponseTemplateService:
         values: dict[str, str],
         filled: set[str],
     ) -> None:
-        by_label = {
-            re.sub(r"[\s:：()（）]", "", str(item.get("label", ""))): (
-                str(item.get("field_key", ""))
-            )
-            for item in fields
-            if item.get("label") and item.get("field_key")
-        }
-        field_entries = [
-            (str(item.get("label", "")).strip(), str(item.get("field_key", "")))
-            for item in fields
-            if item.get("label") and item.get("field_key")
-        ]
+        unresolved_entries: list[tuple[str, str]] = []
+        for item in fields:
+            key = str(item.get("field_key") or "")
+            value = values.get(key)
+            if not key or not value:
+                continue
+            table_index = item.get("table_index")
+            row_index = item.get("row")
+            column_index = item.get("column")
+            if all(
+                isinstance(index, int)
+                for index in (table_index, row_index, column_index)
+            ):
+                try:
+                    table = document.tables[table_index - 1]
+                    row = table.rows[row_index - 1]
+                    target = row.cells[column_index - 1]
+                    source = row.cells[max(0, column_index - 2)]
+                except (IndexError, TypeError):
+                    unresolved_entries.append((str(item.get("label") or ""), key))
+                    continue
+                if not target.text.strip() or PLACEHOLDER_RE.search(target.text):
+                    ResponseTemplateService._set_cell_text_preserving_style(
+                        target, value, source_cell=source
+                    )
+                    filled.add(key)
+                continue
+            paragraph_index = item.get("paragraph_index")
+            if isinstance(paragraph_index, int):
+                try:
+                    paragraph = document.paragraphs[paragraph_index - 1]
+                except IndexError:
+                    unresolved_entries.append((str(item.get("label") or ""), key))
+                    continue
+                original = paragraph.text
+                label = str(item.get("label") or "").strip()
+                inline_pattern = re.compile(
+                    rf"(?:[_＿]{{2,}}|…+|\.{{3,}})\s*[（(]{re.escape(label)}[）)]"
+                )
+                updated, count = inline_pattern.subn(value, original, count=1)
+                if not count:
+                    label_pattern = re.compile(
+                        rf"^(?P<label>{re.escape(label)}\s*[:：])"
+                        r"[ \t]*(?:[_＿]{2,}|…+|\.{3,})?[ \t]*$"
+                    )
+                    updated, count = label_pattern.subn(
+                        lambda match: f"{match.group('label')} {value}",
+                        original,
+                    )
+                if count:
+                    ResponseTemplateService._replace_paragraph_text(
+                        paragraph, updated
+                    )
+                    filled.add(key)
+                continue
+            unresolved_entries.append((str(item.get("label") or ""), key))
+
+        # Backward compatibility for descriptors created before slot coordinates.
         for table in document.tables:
             for row in table.rows:
                 for index, cell in enumerate(row.cells[:-1]):
-                    label = re.sub(r"[\s:：()（）]", "", cell.text)
-                    key = by_label.get(label)
-                    if not key or not values.get(key):
+                    label_text = re.sub(r"[\s:：()（）]", "", cell.text)
+                    match = next(
+                        (
+                            (label, key) for label, key in unresolved_entries
+                            if re.sub(r"[\s:：()（）]", "", label) == label_text
+                            and values.get(key)
+                        ),
+                        None,
+                    )
+                    if match is None:
                         continue
+                    _, key = match
                     target = row.cells[index + 1]
                     if not target.text.strip() or PLACEHOLDER_RE.search(target.text):
                         ResponseTemplateService._set_cell_text_preserving_style(
@@ -863,7 +1005,7 @@ class ResponseTemplateService:
         for paragraph in ResponseTemplateService._all_paragraphs(document):
             original = paragraph.text
             updated = original
-            for label, key in field_entries:
+            for label, key in unresolved_entries:
                 value = values.get(key)
                 if not value:
                     continue

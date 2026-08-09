@@ -53,6 +53,15 @@ def test_docx_and_pdf_templates_have_explicit_modes():
     assert service.mode_for_descriptor({
         "detected": True, "source_format": "pdf"
     }) == "pdf_template_manual_fill"
+    assert service.writer_strategy_for_mode("strict_template") == (
+        "strict_template_writer"
+    )
+    assert service.writer_strategy_for_mode("planned") == (
+        "planned_proposal_writer"
+    )
+    assert service.writer_strategy_for_mode(
+        "template_conversion_required"
+    ) is None
 
 
 def test_attachment_template_priority_cannot_be_downgraded():
@@ -68,6 +77,9 @@ def test_attachment_template_priority_cannot_be_downgraded():
         "strict_template"
     )
     assert preferred("strict_template", "planned") == "strict_template"
+    assert preferred("template_conversion_required", "planned") == (
+        "template_conversion_required"
+    )
 
 
 def test_template_field_decisions_separate_tender_and_enterprise_facts():
@@ -95,13 +107,14 @@ def test_template_field_decisions_separate_tender_and_enterprise_facts():
     assert decisions["project_number"]["source_type"] == "tender_document"
     assert decisions["project_number"]["expected_value_type_label"] == "项目编号"
     assert decisions["project_number"]["type_validation"] == "passed"
-    assert decisions["bidder_name"]["status"] == "REVIEW_REQUIRED"
+    assert decisions["bidder_name"]["status"] == "MISSING"
+    assert "绑定当前投标主体" in decisions["bidder_name"]["reason"]
     assert decisions["legal_representative"]["status"] == "MISSING"
     assert decisions["legal_representative"]["expected_value_type_label"] == "姓名"
     assert decisions["legal_representative"]["type_validation"] == "missing"
 
 
-def test_confirmed_manual_value_becomes_traceable_auto_fill():
+def test_confirmed_manual_organization_value_cannot_bypass_entity_binding():
     profile = GenerationProfile(
         project_id=uuid4(),
         generation_mode="strict_template",
@@ -120,11 +133,11 @@ def test_confirmed_manual_value_becomes_traceable_auto_fill():
 
     decision = GenerationProfileService.template_field_decisions(profile)[0]
 
-    assert decision["status"] == "AUTO_FILL"
-    assert decision["source_type"] == "manual_verified"
+    assert decision["status"] == "MISSING"
+    assert decision["binding_status"] == "binding_required"
 
 
-def test_confirmed_case_value_keeps_business_readable_original_evidence():
+def test_confirmed_case_organization_value_cannot_become_enterprise_fact():
     profile = GenerationProfile(
         project_id=uuid4(),
         generation_mode="strict_template",
@@ -148,13 +161,9 @@ def test_confirmed_case_value_keeps_business_readable_original_evidence():
 
     decision = GenerationProfileService.template_field_decisions(profile)[0]
 
-    assert decision["status"] == "AUTO_FILL"
-    assert decision["source_reference"] == "自贡项目中标投标文件.docx"
-    assert decision["evidence_title"] == "自贡项目中标投标文件.docx"
-    assert decision["evidence_excerpt"] == "供应商名称：北京大岳咨询有限责任公司"
-    assert decision["evidence_location"] == "机构私有案例库"
-    assert decision["evidence_match_count"] == 3
-    assert "current_project" not in decision["source_reference"]
+    assert decision["status"] == "MISSING"
+    assert decision["value"] is None
+    assert "投标主体" in decision["reason"]
 
 
 def test_bulk_field_update_cannot_bypass_semantic_type_validation():
@@ -164,7 +173,7 @@ def test_bulk_field_update_cannot_bypass_semantic_type_validation():
         )
 
 
-def test_case_candidate_exposes_conflicting_text_values_for_review():
+def test_case_candidate_cannot_select_a_person_phone_without_role_binding():
     from app.knowledge.case_fact_resolver import CaseFactCandidate
 
     profile = GenerationProfile(
@@ -190,6 +199,6 @@ def test_case_candidate_exposes_conflicting_text_values_for_review():
         profile, case_candidates={"contact_phone": candidate}
     )[0]
 
-    assert decision["status"] == "REVIEW_REQUIRED"
-    assert decision["evidence_alternatives"] == ["13800138000"]
-    assert "系统不自动判断口径" in decision["reason"]
+    assert decision["status"] == "MISSING"
+    assert decision["value"] is None
+    assert "角色绑定" in decision["reason"]

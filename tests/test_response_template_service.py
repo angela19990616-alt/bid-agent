@@ -158,6 +158,56 @@ def test_missing_template_value_is_not_invented(tmp_path):
     )
 
 
+def test_repeated_phone_slots_keep_role_specific_values(tmp_path):
+    document = Document()
+    document.add_heading("附件：响应文件格式", level=1)
+    table = document.add_table(rows=3, cols=3)
+    for row_index, (role, value) in enumerate((
+        ("联系人", "13800138000"),
+        ("法定代表人", "010-12345678"),
+        ("技术负责人", "13900139000"),
+    )):
+        table.cell(row_index, 0).text = role
+        table.cell(row_index, 1).text = "联系电话"
+        table.cell(row_index, 2).text = ""
+    stream = BytesIO()
+    document.save(stream)
+    content = stream.getvalue()
+    service = ResponseTemplateService()
+    descriptor = service.detect("响应文件格式.docx", content)
+    fields = {
+        item["expected_role"]: item
+        for item in descriptor.fields
+        if item.get("canonical_key") == "contact_phone"
+    }
+
+    assert set(fields) == {
+        "CONTACT_PERSON", "LEGAL_REPRESENTATIVE", "TECHNICAL_LEAD"
+    }
+    assert len({item["field_key"] for item in fields.values()}) == 3
+    values = {
+        fields[role]["field_key"]: value
+        for role, value in (
+            ("CONTACT_PERSON", "13800138000"),
+            ("LEGAL_REPRESENTATIVE", "010-12345678"),
+            ("TECHNICAL_LEAD", "13900139000"),
+        )
+    }
+    output = tmp_path / "role-phones.docx"
+    service.fill_docx(
+        template_content=content,
+        output_path=output,
+        descriptor=descriptor,
+        field_values=values,
+        sections=[],
+    )
+
+    result = Document(output)
+    assert [row.cells[2].text for row in result.tables[0].rows] == [
+        "13800138000", "010-12345678", "13900139000"
+    ]
+
+
 def test_pdf_template_is_not_falsely_claimed_as_auto_fillable():
     descriptor = ResponseTemplateService().detect(
         "附件-投标文件格式.pdf", b"%PDF-1.7"

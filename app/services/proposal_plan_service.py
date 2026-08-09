@@ -75,7 +75,16 @@ class ProposalPlanService:
                     (project_id,),
                 )
                 format_constraints = cursor.fetchall()
-                if generation_profile.get("generation_mode") == "strict_template":
+                generation_mode = generation_profile.get("generation_mode")
+                if generation_mode in {
+                    "pdf_template_manual_fill",
+                    "template_conversion_required",
+                }:
+                    raise ProposalPlanError(
+                        "检测到PDF响应模板，但尚无法可靠转换；"
+                        "未进入目录生成。请上传可编辑DOCX版。"
+                    )
+                if generation_mode == "strict_template":
                     chapters = self._template_chapters(
                         generation_profile.get("template_descriptor") or {},
                         requirements,

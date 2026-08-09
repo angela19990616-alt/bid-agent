@@ -1,0 +1,186 @@
+from io import BytesIO
+from uuid import uuid4
+
+from docx import Document
+
+from app.core.entity_resolution import (
+    EntityCandidate,
+    EntityResolutionContext,
+    EntityResolutionEngine,
+    Organization,
+    Person,
+    ProjectRole,
+    ProjectRoleAssignment,
+    SlotContextClassifier,
+)
+from app.services.generation_profile_service import (
+    GenerationProfile,
+    GenerationProfileService,
+)
+from app.services.response_template_service import ResponseTemplateService
+
+
+def _authorization_template() -> bytes:
+    document = Document()
+    document.add_heading("附件：投标文件格式", level=1)
+    document.add_heading("法定代表人身份证明", level=2)
+    document.add_paragraph(
+        "本人___（姓名）系___（投标人名称）的法定代表人。"
+    )
+    document.add_heading("授权委托书", level=2)
+    document.add_paragraph("现委托___（姓名）为我方代理人。")
+    stream = BytesIO()
+    document.save(stream)
+    return stream.getvalue()
+
+
+def _slot(label: str, context: str):
+    return SlotContextClassifier.classify(
+        label=label,
+        surrounding_text=context,
+        source_location="授权委托书/正文第1段",
+        document_section="授权委托书",
+    )
+
+
+def test_authorization_template_resolves_organization_and_distinct_roles():
+    descriptor = ResponseTemplateService().detect(
+        "采购文件.docx", _authorization_template()
+    )
+
+    assert descriptor.detected is True
+    slots = [item for item in descriptor.fields if item["semantic_field"]]
+    assert any(
+        item["semantic_field"] == "organization.full_name"
+        and item["expected_entity_type"] == "Organization"
+        for item in slots
+    )
+    assert any(
+        item["semantic_field"] == "person.name"
+        and item["expected_role"] == "LEGAL_REPRESENTATIVE"
+        for item in slots
+    )
+    assert any(
+        item["semantic_field"] == "person.name"
+        and item["expected_role"] == "AUTHORIZED_REPRESENTATIVE"
+        for item in slots
+    )
+    assert all(item["surrounding_text"] for item in slots)
+    assert all(item["paragraph_index"] for item in slots)
+
+
+def test_legal_representative_aliases_are_one_role():
+    for alias in ("法人", "法定代表", "法定代表人"):
+        slot = _slot("姓名", f"{alias}姓名：___")
+        assert slot.expected_role is ProjectRole.LEGAL_REPRESENTATIVE
+
+
+def test_multiple_people_are_candidates_but_never_randomly_selected():
+    project_id = uuid4()
+    organization_id = uuid4()
+    people = (
+        Person(id=uuid4(), name="人员甲"),
+        Person(id=uuid4(), name="人员乙"),
+    )
+    candidates = tuple(
+        EntityCandidate(
+            person_id=person.id,
+            name=person.name,
+            title=None,
+            match_basis="同一投标主体的已核验人员",
+            source_document="人员库",
+            source_location="人员档案",
+            confidence=1.0,
+        )
+        for person in people
+    )
+    context = EntityResolutionContext(
+        project_id=project_id,
+        organization=Organization(id=organization_id, full_name="测试公司"),
+        people=people,
+        candidates_by_role={
+            ProjectRole.AUTHORIZED_REPRESENTATIVE: candidates
+        },
+    )
+
+    result = EntityResolutionEngine().resolve(
+        _slot("姓名", "现委托___（姓名）为我方代理人"), context
+    )
+
+    assert result.status == "binding_required"
+    assert result.person is None
+    assert len(result.candidates) == 2
+    assert "不会随机选择" in result.reason
+
+
+def test_role_binding_keeps_all_person_attributes_on_one_person_id():
+    project_id = uuid4()
+    organization_id = uuid4()
+    authorized = Person(
+        id=uuid4(),
+        name="侯明",
+        title="项目总监",
+        id_number="110101199001011234",
+        certificates=({"type": "咨询工程师证书", "attachment_id": "A1"},),
+        source_documents=({
+            "title": "人员资料库",
+            "location": "授权人员甲档案",
+            "excerpt": "姓名、职务和证件经人工核验",
+        },),
+    )
+    other = Person(id=uuid4(), name="其他人员", title="经理")
+    assignment = ProjectRoleAssignment(
+        project_id=project_id,
+        role=ProjectRole.AUTHORIZED_REPRESENTATIVE,
+        person_id=authorized.id,
+        organization_id=organization_id,
+    )
+    context = EntityResolutionContext(
+        project_id=project_id,
+        project_name="测试项目",
+        organization=Organization(id=organization_id, full_name="测试公司"),
+        people=(authorized, other),
+        assignments=(assignment,),
+    )
+    fields = []
+    for key, label in (
+        ("authorized_representative", "授权代表姓名"),
+        ("person_title", "授权代表职务"),
+        ("person_id_number", "授权代表身份证号码"),
+    ):
+        slot = SlotContextClassifier.classify(
+            label=label,
+            surrounding_text=f"授权委托书 {label}：___",
+            source_location=f"授权委托书/{label}",
+            document_section="授权委托书",
+            canonical_hint=key,
+        )
+        fields.append({"field_key": key, "label": label, **slot.snapshot()})
+    profile = GenerationProfile(
+        project_id=project_id,
+        generation_mode="strict_template",
+        historical_case_mode="closest_case",
+        template_descriptor={"fields": fields},
+        template_field_values={},
+    )
+
+    decisions = {
+        item["field_key"]: item
+        for item in GenerationProfileService.template_field_decisions(
+            profile, entity_context=context
+        )
+    }
+
+    assert decisions["authorized_representative"]["value"] == authorized.name
+    assert decisions["person_title"]["value"] == authorized.title
+    assert decisions["person_id_number"]["value"] == authorized.id_number
+    assert all(item["binding_status"] == "resolved" for item in decisions.values())
+    assert authorized.certificates[0]["attachment_id"] == "A1"
+    assert all("同一 person_id" in " ".join(item["match_path"]) for item in decisions.values())
+
+
+def test_ambiguous_legal_or_authorized_representative_needs_review():
+    slot = _slot("姓名", "法人或授权代表（姓名）：___")
+
+    assert slot.expected_entity_type.value == "Person"
+    assert slot.expected_role is None

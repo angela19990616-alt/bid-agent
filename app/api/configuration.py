@@ -39,7 +39,7 @@ def get_active_rule(
     rule_type: Literal[
         "extraction", "classification", "response_strategy", "knowledge",
         "proposal_memory", "writing", "compliance", "conflict_detection",
-        "response_prioritization", "template_generation"
+        "response_prioritization", "template_generation", "entity_relation",
     ],
 ):
     return RuleEngine().load(rule_type).__dict__
@@ -50,7 +50,7 @@ def list_rule_versions(
     rule_type: Literal[
         "extraction", "classification", "response_strategy", "knowledge",
         "proposal_memory", "writing", "compliance", "conflict_detection",
-        "response_prioritization", "template_generation"
+        "response_prioritization", "template_generation", "entity_relation",
     ] | None = None,
 ):
     return RuleEngine().list_versions(rule_type)

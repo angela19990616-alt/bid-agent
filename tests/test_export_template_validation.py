@@ -145,6 +145,10 @@ def test_template_preview_builds_real_docx_without_delivery_record(
         lambda _self, _project_id: {},
     )
     monkeypatch.setattr(
+        "app.services.export_service.EntityResolutionService.resolve_project",
+        lambda _self, _project_id: None,
+    )
+    monkeypatch.setattr(
         ExportService,
         "_load_full_export_input",
         lambda _self, _project_id, **_kwargs: {

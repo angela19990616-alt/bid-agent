@@ -9,6 +9,8 @@ class SemanticValueType(StrEnum):
     PROJECT_IDENTIFIER = "project_identifier"
     ORGANIZATION_NAME = "organization_name"
     PERSON_NAME = "person_name"
+    IDENTITY_NUMBER = "identity_number"
+    JOB_TITLE = "job_title"
     DATE = "date"
     ADDRESS = "address"
     POSTAL_CODE = "postal_code"
@@ -33,6 +35,11 @@ FIELD_EXPECTATIONS: dict[str, tuple[SemanticValueType, str]] = {
     "legal_representative": (SemanticValueType.PERSON_NAME, "姓名"),
     "authorized_representative": (SemanticValueType.PERSON_NAME, "姓名"),
     "contact_person": (SemanticValueType.PERSON_NAME, "姓名"),
+    "project_manager_name": (SemanticValueType.PERSON_NAME, "姓名"),
+    "technical_lead_name": (SemanticValueType.PERSON_NAME, "姓名"),
+    "signatory_name": (SemanticValueType.PERSON_NAME, "姓名"),
+    "person_id_number": (SemanticValueType.IDENTITY_NUMBER, "身份证号码"),
+    "person_title": (SemanticValueType.JOB_TITLE, "职务"),
     "date": (SemanticValueType.DATE, "日期"),
     "registered_address": (SemanticValueType.ADDRESS, "地址"),
     "postal_code": (SemanticValueType.POSTAL_CODE, "邮政编码"),
@@ -123,6 +130,8 @@ class FieldSemanticClassifier:
             compact,
         ):
             return SemanticValueType.DATE
+        if re.fullmatch(r"\d{17}[0-9Xx]", compact):
+            return SemanticValueType.IDENTITY_NUMBER
         if re.fullmatch(r"(?:第)?[一二三四五六七八九十\d]+轮", compact):
             return SemanticValueType.BID_ROUND
         if re.fullmatch(r"\d{6}", compact):
@@ -152,16 +161,21 @@ class FieldSemanticClassifier:
             compact,
         ):
             return SemanticValueType.QUALIFICATION
-        if 4 <= len(compact) <= 160 and re.search(
-            r"(?:项目|工程|服务|采购|建设|咨询)", compact
-        ):
-            return SemanticValueType.PROJECT_NAME
         if cls.DOCUMENT_PATTERN.search(compact):
             return SemanticValueType.DOCUMENT_REFERENCE
         if cls.PERSON_REFERENCE_PATTERN.fullmatch(compact):
             return SemanticValueType.PERSON_REFERENCE
         if cls.NARRATIVE_PATTERN.search(compact):
             return SemanticValueType.NARRATIVE_TEXT
+        if 2 <= len(compact) <= 24 and re.search(
+            r"(?:经理|总监|主任|负责人|工程师|顾问|专员|助理|董事|监事)$",
+            compact,
+        ):
+            return SemanticValueType.JOB_TITLE
+        if 4 <= len(compact) <= 160 and re.search(
+            r"(?:项目|工程|服务|采购|建设|咨询)", compact
+        ):
+            return SemanticValueType.PROJECT_NAME
         if re.fullmatch(r"[一-鿿]{2,4}", compact) or re.fullmatch(
             r"[一-鿿]{1,10}·[一-鿿·]{1,20}", compact
         ):

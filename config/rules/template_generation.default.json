@@ -3,10 +3,10 @@
   "rule_type": "template_generation",
   "version": 1,
   "name": "投标响应模板优先规则",
-  "priority": [
-    "strict_template",
-    "tender_structure",
-    "closest_approved_case"
+  "priority": ["strict_template", "planned"],
+  "writer_strategies": [
+    "strict_template_writer",
+    "planned_proposal_writer"
   ],
   "policies": {
     "preserve_original_package": true,
@@ -47,7 +47,11 @@
     ]
   },
   "pdf_policy": {
-    "non_fillable_pdf": "manual_exact_fill_required",
-    "do_not_claim_exact_fill_without_coordinates": true
+    "convert_to_editable_docx_before_template_detection": true,
+    "converted_template_detected": "strict_template_writer",
+    "converted_template_not_detected": "planned_proposal_writer",
+    "conversion_failed": "template_conversion_required",
+    "do_not_treat_conversion_failure_as_no_template": true,
+    "do_not_claim_exact_fill_without_structure_validation": true
   }
 }

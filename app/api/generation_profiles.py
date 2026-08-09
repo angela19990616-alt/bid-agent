@@ -28,6 +28,9 @@ def get_generation_profile(
     return GenerationProfileResponse(
         project_id=profile.project_id,
         generation_mode=profile.generation_mode,
+        writer_strategy=profile.writer_strategy,
+        template_conversion_status=profile.template_conversion_status,
+        template_conversion_report=(profile.template_conversion_report or {}),
         historical_case_mode=profile.historical_case_mode,
         template_descriptor=profile.template_descriptor,
         template_filename=profile.template_filename,
@@ -48,6 +51,9 @@ def update_template_fields(
     return GenerationProfileResponse(
         project_id=profile.project_id,
         generation_mode=profile.generation_mode,
+        writer_strategy=profile.writer_strategy,
+        template_conversion_status=profile.template_conversion_status,
+        template_conversion_report=(profile.template_conversion_report or {}),
         historical_case_mode=profile.historical_case_mode,
         template_descriptor=profile.template_descriptor,
         template_filename=profile.template_filename,

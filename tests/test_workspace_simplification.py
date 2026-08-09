@@ -48,10 +48,16 @@ def test_workspace_summary_loads_requirements_once(monkeypatch):
                 template_filename=None,
                 template_descriptor={},
                 template_field_values={},
+                writer_strategy="planned_proposal_writer",
+                template_conversion_status="not_required",
+                template_conversion_report={},
             )
         ),
         enterprise_fact_resolver=SimpleNamespace(resolve=lambda _workspace_id: []),
         case_fact_resolver=SimpleNamespace(resolve=lambda _workspace_id: {}),
+        entity_resolution_service=SimpleNamespace(
+            resolve_project=lambda _workspace_id: None
+        ),
     )
     workspace = SimpleNamespace(
         id=workspace_id,
@@ -125,6 +131,11 @@ def test_completed_upload_marks_pipeline_succeeded(monkeypatch):
             create_recommended_outline=lambda *_args: []
         ),
         rule_engine=SimpleNamespace(load=lambda _kind: rules),
+        generation_profile_service=SimpleNamespace(
+            get=lambda _workspace_id: SimpleNamespace(
+                writer_strategy="planned_proposal_writer"
+            )
+        ),
     )
     monkeypatch.setattr(workspace_module, "ControlledPipeline", Pipeline)
     monkeypatch.setattr(
@@ -138,3 +149,50 @@ def test_completed_upload_marks_pipeline_succeeded(monkeypatch):
     service.complete_prepared_upload(uuid4(), uuid4(), run_id)
 
     assert calls[-1] == ("succeed", run_id, "proposal_planner")
+
+
+def test_pdf_conversion_failure_never_enters_planner(monkeypatch):
+    calls = []
+
+    class Pipeline:
+        def record(self, run_id, stage, **_kwargs):
+            calls.append(("record", run_id, stage))
+
+        def succeed(self, run_id, stage):
+            calls.append(("succeed", run_id, stage))
+
+        def fail(self, *_args):
+            raise AssertionError("safe conversion stop must not fail")
+
+    rules = SimpleNamespace(snapshot=lambda: {})
+    planner = SimpleNamespace(
+        create_recommended_outline=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("planner must not run after PDF conversion failure")
+        )
+    )
+    service = WorkspaceService(
+        requirement_service=SimpleNamespace(extract=lambda *_args: None),
+        plan_service=planner,
+        rule_engine=SimpleNamespace(load=lambda _kind: rules),
+        generation_profile_service=SimpleNamespace(
+            get=lambda _workspace_id: SimpleNamespace(writer_strategy=None)
+        ),
+    )
+    monkeypatch.setattr(workspace_module, "ControlledPipeline", Pipeline)
+    monkeypatch.setattr(
+        workspace_module.ModelBudgetService,
+        "configure_for_document",
+        lambda *_args: {},
+    )
+    statuses = []
+    monkeypatch.setattr(
+        service,
+        "_set_status",
+        lambda _workspace_id, status: statuses.append(status),
+    )
+    run_id = uuid4()
+
+    service.complete_prepared_upload(uuid4(), uuid4(), run_id)
+
+    assert statuses[-1] == "outline_ready"
+    assert calls[-1] == ("succeed", run_id, "generation_mode_decision")

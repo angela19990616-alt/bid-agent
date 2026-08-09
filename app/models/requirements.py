@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -80,6 +80,7 @@ class RequirementResponse(BaseModel):
     priority: RequirementPriority = "P2"
     target_chapter: str | None = None
     need_generation: bool = False
+    semantic_graph: dict[str, Any] = Field(default_factory=dict)
     status: RequirementStatus
     feedback: RequirementFeedback = "pending"
     sources: list[RequirementSourceResponse] = Field(default_factory=list)

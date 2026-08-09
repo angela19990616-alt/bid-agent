@@ -61,6 +61,9 @@ class WorkspaceResponse(BaseModel):
     processing_job_progress: int = 0
     processing_job_type: str | None = None
     generation_mode: str = "planned"
+    writer_strategy: str | None = "planned_proposal_writer"
+    template_conversion_status: str = "not_required"
+    template_conversion_report: dict = Field(default_factory=dict)
     historical_case_mode: str = "closest_case"
     template_filename: str | None = None
     template_fidelity: str | None = None

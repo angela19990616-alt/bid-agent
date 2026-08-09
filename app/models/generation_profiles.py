@@ -7,8 +7,14 @@ from pydantic import BaseModel, Field
 class GenerationProfileResponse(BaseModel):
     project_id: UUID
     generation_mode: Literal[
-        "strict_template", "planned", "pdf_template_manual_fill"
+        "strict_template", "planned", "pdf_template_manual_fill",
+        "template_conversion_required",
     ]
+    writer_strategy: Literal[
+        "strict_template_writer", "planned_proposal_writer"
+    ] | None = None
+    template_conversion_status: str = "not_required"
+    template_conversion_report: dict[str, Any] = Field(default_factory=dict)
     historical_case_mode: Literal[
         "closest_case", "balanced", "structure_only", "current_only"
     ]
@@ -27,8 +33,18 @@ class TemplateFieldReviewUpdate(BaseModel):
     value: str | None = Field(default=None, min_length=1, max_length=500)
 
 
+class RoleBindingUpdate(BaseModel):
+    role: Literal[
+        "LEGAL_REPRESENTATIVE", "AUTHORIZED_REPRESENTATIVE",
+        "PROJECT_MANAGER", "TECHNICAL_LEAD", "CONTACT_PERSON",
+        "SIGNATORY",
+    ]
+    person_id: UUID
+
+
 class TemplateFieldDecisionResponse(BaseModel):
     field_key: str
+    canonical_key: str
     label: str
     expected_value_type: str = "text"
     expected_value_type_label: str = "文本"
@@ -45,3 +61,13 @@ class TemplateFieldDecisionResponse(BaseModel):
     evidence_location: str | None = None
     evidence_match_count: int = 0
     evidence_alternatives: list[str] = Field(default_factory=list)
+    slot: dict[str, Any] = Field(default_factory=dict)
+    semantic_field: str | None = None
+    expected_entity_type: str | None = None
+    expected_role: str | None = None
+    expected_role_label: str | None = None
+    subject_organization: str | None = None
+    project_name: str | None = None
+    binding_status: str | None = None
+    match_path: list[str] = Field(default_factory=list)
+    entity_candidates: list[dict[str, Any]] = Field(default_factory=list)

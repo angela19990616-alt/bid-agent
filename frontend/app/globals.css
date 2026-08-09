@@ -119,9 +119,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 .stage { min-width: 0; padding: 34px clamp(24px, 4vw, 58px) 52px; }
 .stage-header { display: flex; max-width: 1360px; align-items: flex-end; justify-content: space-between; gap: 30px; margin: 0 auto 25px; }
+.stage-header > div:first-child { min-width: 0; }
 .eyebrow, .panel-label { color: var(--gold); font-size: 9px; font-weight: 800; letter-spacing: .17em; }
 .stage-header h2 { margin: 7px 0 7px; font-family: var(--serif); font-size: 29px; }
-.stage-header p { margin: 0; color: var(--muted); }
+.stage-header p { max-width: 760px; margin: 0; color: var(--muted); line-height: 1.65; overflow-wrap: anywhere; }
 .busy-pill { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 99px; color: var(--green-800); background: var(--green-100); font-size: 11px; }
 .busy-pill i { width: 8px; height: 8px; border: 2px solid #a8c0b4; border-top-color: var(--green-700); border-radius: 50%; animation: spin .8s linear infinite; }
 .review-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 14px; border: 1px solid #d7dedb; border-radius: 8px; background: #f7f9f8; font-size: 12px; }
@@ -349,6 +350,14 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .fill-decision .compact { width: auto; justify-self: start; padding: 6px 10px; }
 .fill-decision .text-button { justify-self: start; border: 0; background: transparent; color: var(--green-700); padding: 2px 0; }
 .field-review-actions, .field-edit-form > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.fill-decision .entity-resolution-card { display: grid; align-items: stretch; justify-content: stretch; gap: 7px; padding: 10px; border-radius: 8px; background: #f5f8f6; }
+.fill-decision .entity-resolution-card > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: start; gap: 8px; }
+.fill-decision .entity-resolution-card > div > span { padding: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; }
+.fill-decision .entity-resolution-card details { border-top: 1px solid var(--line); padding-top: 7px; }
+.fill-decision .entity-resolution-card blockquote { margin: 7px 0 0; }
+.fill-decision .entity-candidates { display: grid; grid-template-columns: 1fr; gap: 7px; }
+.fill-decision .entity-candidates > article { display: grid; gap: 5px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: white; }
+.fill-decision .entity-candidates > article > div { display: flex; justify-content: space-between; gap: 8px; }
 .field-edit-form { display: grid; gap: 8px; }
 .field-edit-form input { width: 100%; padding: 9px 10px; border: 1px solid #b8c9c0; border-radius: 7px; color: var(--ink); background: white; font: inherit; }
 .field-edit-form input:focus { border-color: var(--green-700); outline: 2px solid rgba(48, 104, 78, .1); }

@@ -34,7 +34,10 @@ from app.models.workspaces import OutlineUpdate, WorkspaceResponse
 from app.models.generation_profiles import (
     TemplateFieldReviewUpdate,
     TemplateFieldsUpdate,
+    RoleBindingUpdate,
 )
+from app.core.entity_resolution import ProjectRole
+from app.services.entity_resolution_service import EntityResolutionService
 from app.services.project_document_service import (
     DocumentParseFailedError,
     DuplicateDocumentError,
@@ -256,6 +259,27 @@ def review_workspace_template_field(
             "TEMPLATE_FIELD_REVIEW_INVALID",
             str(exc),
         ) from exc
+
+
+@router.post(
+    "/{workspace_id}/role-bindings",
+    response_model=WorkspaceResponse,
+)
+def bind_workspace_role(
+    workspace_id: UUID,
+    payload: RoleBindingUpdate,
+    _access: None = Depends(authorize_workspace),
+    service: WorkspaceService = Depends(get_workspace_service),
+):
+    try:
+        EntityResolutionService().bind_role(
+            workspace_id,
+            role=ProjectRole(payload.role),
+            person_id=payload.person_id,
+        )
+        return service.get(workspace_id)
+    except ValueError as exc:
+        raise AppError(422, "ROLE_BINDING_INVALID", str(exc)) from exc
 
 
 @router.post(

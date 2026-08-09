@@ -18,6 +18,7 @@ from app.knowledge.enterprise_fact_resolver import EnterpriseFactResolver
 from app.knowledge.case_fact_resolver import CaseFactResolver
 from app.services.generation_profile_service import GenerationProfileService
 from app.services.response_template_service import ResponseTemplateService
+from app.services.entity_resolution_service import EntityResolutionService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -42,6 +43,7 @@ class WorkspaceService:
         generation_profile_service: GenerationProfileService | None = None,
         enterprise_fact_resolver: EnterpriseFactResolver | None = None,
         case_fact_resolver: CaseFactResolver | None = None,
+        entity_resolution_service: EntityResolutionService | None = None,
     ):
         self.document_service = document_service or ProjectDocumentService()
         self.requirement_service = requirement_service or RequirementService()
@@ -54,6 +56,9 @@ class WorkspaceService:
             enterprise_fact_resolver or EnterpriseFactResolver()
         )
         self.case_fact_resolver = case_fact_resolver or CaseFactResolver()
+        self.entity_resolution_service = (
+            entity_resolution_service or EntityResolutionService()
+        )
 
     def create_from_upload(
         self,
@@ -180,6 +185,15 @@ class WorkspaceService:
                 run_id,
                 response_strategy_rules,
             )
+
+            profile = self.generation_profile_service.get(workspace_id)
+            if profile.writer_strategy is None:
+                # A PDF conversion failure is not evidence that the tender has
+                # no template. Keep the parsed requirements, but never invent
+                # a second outline while the source structure is unresolved.
+                self._set_status(workspace_id, "outline_ready")
+                pipeline.succeed(run_id, "generation_mode_decision")
+                return
 
             writing_rules = self.rule_engine.load("writing")
             pipeline.record(
@@ -320,6 +334,11 @@ class WorkspaceService:
             "processing_job_progress": job["progress"] if job else 0,
             "processing_job_type": job["job_type"] if job else None,
             "generation_mode": profile.generation_mode,
+            "writer_strategy": profile.writer_strategy,
+            "template_conversion_status": profile.template_conversion_status,
+            "template_conversion_report": (
+                profile.template_conversion_report or {}
+            ),
             "historical_case_mode": profile.historical_case_mode,
             "template_filename": profile.template_filename,
             "template_fidelity": profile.template_descriptor.get(
@@ -345,6 +364,9 @@ class WorkspaceService:
                     {"project_name": workspace.name},
                     enterprise_facts,
                     self.case_fact_resolver.resolve(workspace_id),
+                    self.entity_resolution_service.resolve_project(
+                        workspace_id
+                    ),
                 )
             ),
             "case_library_count": case_library["count"],

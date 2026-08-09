@@ -36,6 +36,14 @@ type Requirement = {
   need_generation: boolean;
   status: "pending" | "confirmed" | "rejected";
   feedback: "pending" | "confirmed" | "not_needed" | "classification_error" | "source_mismatch" | "duplicate" | "incomplete";
+  semantic_graph?: {
+    entities: Array<{ key: string; type: string; label: string; mention: string; resolved: boolean }>;
+    relations: Array<{ subject: string; predicate: string; predicate_label: string; object: string; confidence: number }>;
+    actions: Array<{ actor: string; action: string; action_label: string; target: string | null; required: boolean }>;
+    focus_summary: string;
+    constraints: string[];
+    confidence: number;
+  };
   sources: Source[];
 };
 type IgnoreFeedback = Exclude<Requirement["feedback"], "pending" | "confirmed">;
@@ -114,7 +122,18 @@ type Workspace = {
   model_calls_limit: number;
   model_tokens_used: number;
   model_tokens_limit: number;
-  generation_mode: "strict_template" | "planned" | "pdf_template_manual_fill";
+  generation_mode: "strict_template" | "planned" | "pdf_template_manual_fill" | "template_conversion_required";
+  writer_strategy: "strict_template_writer" | "planned_proposal_writer" | null;
+  template_conversion_status: string;
+  template_conversion_report: {
+    status?: string;
+    page_count?: number;
+    paragraph_count?: number;
+    table_count?: number;
+    message?: string;
+    template_detected?: boolean;
+    structure_validation?: string;
+  };
   historical_case_mode: "balanced" | "closest_case" | "structure_only" | "current_only";
   template_filename: string | null;
   template_fidelity: string | null;
@@ -124,6 +143,7 @@ type Workspace = {
   template_field_values: Record<string, string>;
   template_field_decisions: Array<{
     field_key: string;
+    canonical_key: string;
     label: string;
     expected_value_type: string;
     expected_value_type_label: string;
@@ -140,6 +160,31 @@ type Workspace = {
     evidence_location: string | null;
     evidence_match_count: number;
     evidence_alternatives: string[];
+    slot: {
+      document_section?: string | null;
+      table_index?: number | null;
+      paragraph_index?: number | null;
+      row?: number | null;
+      column?: number | null;
+      surrounding_text?: string;
+    };
+    semantic_field: string | null;
+    expected_entity_type: "Organization" | "Person" | "Project" | null;
+    expected_role: "LEGAL_REPRESENTATIVE" | "AUTHORIZED_REPRESENTATIVE" | "PROJECT_MANAGER" | "TECHNICAL_LEAD" | "CONTACT_PERSON" | "SIGNATORY" | null;
+    expected_role_label: string | null;
+    subject_organization: string | null;
+    project_name: string | null;
+    binding_status: string | null;
+    match_path: string[];
+    entity_candidates: Array<{
+      person_id: string;
+      name: string;
+      title: string | null;
+      match_basis: string;
+      source_document: string | null;
+      source_location: string | null;
+      confidence: number;
+    }>;
   }>;
   case_library_count: number;
   case_library_name: string;
@@ -327,6 +372,9 @@ const importanceRank: Record<Requirement["importance"], number> = {
   medium: 2,
   low: 3,
 };
+function entityLabel(item: Requirement, key: string | null) {
+  return item.semantic_graph?.entities.find((entity) => entity.key === key)?.label ?? "相关主体";
+}
 const fillStatusLabels = {
   AUTO_FILL: "可自动填写",
   REVIEW_REQUIRED: "待人工确认",
@@ -520,9 +568,12 @@ export default function Home() {
       }),
     );
   }, [requirements, requirementView]);
+  const usesTemplateFlow = workspace?.generation_mode !== "planned";
+  const conversionPending = workspace?.generation_mode === "template_conversion_required"
+    || workspace?.generation_mode === "pdf_template_manual_fill";
   const visibleSteps = !workspace
     ? [templateSteps[0]]
-    : workspace.generation_mode === "strict_template" ? templateSteps : steps;
+    : usesTemplateFlow ? templateSteps : steps;
   const progress = workspace
     ? Math.max(20, ((visibleSteps.findIndex((item) => item.id === step) + 1) / visibleSteps.length) * 100)
     : 0;
@@ -581,7 +632,7 @@ export default function Home() {
     setSections(completed.outline);
     setActiveSectionId(completed.outline[0]?.id ?? "");
     setEditorContent(completed.outline[0]?.current_version?.content ?? "");
-    setStep(completed.generation_mode === "strict_template" ? "export" : "requirements");
+    setStep(completed.generation_mode === "planned" ? "requirements" : "export");
     setNotice(
       message
       ?? `处理完成，已分析 ${completed.response_summary.total} 条响应事项。`,
@@ -667,8 +718,10 @@ export default function Home() {
       await openCompletedWorkspace(
         completed,
         completed.generation_mode === "strict_template"
-          ? "已识别原响应格式并完成自动预填，请审核候选值及来源。"
-          : `已识别《${completed.document?.filename}》，分析 ${completed.response_summary.total} 条响应事项。`,
+          ? "已识别可编辑响应格式并完成自动预填，请审核候选值及来源。"
+          : completed.generation_mode === "planned"
+            ? `已确认文件无响应模板，分析 ${completed.response_summary.total} 条响应事项。`
+            : "检测到 PDF，但尚无法可靠转换为可编辑 Word。系统未进入目录生成。",
       );
     });
   }
@@ -1034,6 +1087,28 @@ export default function Home() {
     });
   }
 
+  async function bindEntityRole(
+    item: TemplateFieldDecision,
+    candidate: TemplateFieldDecision["entity_candidates"][number],
+  ) {
+    if (!workspace || !item.expected_role) return;
+    await run(`正在绑定${item.expected_role_label ?? "项目角色"}`, async () => {
+      const updated = await request<Workspace>(
+        `/workspaces/${workspace.id}/role-bindings`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: item.expected_role,
+            person_id: candidate.person_id,
+          }),
+        },
+      );
+      setWorkspace(updated);
+      setNotice(`已将${candidate.name}绑定为${item.expected_role_label ?? "当前角色"}。`);
+    });
+  }
+
   function startEditingTemplateField(item: TemplateFieldDecision) {
     setEditingFieldKey(item.field_key);
     setEditingFieldValue(item.value ?? "");
@@ -1123,7 +1198,7 @@ export default function Home() {
             <div>
               <span className="eyebrow">CONTROLLED PROPOSAL WORKFLOW</span>
               <h2>{visibleSteps.find((item) => item.id === step)?.title}</h2>
-              <p>{!workspace ? "上传后自动判断是否存在响应模板，无需人工选流程。" : workspace.generation_mode === "strict_template" ? "已检测到原响应模板：系统自动预填，业务人员只审核。" : "未检测到完整模板：系统才进入目录与方案生成。"}</p>
+              <p>{!workspace ? "PDF 先转为可编辑 Word，再自动判断是否存在响应模板。" : workspace.generation_mode === "strict_template" ? "已检测到可编辑响应模板：系统自动预填，业务人员只审核。" : workspace.generation_mode === "planned" ? "已确认无响应模板：进入目录与方案生成。" : "PDF 转 Word 尚未通过结构验证：未进入任何写作引擎。"}</p>
             </div>
             {busy && <div className="busy-pill" role="status" aria-live="polite"><i />{busy}</div>}
           </div>
@@ -1141,7 +1216,7 @@ export default function Home() {
             <div className="upload-hero">
               <span className="panel-label">START FROM THE TENDER</span>
               <h3>只需上传招标文件</h3>
-              <p>有“投标文件格式”就继承原标题、表格、顺序和字体直接预填；没有格式才进入目录与方案生成。</p>
+              <p>DOCX 直接检测；PDF 先在私有环境转成可编辑 Word 再检测。有模板严格回填，确认无模板才生成目录。</p>
               <label className={`upload-zone hero ${busy ? "disabled" : ""}`}>
                 <input type="file" accept=".pdf,.docx" disabled={Boolean(busy)} onChange={upload} />
                 <strong>选择 PDF 或 DOCX 招标文件</strong>
@@ -1272,6 +1347,17 @@ export default function Home() {
                         </div>
                         <h3>{item.title}</h3>
                         <p>{item.normalized_text}</p>
+                        {item.semantic_graph?.focus_summary && (
+                          <details className="requirement-semantics">
+                            <summary>查看业务实体与关系</summary>
+                            <strong>{item.semantic_graph.focus_summary}</strong>
+                            {item.semantic_graph.relations.length > 0 && <ul>{item.semantic_graph.relations.map((relation, index) => (
+                              <li key={`${relation.predicate}-${index}`}>{entityLabel(item, relation.subject)} → {relation.predicate_label} → {entityLabel(item, relation.object)}</li>
+                            ))}</ul>}
+                            {item.semantic_graph.actions.length > 0 && <p>响应动作：{Array.from(new Set(item.semantic_graph.actions.map((action) => action.action_label))).join("、")}</p>}
+                            {item.semantic_graph.constraints.length > 0 && <p>签字、盖章等仅作为办理约束：{item.semantic_graph.constraints.join("、")}</p>}
+                          </details>
+                        )}
                         <div className="strategy-grid">
                           <div><span>类型</span><strong>{typeLabels[item.type]}</strong></div>
                           <div><span>响应方式</span><strong>{responseActionLabels[item.response_action]}</strong></div>
@@ -1437,16 +1523,25 @@ export default function Home() {
           )}
 
           {step === "export" && (
-            <div className={`export-layout ${workspace?.generation_mode === "strict_template" ? "strict-export" : ""}`}>
+            <div className={`export-layout ${usesTemplateFlow ? "strict-export" : ""}`}>
               <div className="delivery-card">
                 <div className="delivery-icon">W</div>
-                <div><span className="panel-label">DELIVERABLE</span><h3>{workspace?.name ?? "技术方案"}</h3><p>{workspace?.generation_mode === "strict_template" && sections.length === 0 ? "系统将直接在原投标文件格式中回填已匹配字段，不额外虚构技术章节。" : "系统将按目录顺序合并所有已人工确认章节，并附技术要求来源总表。"}</p></div>
-                <span className={`approval ${(workspace?.generation_mode === "strict_template" && sections.length === 0) || (sections.length > 0 && sections.every((item) => item.status === "approved")) ? "ready" : ""}`}>{workspace?.generation_mode === "strict_template" && sections.length === 0 ? "原格式字段待审核" : sections.length > 0 && sections.every((item) => item.status === "approved") ? "全部章节已确认" : "需逐章生成并确认"}</span>
+                <div><span className="panel-label">DELIVERABLE</span><h3>{workspace?.name ?? "技术方案"}</h3><p>{conversionPending ? "PDF 转换未通过结构验证，已停止后续写作，避免生成一套错误目录。" : workspace?.generation_mode === "strict_template" && sections.length === 0 ? "系统将直接在原投标文件格式中回填已匹配字段，不额外虚构技术章节。" : "系统将按目录顺序合并所有已人工确认章节，并附技术要求来源总表。"}</p></div>
+                <span className={`approval ${(workspace?.generation_mode === "strict_template" && sections.length === 0) || (sections.length > 0 && sections.every((item) => item.status === "approved")) ? "ready" : ""}`}>{conversionPending ? "转换待处理" : workspace?.generation_mode === "strict_template" && sections.length === 0 ? "原格式字段待审核" : sections.length > 0 && sections.every((item) => item.status === "approved") ? "全部章节已确认" : "需逐章生成并确认"}</span>
               </div>
               <div className="panel export-actions">
                 <h3>生成交付文件</h3>
                 <p>一次完成来源校核、真实性检查和 Word 生成；阻断问题必须处理后才能正式导出。</p>
-                {responseSupport?.manual_action_archive && workspace?.generation_mode !== "strict_template" && (
+                {conversionPending && (
+                  <div className="message error conversion-status-card">
+                    <div>
+                      <strong>检测到 PDF，但尚无法可靠转换</strong>
+                      <p>{workspace?.template_conversion_report?.message || "转换后的 Word 未通过可编辑结构验证。"}</p>
+                      <small>系统已保留原 PDF 和解析结果，且未调用目录写作引擎。请上传该文件的可编辑 DOCX 版。</small>
+                    </div>
+                  </div>
+                )}
+                {responseSupport?.manual_action_archive && workspace?.generation_mode === "planned" && (
                   <details className="manual-archive" open={responseSupport.manual_action_archive.pending > 0}>
                     <summary>
                       人工事项档案
@@ -1473,13 +1568,13 @@ export default function Home() {
                         <WordDocumentPreview workspace={workspace} />
                       </section>
                       <section className="fill-review-pane">
-                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验来源并导出</h3><p>系统优先自动匹配；需要调整时可人工修改，修改值会记录为人工确认来源。</p></header>
+                        <header><span className="panel-label">REVIEW & EXPORT</span><h3>核验实体关系并导出</h3><p>系统先识别业务实体和项目角色，再读取对应属性；人员字段不能直接输入姓名，只允许审核或建立角色绑定。</p></header>
                         <div className="font-fidelity-note">
                           <b>已自动继承原模板字体</b>
                           <span>{workspace.template_fonts?.length ? workspace.template_fonts.join("、") : "使用原段落样式"}</span>
                           <small>回填字段和生成正文均继承所在模板样式，不再强制替换为系统默认字体。</small>
                         </div>
-                        <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；候选值确认后才进入正式文件。</span></div>
+                        <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
                         {missingTemplateDecisions.length > 0 ? <p className="template-field-warning">企业资料库缺少 {missingTemplateDecisions.length} 项资料。系统保留空位，不允许 AI 猜写。</p> : <p className="template-field-ready">全部字段已匹配，请审核后导出。</p>}
                         <div className="fill-decision-list">
                           {(workspace.template_field_decisions ?? []).map((item) => (
@@ -1495,12 +1590,37 @@ export default function Home() {
                                 </div>
                               ) : <p>{item.value || "尚未提供"}</p>}
                               <small>字段类型：{item.expected_value_type_label} · {item.type_validation === "passed" ? "类型校验已通过" : "未获得符合类型的值"}</small>
+                              {item.semantic_field && (
+                                <div className="entity-resolution-card">
+                                  <div><span>识别字段</span><strong>{item.expected_role_label ? `${item.expected_role_label}${item.expected_value_type_label}` : item.label}</strong></div>
+                                  {item.subject_organization && <div><span>所属主体</span><strong>{item.subject_organization}</strong></div>}
+                                  {item.expected_role_label && <div><span>目标角色</span><strong>{item.expected_role_label}</strong></div>}
+                                  {item.project_name && item.expected_role !== "LEGAL_REPRESENTATIVE" && <div><span>当前项目</span><strong>{item.project_name}</strong></div>}
+                                  <div><span>当前状态</span><strong>{item.binding_status === "resolved" ? "已确定唯一实体和角色" : item.reason}</strong></div>
+                                  {item.slot?.surrounding_text && <details><summary>查看槽位判断上下文</summary><blockquote>{item.slot.surrounding_text}</blockquote></details>}
+                                  {(item.match_path ?? []).length > 0 && <details><summary>查看匹配路径</summary><ol>{item.match_path.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol></details>}
+                                  {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
+                                    <div className="entity-candidates">
+                                      <span>候选人员</span>
+                                      {item.entity_candidates.map((candidate) => (
+                                        <article key={candidate.person_id}>
+                                          <div><strong>{candidate.name}</strong><small>{candidate.title || "职务待核验"}</small></div>
+                                          <p>{candidate.match_basis}</p>
+                                          {(candidate.source_document || candidate.source_location) && <small>依据：{candidate.source_document || "已核验人员库"}{candidate.source_location ? ` · ${candidate.source_location}` : ""}</small>}
+                                          <button className="secondary compact" disabled={Boolean(busy) || !item.expected_role} onClick={() => bindEntityRole(item, candidate)}>选择并建立角色绑定</button>
+                                        </article>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {item.expected_entity_type === "Person" && item.binding_status !== "resolved" && (item.entity_candidates ?? []).length === 0 && <p className="template-field-warning">当前没有可选的已核验人员，需要先在受控人员库新增并核验。</p>}
+                                </div>
+                              )}
                               <small>{item.reason}</small>
                               {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
                               {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
                               {editingFieldKey !== item.field_key && <div className="field-review-actions">
                                 {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "confirm")}>确认该字段</button>}
-                                <button className="text-button" disabled={Boolean(busy)} onClick={() => startEditingTemplateField(item)}>修改</button>
+                                {!item.expected_entity_type && <button className="text-button" disabled={Boolean(busy)} onClick={() => startEditingTemplateField(item)}>修改</button>}
                                 {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "reset")}>重新审核</button>}
                               </div>}
                             </article>
@@ -1558,7 +1678,7 @@ export default function Home() {
                     </details>
                   </details>
                 )}
-                {workspace?.generation_mode !== "strict_template" && <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>}
+                {workspace?.generation_mode === "planned" && <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>}
                 {exportItem?.status === "succeeded" && workspace && (
                   <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
                 )}

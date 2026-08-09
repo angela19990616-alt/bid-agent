@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from app.core.field_semantics import FieldSemanticClassifier
+from app.core.entity_resolution import EntityType, SlotResolution
 
 
 class FillStatus(StrEnum):
@@ -25,6 +26,11 @@ class TemplateField:
     canonical_key: str
     required: bool
     source_location: str
+    semantic_field: str | None = None
+    expected_entity_type: str | None = None
+    expected_role: str | None = None
+    slot_id: str | None = None
+    surrounding_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +45,8 @@ class EnterpriseFact:
     evidence_title: str | None = None
     evidence_excerpt: str | None = None
     evidence_location: str | None = None
+    entity_id: str | None = None
+    semantic_field: str | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,8 @@ class FillDecision:
     evidence_title: str | None = None
     evidence_excerpt: str | None = None
     evidence_location: str | None = None
+    binding_status: str | None = None
+    match_path: tuple[str, ...] = ()
 
 
 class StrictFillDecisionEngine:
@@ -63,7 +73,9 @@ class StrictFillDecisionEngine:
         "proposal_memory",
         "generated_proposal",
     }
-    EVIDENCE_REQUIRED_SOURCES = {"company_profile", "qualification"}
+    EVIDENCE_REQUIRED_SOURCES = {
+        "company_profile", "qualification", "entity_registry",
+    }
     PERSON_FIELDS = {
         "legal_representative", "authorized_representative", "contact_person",
     }
@@ -85,12 +97,66 @@ class StrictFillDecisionEngine:
         self,
         field: TemplateField,
         facts: list[EnterpriseFact],
+        entity_resolution: SlotResolution | None = None,
     ) -> FillDecision:
+        if field.expected_entity_type in {
+            EntityType.PERSON.value, EntityType.ORGANIZATION.value,
+        }:
+            if entity_resolution is None or entity_resolution.status != "resolved":
+                reason = (
+                    entity_resolution.reason
+                    if entity_resolution is not None
+                    else (
+                        "该人员字段尚未完成角色绑定，系统不会按姓名随机匹配。"
+                        if field.expected_entity_type == EntityType.PERSON.value
+                        else "该组织字段尚未绑定当前投标主体，系统不会按名称模糊匹配。"
+                    )
+                )
+                return FillDecision(
+                    field=field,
+                    value=None,
+                    source_type=None,
+                    source_reference=None,
+                    confidence=0.0,
+                    status=FillStatus.MISSING,
+                    reason=reason,
+                    binding_status=(
+                        entity_resolution.status
+                        if entity_resolution is not None
+                        else "binding_required"
+                    ),
+                    match_path=(
+                        entity_resolution.match_path
+                        if entity_resolution is not None else ()
+                    ),
+                )
+            if field.expected_entity_type == EntityType.PERSON.value:
+                target_entity_id = (
+                    str(entity_resolution.person.id)
+                    if entity_resolution.person is not None else None
+                )
+            else:
+                target_entity_id = (
+                    str(entity_resolution.organization.id)
+                    if entity_resolution.organization is not None else None
+                )
+        else:
+            target_entity_id = None
         authoritative = [
             fact
             for fact in facts
             if (
-                fact.canonical_key == field.canonical_key
+                (
+                    fact.canonical_key == field.canonical_key
+                    or (
+                        field.semantic_field
+                        and fact.semantic_field == field.semantic_field
+                    )
+                )
+                and (
+                    target_entity_id is None
+                    or fact.entity_id == target_entity_id
+                )
                 and fact.value.strip()
                 and fact.source_type not in self.NON_AUTHORITATIVE_FACT_SOURCES
             )
@@ -123,6 +189,14 @@ class StrictFillDecisionEngine:
                 confidence=0.0,
                 status=FillStatus.MISSING,
                 reason=missing_reason,
+                binding_status=(
+                    entity_resolution.status
+                    if entity_resolution is not None else None
+                ),
+                match_path=(
+                    entity_resolution.match_path
+                    if entity_resolution is not None else ()
+                ),
             )
 
         distinct_values = {fact.value.strip() for fact in candidates}
@@ -135,6 +209,14 @@ class StrictFillDecisionEngine:
                 confidence=max(fact.confidence for fact in candidates),
                 status=FillStatus.REVIEW_REQUIRED,
                 reason="企业资料库存在多个不同值，需要人工确认采用口径。",
+                binding_status=(
+                    entity_resolution.status
+                    if entity_resolution is not None else None
+                ),
+                match_path=(
+                    entity_resolution.match_path
+                    if entity_resolution is not None else ()
+                ),
             )
 
         candidate = max(
@@ -167,4 +249,12 @@ class StrictFillDecisionEngine:
             evidence_title=candidate.evidence_title,
             evidence_excerpt=candidate.evidence_excerpt,
             evidence_location=candidate.evidence_location,
+            binding_status=(
+                entity_resolution.status
+                if entity_resolution is not None else None
+            ),
+            match_path=(
+                entity_resolution.match_path
+                if entity_resolution is not None else ()
+            ),
         )

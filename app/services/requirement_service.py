@@ -36,6 +36,7 @@ from app.rules.engine import RuleDocument, RuleEngine
 from app.services.model_budget_service import ModelBudgetExceeded
 from app.services.conflict_service import ConflictService
 from app.workflows.controlled_pipeline import ControlledPipeline
+from app.core.requirement_relations import RequirementRelationEngine
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class Candidate:
     priority: str
     proposal_value: int
     risk_type: str | None
+    semantic_graph: dict
     fingerprint: str
 
 
@@ -161,6 +163,19 @@ class RequirementService:
             workflow_run_id,
             normalized.events,
         )
+        active_entity_relation_rules = self.rule_engine.load(
+            "entity_relation"
+        )
+        if workflow_run_id is not None:
+            ControlledPipeline().record(
+                workflow_run_id,
+                "requirement_semantic_analysis",
+                rule_snapshot=active_entity_relation_rules.snapshot(),
+                details={
+                    "input_count": len(normalized.items),
+                    "execution": "single_bounded_pass",
+                },
+            )
         active_classification_rules = (
             classification_rules
             or self.rule_engine.load("classification")
@@ -214,6 +229,7 @@ class RequirementService:
             self._deduplicate(
                 quality_checked,
                 active_response_strategy_rules,
+                active_entity_relation_rules,
             )
         )[:200]
 
@@ -238,12 +254,14 @@ class RequirementService:
                             proposal_chapter, target_chapter,
                             need_generation, response_action,
                             proposal_mapping, scoring_impact, priority,
-                            proposal_value, risk_type, fingerprint
+                            proposal_value, risk_type, fingerprint,
+                            semantic_graph
                         )
                         VALUES (
                             %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s::jsonb
                         )
                         ON CONFLICT (project_id, fingerprint) DO NOTHING
                         RETURNING id
@@ -272,6 +290,10 @@ class RequirementService:
                             candidate.proposal_value,
                             candidate.risk_type,
                             candidate.fingerprint,
+                            json.dumps(
+                                candidate.semantic_graph,
+                                ensure_ascii=False,
+                            ),
                         ),
                     )
                     row = cursor.fetchone()
@@ -714,7 +736,11 @@ class RequirementService:
             ClassifiedRequirement | ReviewedRequirement | AgentRequirement
         ],
         response_strategy_rules: RuleDocument | None = None,
+        entity_relation_rules: RuleDocument | None = None,
     ) -> list[Candidate]:
+        relation_engine = RequirementRelationEngine(
+            entity_relation_rules
+        )
         merged: list[dict] = []
         for raw_item in items:
             if isinstance(raw_item, ClassifiedRequirement):
@@ -802,6 +828,9 @@ class RequirementService:
                         "priority": taxonomy.priority,
                         "proposal_value": prioritization.proposal_value,
                         "risk_type": prioritization.risk_type,
+                        "semantic_graph": relation_engine.analyze(
+                            f"{item.title} {item.normalized_text} {item.quote}"
+                        ).snapshot(),
                     }
                 )
                 continue
@@ -834,6 +863,9 @@ class RequirementService:
                         "priority": taxonomy.priority,
                         "proposal_value": prioritization.proposal_value,
                         "risk_type": prioritization.risk_type,
+                        "semantic_graph": relation_engine.analyze(
+                            f"{item.title} {item.normalized_text} {item.quote}"
+                        ).snapshot(),
                     }
                 )
         return [
@@ -864,6 +896,7 @@ class RequirementService:
                 priority=item["priority"],
                 proposal_value=item["proposal_value"],
                 risk_type=item["risk_type"],
+                semantic_graph=item["semantic_graph"],
                 fingerprint=hashlib.sha256(
                     item["canonical"].encode()
                 ).hexdigest(),
@@ -952,6 +985,7 @@ class RequirementService:
                 requirements.risk_type,
                 requirements.target_chapter,
                 requirements.need_generation,
+                requirements.semantic_graph,
                 requirements.created_at,
                 requirements.updated_at,
                 source_chunks.id AS source_id,
@@ -1016,6 +1050,7 @@ class RequirementService:
                     "risk_type": row["risk_type"],
                     "target_chapter": row["target_chapter"],
                     "need_generation": row["need_generation"],
+                    "semantic_graph": row["semantic_graph"] or {},
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "sources": [],

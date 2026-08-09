@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 RuleType = Literal[
     "extraction", "classification", "response_strategy", "knowledge",
     "proposal_memory", "writing", "compliance", "conflict_detection",
-    "response_prioritization", "template_generation"
+    "response_prioritization", "template_generation", "entity_relation",
 ]
 
 

@@ -21,6 +21,18 @@ from app.core.strict_fill import (
 from app.knowledge.case_fact_resolver import CaseFactCandidate
 from app.knowledge.case_fact_resolver import CaseFactResolver
 from app.knowledge.enterprise_fact_resolver import EnterpriseFactResolver
+from app.core.entity_resolution import (
+    DocumentSlot,
+    EntityResolutionContext,
+    EntityResolutionEngine,
+    EntityType,
+    ROLE_LABELS,
+    SlotContextClassifier,
+)
+from app.services.entity_resolution_service import EntityResolutionService
+from app.services.pdf_template_conversion_service import (
+    PdfTemplateConversionService,
+)
 
 
 TEMPLATE_FIELD_LABELS = {
@@ -29,6 +41,11 @@ TEMPLATE_FIELD_LABELS = {
     "bidder_name": "供应商名称",
     "legal_representative": "法定代表人",
     "authorized_representative": "授权代表",
+    "project_manager_name": "项目负责人",
+    "technical_lead_name": "技术负责人",
+    "signatory_name": "签字人",
+    "person_id_number": "身份证号码",
+    "person_title": "职务",
     "date": "日期",
     "registered_address": "注册地址",
     "postal_code": "邮政编码",
@@ -52,11 +69,22 @@ class GenerationProfile:
     template_storage_key: str | None = None
     template_filename: str | None = None
     last_fill_report: dict[str, Any] | None = None
+    writer_strategy: str | None = "planned_proposal_writer"
+    converted_template_storage_key: str | None = None
+    template_conversion_status: str = "not_required"
+    template_conversion_report: dict[str, Any] | None = None
 
 
 class GenerationProfileService:
-    def __init__(self, template_service: ResponseTemplateService | None = None):
+    def __init__(
+        self,
+        template_service: ResponseTemplateService | None = None,
+        conversion_service: PdfTemplateConversionService | None = None,
+    ):
         self.template_service = template_service or ResponseTemplateService()
+        self.conversion_service = (
+            conversion_service or PdfTemplateConversionService()
+        )
 
     def inspect_document(
         self,
@@ -66,15 +94,51 @@ class GenerationProfileService:
         filename: str,
         content: bytes,
     ) -> GenerationProfile:
-        descriptor = self.template_service.detect(filename, content)
+        source_descriptor = self.template_service.detect(filename, content)
+        descriptor = source_descriptor
+        converted_content: bytes | None = None
+        conversion_status = "not_required"
+        conversion_report: dict[str, Any] = {}
+        mode = self.mode_for_descriptor(source_descriptor.snapshot())
+        if Path(filename).suffix.lower() == ".pdf":
+            conversion = self.conversion_service.convert(content)
+            conversion_status = conversion.status
+            conversion_report = conversion.snapshot()
+            converted_content = conversion.content
+            if converted_content is not None:
+                converted_descriptor = self.template_service.detect(
+                    f"{Path(filename).stem}-converted.docx",
+                    converted_content,
+                )
+                if converted_descriptor.detected:
+                    descriptor = converted_descriptor
+                    mode = "strict_template"
+                    conversion_report["template_detected"] = True
+                    conversion_report["structure_validation"] = "passed"
+                else:
+                    descriptor = converted_descriptor
+                    mode = "planned"
+                    conversion_report["template_detected"] = False
+                    conversion_report["structure_validation"] = "passed"
+            else:
+                mode = "template_conversion_required"
+                conversion_report["template_detected"] = bool(
+                    source_descriptor.detected
+                )
+                conversion_report["structure_validation"] = "failed"
         source_fields, source_evidence = (
             self.template_service.extract_source_fields_with_evidence(
                 filename, content
             )
         )
         descriptor_snapshot = descriptor.snapshot()
+        descriptor_snapshot["source_format_original"] = Path(
+            filename
+        ).suffix.lower().lstrip(".")
+        descriptor_snapshot["conversion"] = conversion_report
+        if mode == "strict_template" and converted_content is not None:
+            descriptor_snapshot["fidelity"] = "converted_template_validated"
         descriptor_snapshot["source_evidence"] = source_evidence
-        mode = self.mode_for_descriptor(descriptor.snapshot())
         with connect() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
@@ -87,13 +151,33 @@ class GenerationProfileService:
                 document = cursor.fetchone()
                 if document is None:
                     raise ValueError("模板来源文件不存在。")
+                converted_storage_key = None
+                if converted_content is not None:
+                    converted_storage_key = str(
+                        Path(document["storage_key"]).with_name(
+                            f"{Path(document['storage_key']).stem}-converted.docx"
+                        )
+                    )
+                    converted_path = self._safe_storage_path(
+                        converted_storage_key
+                    )
+                    converted_path.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = converted_path.with_suffix(".docx.tmp")
+                    temporary.write_bytes(converted_content)
+                    temporary.replace(converted_path)
                 cursor.execute(
                     """
                     INSERT INTO proposal_generation_profiles (
                         project_id, generation_mode, template_document_id,
-                        template_descriptor, template_field_values
+                        template_descriptor, template_field_values,
+                        writer_strategy, converted_template_storage_key,
+                        template_conversion_status,
+                        template_conversion_report
                     )
-                    VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
+                    VALUES (
+                        %s, %s, %s, %s::jsonb, %s::jsonb,
+                        %s, %s, %s, %s::jsonb
+                    )
                     ON CONFLICT (project_id) DO UPDATE SET
                         generation_mode = CASE
                             WHEN EXCLUDED.generation_mode = 'strict_template'
@@ -143,6 +227,38 @@ class GenerationProfileService:
                                      proposal_generation_profiles.template_field_values
                             ELSE proposal_generation_profiles.template_field_values
                         END,
+                        writer_strategy = CASE
+                            WHEN EXCLUDED.generation_mode = 'strict_template'
+                                THEN 'strict_template_writer'
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'strict_template'
+                                THEN 'strict_template_writer'
+                            WHEN EXCLUDED.generation_mode = 'planned'
+                                THEN 'planned_proposal_writer'
+                            ELSE NULL
+                        END,
+                        converted_template_storage_key = CASE
+                            WHEN EXCLUDED.generation_mode = 'strict_template'
+                                THEN EXCLUDED.converted_template_storage_key
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'strict_template'
+                                THEN proposal_generation_profiles.converted_template_storage_key
+                            ELSE EXCLUDED.converted_template_storage_key
+                        END,
+                        template_conversion_status = CASE
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'strict_template'
+                                AND EXCLUDED.generation_mode <> 'strict_template'
+                                THEN proposal_generation_profiles.template_conversion_status
+                            ELSE EXCLUDED.template_conversion_status
+                        END,
+                        template_conversion_report = CASE
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'strict_template'
+                                AND EXCLUDED.generation_mode <> 'strict_template'
+                                THEN proposal_generation_profiles.template_conversion_report
+                            ELSE EXCLUDED.template_conversion_report
+                        END,
                         updated_at = NOW()
                     """,
                     (
@@ -151,9 +267,87 @@ class GenerationProfileService:
                         document["id"] if descriptor.detected else None,
                         json.dumps(descriptor_snapshot, ensure_ascii=False),
                         json.dumps(source_fields, ensure_ascii=False),
+                        self.writer_strategy_for_mode(mode),
+                        converted_storage_key,
+                        conversion_status,
+                        json.dumps(conversion_report, ensure_ascii=False),
                     ),
                 )
         return self.get(project_id)
+
+    @staticmethod
+    def record_pdf_conversion_failure(
+        *,
+        project_id: UUID,
+        document_id: UUID,
+        message: str,
+    ) -> None:
+        """Persist a safe stop state instead of misclassifying PDF as no-template."""
+        report = {
+            "status": "failed",
+            "message": message[:500],
+            "template_detected": None,
+            "structure_validation": "failed",
+        }
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id FROM documents
+                    WHERE project_id = %s AND public_id = %s
+                    """,
+                    (project_id, document_id),
+                )
+                document = cursor.fetchone()
+                if document is None:
+                    raise ValueError("模板来源文件不存在。")
+                cursor.execute(
+                    """
+                    INSERT INTO proposal_generation_profiles (
+                        project_id, generation_mode, template_document_id,
+                        template_descriptor, template_field_values,
+                        writer_strategy, template_conversion_status,
+                        template_conversion_report
+                    ) VALUES (
+                        %s, 'template_conversion_required', %s,
+                        %s::jsonb, '{}'::jsonb, NULL, 'failed', %s::jsonb
+                    )
+                    ON CONFLICT (project_id) DO UPDATE SET
+                        generation_mode = CASE
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'strict_template' THEN 'strict_template'
+                            ELSE 'template_conversion_required'
+                        END,
+                        writer_strategy = CASE
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'strict_template' THEN 'strict_template_writer'
+                            ELSE NULL
+                        END,
+                        template_conversion_status = CASE
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'strict_template'
+                                THEN proposal_generation_profiles.template_conversion_status
+                            ELSE 'failed'
+                        END,
+                        template_conversion_report = CASE
+                            WHEN proposal_generation_profiles.generation_mode =
+                                'strict_template'
+                                THEN proposal_generation_profiles.template_conversion_report
+                            ELSE EXCLUDED.template_conversion_report
+                        END,
+                        updated_at = NOW()
+                    """,
+                    (
+                        project_id,
+                        document["id"],
+                        json.dumps({
+                            "detected": False,
+                            "source_format": "pdf",
+                            "conversion": report,
+                        }, ensure_ascii=False),
+                        json.dumps(report, ensure_ascii=False),
+                    ),
+                )
 
     @staticmethod
     def mode_for_descriptor(descriptor: dict[str, Any]) -> str:
@@ -164,9 +358,18 @@ class GenerationProfileService:
         return "planned"
 
     @staticmethod
+    def writer_strategy_for_mode(mode: str) -> str | None:
+        if mode == "strict_template":
+            return "strict_template_writer"
+        if mode == "planned":
+            return "planned_proposal_writer"
+        return None
+
+    @staticmethod
     def preferred_mode(existing: str, incoming: str) -> str:
         priority = {
             "planned": 1,
+            "template_conversion_required": 2,
             "pdf_template_manual_fill": 2,
             "strict_template": 3,
         }
@@ -186,6 +389,10 @@ class GenerationProfileService:
                            p.historical_case_mode, p.template_descriptor,
                            p.template_field_values,
                            p.last_fill_report,
+                           p.writer_strategy,
+                           p.converted_template_storage_key,
+                           p.template_conversion_status,
+                           p.template_conversion_report,
                            d.storage_key AS template_storage_key,
                            d.filename AS template_filename
                     FROM proposal_generation_profiles p
@@ -203,6 +410,8 @@ class GenerationProfileService:
                 template_descriptor={},
                 template_field_values={},
                 last_fill_report={},
+                writer_strategy="planned_proposal_writer",
+                template_conversion_report={},
             )
         return GenerationProfile(**row)
 
@@ -212,6 +421,7 @@ class GenerationProfileService:
         fallback_values: dict[str, str] | None = None,
         enterprise_facts: list[EnterpriseFact] | None = None,
         case_candidates: dict[str, CaseFactCandidate] | None = None,
+        entity_context: EntityResolutionContext | None = None,
     ) -> list[dict[str, Any]]:
         required = ResponseTemplateService.required_fields(
             profile.template_descriptor
@@ -233,15 +443,19 @@ class GenerationProfileService:
         engine = StrictFillDecisionEngine()
         decisions: list[dict[str, Any]] = []
         for key in keys:
+            metadata = field_metadata.get(key, {})
+            canonical_key = str(metadata.get("canonical_key") or key)
             value = (
                 profile.template_field_values.get(key)
+                or profile.template_field_values.get(canonical_key)
                 or fallback_values.get(key)
+                or fallback_values.get(canonical_key)
                 or ""
             ).strip()
             facts: list[EnterpriseFact] = [
                 fact
                 for fact in (enterprise_facts or [])
-                if fact.canonical_key == key
+                if fact.canonical_key == canonical_key
             ]
             if value:
                 review = reviews.get(key, {})
@@ -253,11 +467,12 @@ class GenerationProfileService:
                     review.get("status") == "confirmed"
                     and review.get("value") == value
                 )
-                procurement_fact = key in {"project_name", "project_number"}
-                metadata = field_metadata.get(key, {})
+                procurement_fact = canonical_key in {
+                    "project_name", "project_number"
+                }
                 expected_source = metadata.get("expected_source")
                 facts.append(EnterpriseFact(
-                    canonical_key=key,
+                    canonical_key=canonical_key,
                     value=value,
                     source_type=(
                         "tender_document"
@@ -295,23 +510,55 @@ class GenerationProfileService:
                         or source_evidence.get("location")
                     ),
                 ))
-            metadata = field_metadata.get(key, {})
+            slot = GenerationProfileService._slot_for_field(
+                key, metadata
+            )
+            entity_resolution = (
+                EntityResolutionEngine().resolve(slot, entity_context)
+                if entity_context is not None
+                else None
+            )
+            if entity_resolution is not None:
+                facts.extend(
+                    GenerationProfileService._entity_facts(
+                        canonical_key, slot, entity_resolution
+                    )
+                )
             field = TemplateField(
                 field_id=key,
                 label=metadata.get("label") or TEMPLATE_FIELD_LABELS.get(key, key),
-                canonical_key=key,
+                canonical_key=canonical_key,
                 required=key in required,
                 source_location=metadata.get("source_location") or "原响应模板",
+                semantic_field=slot.semantic_field,
+                expected_entity_type=(
+                    slot.expected_entity_type.value
+                    if slot.expected_entity_type else None
+                ),
+                expected_role=(
+                    slot.expected_role.value if slot.expected_role else None
+                ),
+                slot_id=slot.slot_id,
+                surrounding_text=slot.surrounding_text,
             )
-            decision = engine.decide(field, facts)
-            candidate = (case_candidates or {}).get(key)
-            if decision.status.value == "MISSING" and candidate is not None:
+            decision = engine.decide(
+                field, facts, entity_resolution=entity_resolution
+            )
+            candidate = (case_candidates or {}).get(canonical_key)
+            if (
+                decision.status.value == "MISSING"
+                and candidate is not None
+                and slot.expected_entity_type not in {
+                    EntityType.PERSON, EntityType.ORGANIZATION
+                }
+            ):
                 alternative_count = len(candidate.alternatives)
                 decisions.append({
                     "field_key": key,
+                    "canonical_key": canonical_key,
                     "label": field.label,
-                    "expected_value_type": engine.field_type(key),
-                    "expected_value_type_label": engine.field_type_label(key),
+                    "expected_value_type": engine.field_type(canonical_key),
+                    "expected_value_type_label": engine.field_type_label(canonical_key),
                     "type_validation": "passed",
                     "value": candidate.value,
                     "source_type": "historical_case",
@@ -332,13 +579,17 @@ class GenerationProfileService:
                     "evidence_location": candidate.source_location,
                     "evidence_match_count": candidate.match_count,
                     "evidence_alternatives": list(candidate.alternatives),
+                    **GenerationProfileService._resolution_snapshot(
+                        slot, entity_resolution, entity_context
+                    ),
                 })
                 continue
             decisions.append({
                 "field_key": key,
+                "canonical_key": canonical_key,
                 "label": field.label,
-                "expected_value_type": engine.field_type(key),
-                "expected_value_type_label": engine.field_type_label(key),
+                "expected_value_type": engine.field_type(canonical_key),
+                "expected_value_type_label": engine.field_type_label(canonical_key),
                 "type_validation": (
                     "passed" if decision.value else "missing"
                 ),
@@ -377,8 +628,160 @@ class GenerationProfileService:
                 "evidence_alternatives": reviews.get(key, {}).get(
                     "evidence_alternatives", []
                 ),
+                **GenerationProfileService._resolution_snapshot(
+                    slot, entity_resolution, entity_context
+                ),
             })
         return decisions
+
+    @staticmethod
+    def _slot_for_field(
+        key: str,
+        metadata: dict[str, Any],
+    ) -> DocumentSlot:
+        if metadata.get("slot_id"):
+            return DocumentSlot.from_snapshot(metadata)
+        canonical_key = str(metadata.get("canonical_key") or key)
+        label = (
+            metadata.get("label")
+            or TEMPLATE_FIELD_LABELS.get(canonical_key, canonical_key)
+        )
+        return SlotContextClassifier.classify(
+            label=label,
+            surrounding_text=metadata.get("surrounding_text") or label,
+            source_location=metadata.get("source_location") or "原响应模板",
+            document_section=metadata.get("document_section"),
+            canonical_hint=canonical_key,
+        )
+
+    @staticmethod
+    def _entity_facts(
+        key: str,
+        slot: DocumentSlot,
+        resolution,
+    ) -> list[EnterpriseFact]:
+        facts: list[EnterpriseFact] = []
+        if resolution.person is not None:
+            values = {
+                "person.name": resolution.person.name,
+                "person.id_number": resolution.person.id_number,
+                "person.title": resolution.person.title,
+                "person.phone": resolution.person.phone,
+            }
+            value = values.get(slot.semantic_field)
+            if value:
+                source = (
+                    resolution.person.source_documents[0]
+                    if resolution.person.source_documents
+                    and isinstance(
+                        resolution.person.source_documents[0], dict
+                    )
+                    else {}
+                )
+                sensitivity = (
+                    DataSensitivity.HIGHLY_SENSITIVE
+                    if slot.semantic_field == "person.id_number"
+                    else DataSensitivity.SENSITIVE
+                    if slot.semantic_field == "person.phone"
+                    else DataSensitivity.NORMAL
+                )
+                facts.append(EnterpriseFact(
+                    canonical_key=key,
+                    semantic_field=slot.semantic_field,
+                    entity_id=str(resolution.person.id),
+                    value=str(value),
+                    source_type="entity_registry",
+                    source_reference=str(
+                        source.get("title") or "已核验人员实体"
+                    ),
+                    confidence=1.0,
+                    verified=True,
+                    sensitivity=sensitivity,
+                    evidence_title=str(
+                        source.get("title") or "已核验人员实体"
+                    ),
+                    evidence_excerpt=(
+                        str(source.get("excerpt"))
+                        if source.get("excerpt") else None
+                    ),
+                    evidence_location=(
+                        str(source.get("location"))
+                        if source.get("location") else None
+                    ),
+                ))
+        if resolution.organization is not None:
+            values = {
+                "organization.full_name": resolution.organization.full_name,
+                "organization.registered_address": (
+                    resolution.organization.registered_address
+                ),
+            }
+            value = values.get(slot.semantic_field)
+            if value:
+                facts.append(EnterpriseFact(
+                    canonical_key=key,
+                    semantic_field=slot.semantic_field,
+                    entity_id=str(resolution.organization.id),
+                    value=str(value),
+                    source_type="entity_registry",
+                    source_reference=(
+                        resolution.organization.source_document
+                        or "已核验企业实体"
+                    ),
+                    confidence=resolution.organization.confidence,
+                    verified=True,
+                    evidence_title=(
+                        resolution.organization.source_document
+                        or "已核验企业实体"
+                    ),
+                    evidence_location=(
+                        resolution.organization.source_location
+                    ),
+                ))
+        return facts
+
+    @staticmethod
+    def _resolution_snapshot(
+        slot: DocumentSlot,
+        resolution,
+        context: EntityResolutionContext | None,
+    ) -> dict[str, Any]:
+        return {
+            "slot": slot.snapshot(),
+            "semantic_field": slot.semantic_field,
+            "expected_entity_type": (
+                slot.expected_entity_type.value
+                if slot.expected_entity_type else None
+            ),
+            "expected_role": (
+                slot.expected_role.value if slot.expected_role else None
+            ),
+            "expected_role_label": (
+                ROLE_LABELS[slot.expected_role]
+                if slot.expected_role else None
+            ),
+            "subject_organization": (
+                context.organization.full_name
+                if context and context.organization else None
+            ),
+            "project_name": context.project_name if context else None,
+            "binding_status": (
+                resolution.status
+                if resolution is not None
+                else "binding_required"
+                if slot.expected_entity_type in {
+                    EntityType.PERSON, EntityType.ORGANIZATION
+                }
+                else None
+            ),
+            "match_path": (
+                list(resolution.match_path) if resolution is not None else []
+            ),
+            "entity_candidates": (
+                [item.snapshot() for item in resolution.candidates]
+                if resolution is not None else []
+            ),
+        }
 
     @staticmethod
     def review_template_field(
@@ -398,10 +801,29 @@ class GenerationProfileService:
             raise ValueError("模板字段不存在，不能新增未识别字段。")
         if manual_value and action != "confirm":
             raise ValueError("只有确认操作可以保存人工修改值。")
+        field_metadata = next(
+            (
+                item
+                for item in profile.template_descriptor.get("fields", [])
+                if item.get("field_key") == key
+            ),
+            {},
+        )
+        slot = GenerationProfileService._slot_for_field(
+            key, field_metadata
+        )
+        if manual_value and slot.expected_entity_type in {
+            EntityType.PERSON, EntityType.ORGANIZATION
+        }:
+            raise ValueError(
+                "企业和人员字段不能直接输入；请从已核验实体库匹配并完成审核。"
+            )
         if manual_value and not StrictFillDecisionEngine.value_matches_field_type(
-            key, manual_value
+            slot.canonical_key, manual_value
         ):
-            label = StrictFillDecisionEngine.field_type_label(key)
+            label = StrictFillDecisionEngine.field_type_label(
+                slot.canonical_key
+            )
             raise ValueError(f"填写内容不符合字段类型（{label}），请填写真实值。")
         if manual_value:
             previous_value = profile.template_field_values.get(key)
@@ -423,6 +845,9 @@ class GenerationProfileService:
                 profile,
                 enterprise_facts=EnterpriseFactResolver().resolve(project_id),
                 case_candidates=CaseFactResolver().resolve(project_id),
+                entity_context=(
+                    EntityResolutionService().resolve_project(project_id)
+                ),
             )
             candidate = next(
                 (
@@ -493,8 +918,13 @@ class GenerationProfileService:
             value = str(raw_value).strip()
             if not key or len(key) > 80 or not value or len(value) > 500:
                 raise ValueError("模板字段名或字段值无效。")
-            if not StrictFillDecisionEngine.value_matches_field_type(key, value):
-                label = StrictFillDecisionEngine.field_type_label(key)
+            canonical_key = key.split("__", 1)[0]
+            if not StrictFillDecisionEngine.value_matches_field_type(
+                canonical_key, value
+            ):
+                label = StrictFillDecisionEngine.field_type_label(
+                    canonical_key
+                )
                 raise ValueError(f"填写内容不符合字段类型（{label}）。")
             cleaned[key] = value
         with connect() as conn:
@@ -514,10 +944,22 @@ class GenerationProfileService:
 
     @staticmethod
     def template_path(profile: GenerationProfile) -> Path | None:
+        if profile.converted_template_storage_key:
+            return GenerationProfileService._safe_storage_path(
+                profile.converted_template_storage_key
+            )
         if not profile.template_storage_key:
             return None
         root = Path(settings.storage_root).resolve()
         path = (root / profile.template_storage_key).resolve()
+        if root not in path.parents:
+            raise ValueError("非法模板存储路径。")
+        return path
+
+    @staticmethod
+    def _safe_storage_path(storage_key: str) -> Path:
+        root = Path(settings.storage_root).resolve()
+        path = (root / storage_key).resolve()
         if root not in path.parents:
             raise ValueError("非法模板存储路径。")
         return path

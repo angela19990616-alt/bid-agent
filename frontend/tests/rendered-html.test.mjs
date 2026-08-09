@@ -55,7 +55,11 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /Section/);
   assert.match(page, /API_BASE/);
   assert.match(page, /只需上传招标文件/);
-  assert.match(page, /有“投标文件格式”.*没有格式才进入目录与方案生成/);
+  assert.match(page, /PDF 先在私有环境转成可编辑 Word 再检测/);
+  assert.match(page, /有模板严格回填，确认无模板才生成目录/);
+  assert.match(page, /检测到 PDF，但尚无法可靠转换/);
+  assert.match(page, /strict_template_writer/);
+  assert.match(page, /planned_proposal_writer/);
   assert.match(page, /查看原文定位/);
   assert.match(page, /字段类型/);
   assert.match(page, /其他候选/);
@@ -86,6 +90,11 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /不再强制替换为系统默认字体/);
   assert.match(page, /保存并确认/);
   assert.match(page, /人工确认来源/);
+  assert.match(page, /识别字段/);
+  assert.match(page, /目标角色/);
+  assert.match(page, /选择并建立角色绑定/);
+  assert.match(page, /查看槽位判断上下文/);
+  assert.doesNotMatch(page, />custom_/);
   assert.match(page, /ResizeObserver/);
   assert.match(page, /--word-preview-scale/);
   assert.match(css, /zoom: var\(--word-preview-scale/);
