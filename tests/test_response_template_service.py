@@ -1,5 +1,6 @@
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from docx import Document
 from docx.oxml.ns import qn
@@ -39,6 +40,40 @@ def test_detects_embedded_docx_template_and_strict_rules():
     assert descriptor.start_block is not None
     assert "project_name" in descriptor.placeholders
     assert "严格按照" in descriptor.strict_reasons
+
+
+def test_docx_negated_template_statement_does_not_trigger_strict_mode():
+    document = Document()
+    document.add_heading("采购需求", level=1)
+    document.add_paragraph("本项目未提供统一的投标文件格式，投标人自行编制技术方案。")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "招标文件.docx", stream.getvalue()
+    )
+
+    assert descriptor.detected is False
+    assert descriptor.fidelity == "planned"
+
+
+def test_pdf_negated_template_statement_does_not_claim_reference():
+    class FakePage:
+        @staticmethod
+        def extract_text():
+            return "本项目没有提供投标文件格式，投标人自行编制。"
+
+    class FakeReader:
+        pages = [FakePage()]
+
+    with patch(
+        "app.services.response_template_service.PdfReader",
+        return_value=FakeReader(),
+    ):
+        descriptor = ResponseTemplateService().detect("招标文件.pdf", b"pdf")
+
+    assert descriptor.detected is False
+    assert descriptor.fidelity == "manual_exact_fill_required"
 
 
 def test_extracts_response_template_outline_up_to_five_levels():

@@ -24,6 +24,10 @@ TEMPLATE_MARKERS = (
     "投标文件格式", "响应文件格式", "报价文件格式", "资格响应格式",
     "技术响应格式", "附件格式", "响应文件组成及格式",
 )
+NEGATED_TEMPLATE_PREFIX_RE = re.compile(
+    r"(?:未提供|没有提供|不提供|未附|不附|不含|不包括|不存在|未设置|"
+    r"无(?:统一|指定|固定)?|自行编制).{0,12}$"
+)
 STRICT_MARKERS = (
     "不得修改", "不得增删", "格式不变", "严格按照", "按附件格式",
     "按本格式", "原格式",
@@ -107,18 +111,15 @@ class ResponseTemplateService:
                 reader = PdfReader(BytesIO(content))
                 for page in reader.pages:
                     text = page.extract_text() or ""
-                    marker_text = next(
-                        (marker for marker in TEMPLATE_MARKERS if marker in text),
-                        marker_text,
-                    )
+                    marker_text = self._positive_template_marker(text)
                     if marker_text:
                         break
             except Exception:
                 # The parser/validator owns malformed-file reporting. Template
                 # detection remains conservative and never claims coordinates.
                 marker_text = None
-            detected = bool(marker_text) or any(
-                item in filename for item in TEMPLATE_MARKERS
+            detected = bool(marker_text) or bool(
+                self._positive_template_marker(filename)
             )
             return TemplateDescriptor(
                 detected=detected,
@@ -233,7 +234,7 @@ class ResponseTemplateService:
         texts = [self._block_text(block) for block in blocks]
         marker_candidates = [
             index for index, text in enumerate(texts)
-            if any(marker in text for marker in TEMPLATE_MARKERS)
+            if self._positive_template_marker(text)
         ]
         # Tender tables of contents and explanatory paragraphs repeat the
         # title. Prefer the shortest heading-like occurrence, penalising TOC
@@ -248,7 +249,7 @@ class ResponseTemplateService:
             if marker_candidates else None
         )
         tables = len(document.tables)
-        standalone = any(marker in filename for marker in TEMPLATE_MARKERS)
+        standalone = bool(self._positive_template_marker(filename))
         detected = marker_index is not None or (standalone and tables > 0)
         start_block = 0 if standalone else marker_index
         end_block = None
@@ -303,6 +304,26 @@ class ResponseTemplateService:
             end_block=end_block,
             font_profile=font_profile,
         )
+
+    @staticmethod
+    def _positive_template_marker(text: str) -> str | None:
+        """Return a format marker only when it is asserted, not negated.
+
+        Tender documents sometimes explicitly say that no response template is
+        provided.  Keyword-only detection would route those documents into the
+        strict-template writer and block the correct planned-proposal path.
+        """
+        for marker in TEMPLATE_MARKERS:
+            start = 0
+            while True:
+                index = text.find(marker, start)
+                if index < 0:
+                    break
+                prefix = text[max(0, index - 24):index]
+                if not NEGATED_TEMPLATE_PREFIX_RE.search(prefix):
+                    return marker
+                start = index + len(marker)
+        return None
 
     @staticmethod
     def _marker_candidate_rank(text: str, index: int) -> tuple[int, int, int, int]:
