@@ -20,8 +20,8 @@ echo "[2/7] 规则配置与最短路径策略检查"
 echo "[3/7] 后端全量测试"
 "$python_bin" -m pytest
 
-echo "[4/7] 前端生产构建"
-npm --prefix frontend run build
+echo "[4/7] 前端契约、页面测试与生产构建"
+npm --prefix frontend test
 
 echo "[5/7] Docker Compose 配置检查"
 verify_env_created=0

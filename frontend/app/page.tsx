@@ -246,12 +246,12 @@ type Workspace = {
     }>;
     fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "unresolved";
     personnel_rule_results: Array<Record<string, unknown>>;
-    semantics_recognized: boolean;
-    resolution_state: "resolved" | "review_required" | "enterprise_fact_pending" | "project_fact_pending" | "person_binding_pending" | "person_fact_pending" | "response_generation_pending" | "semantic_review_required" | "value_resolution_pending";
-    resolution_label: string;
-    next_action: string;
-    review_group_key: string;
-    review_group_label: string;
+    semantics_recognized?: boolean;
+    resolution_state: string;
+    resolution_label?: string;
+    next_action?: string;
+    review_group_key?: string;
+    review_group_label?: string;
   }>;
   template_actions: Array<{
     action_id: string;
@@ -282,6 +282,25 @@ type PreviewTarget = {
   slot: TemplateVariableSlot;
   requestId: number;
 };
+
+function variableResolutionLabel(item: TemplateVariableDecision) {
+  return item.resolution_label?.trim()
+    || (item.value ? "已匹配，待核验" : "待系统继续处理");
+}
+
+function variableNextAction(item: TemplateVariableDecision) {
+  return item.next_action?.trim()
+    || (item.value
+      ? "请核验当前值及来源后继续。"
+      : "字段含义已保留，系统不会猜写；请等待资料匹配或人工审核。"
+    );
+}
+
+function variableResolutionClass(item: TemplateVariableDecision) {
+  return /^[a-z0-9_-]+$/i.test(item.resolution_state)
+    ? item.resolution_state
+    : "value_resolution_pending";
+}
 type ProposalReview = {
   overall: {
     recommended_for_delivery: boolean;
@@ -711,18 +730,25 @@ export default function Home() {
     }
     return [...groups.values()].map((group) => ({
       ...group,
-      statusLabel: group.items.find((item) => item.resolution_state !== "resolved")?.resolution_label
-        ?? group.items[0].resolution_label,
+      statusLabel: variableResolutionLabel(
+        group.items.find((item) => item.resolution_state !== "resolved")
+          ?? group.items[0],
+      ),
     }));
   }, [workspace?.template_variable_decisions]);
   const templateResolutionSummary = useMemo(() => {
     const decisions = workspace?.template_variable_decisions ?? [];
     return {
-      recognized: decisions.filter((item) => item.semantics_recognized).length,
+      recognized: decisions.filter((item) => item.semantics_recognized !== false).length,
       semanticReview: decisions.filter((item) => item.resolution_state === "semantic_review_required").length,
       enterprisePending: decisions.filter((item) => item.resolution_state === "enterprise_fact_pending").length,
       personGroupsPending: templateVariableGroups.filter((group) => group.items.some((item) => ["person_binding_pending", "person_fact_pending"].includes(item.resolution_state))).length,
       responsePending: decisions.filter((item) => item.resolution_state === "response_generation_pending").length,
+      otherPending: decisions.filter((item) => item.required && ![
+        "resolved", "review_required", "enterprise_fact_pending",
+        "person_binding_pending", "person_fact_pending",
+        "response_generation_pending", "semantic_review_required",
+      ].includes(item.resolution_state)).length,
     };
   }, [workspace?.template_variable_decisions, templateVariableGroups]);
 
@@ -1286,16 +1312,16 @@ export default function Home() {
 
   function renderTemplateVariableDecision(item: TemplateVariableDecision) {
     return (
-      <article key={item.variable_key} className={`fill-decision ${item.resolution_state}`}>
-        <div><strong>{item.standard_name}</strong><span>{item.resolution_label}</span></div>
-        <p>{item.value || item.next_action}</p>
+      <article key={item.variable_key} className={`fill-decision ${variableResolutionClass(item)}`} data-resolution-state={item.resolution_state}>
+        <div><strong>{item.standard_name}</strong><span>{variableResolutionLabel(item)}</span></div>
+        <p>{item.value || variableNextAction(item)}</p>
         <small>{item.entity_scope_label} · 覆盖 {item.slot_count} 个原模板位置 · 应填：{item.expected_value_type_label}</small>
         {item.semantic_field && (
           <div className="entity-resolution-card">
             <div><span>识别字段</span><strong>{item.standard_name}</strong></div>
             {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
-            <div><span>当前状态</span><strong>{item.resolution_label}</strong></div>
-            <div><span>下一步</span><strong>{item.next_action}</strong></div>
+            <div><span>当前状态</span><strong>{variableResolutionLabel(item)}</strong></div>
+            <div><span>下一步</span><strong>{variableNextAction(item)}</strong></div>
             <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位此处</button></article>)}</details>
             {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
               <div className="entity-candidates">
@@ -1796,6 +1822,7 @@ export default function Home() {
                           <span>待匹配企业资料 {templateResolutionSummary.enterprisePending}</span>
                           <span>待处理人员 {templateResolutionSummary.personGroupsPending} 组</span>
                           <span>待生成响应 {templateResolutionSummary.responsePending}</span>
+                          {templateResolutionSummary.otherPending > 0 && <span>其他待处理 {templateResolutionSummary.otherPending}</span>}
                           <span className={templateResolutionSummary.semanticReview ? "warning" : "ready"}>字段含义待确认 {templateResolutionSummary.semanticReview}</span>
                         </div>
                         {templateResolutionSummary.semanticReview > 0 ? <p className="template-field-warning">有 {templateResolutionSummary.semanticReview} 个空位无法从上下文唯一判断含义，需要人工确认；其他空位均已识别业务含义。</p> : missingTemplateDecisions.length > 0 ? <p className="template-field-ready">字段含义已全部识别。系统正在匹配对应资料，未取得可信值的空位不会猜写。</p> : <p className="template-field-ready">全部业务变量已匹配，请审核后导出。</p>}
