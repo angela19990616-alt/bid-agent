@@ -52,6 +52,8 @@ Git 中的默认规则：
 - `config/rules/classification.default.json`
 - `config/rules/writing.default.json`
 - `config/rules/compliance.default.json`
+- `config/rules/variable_dictionary.default.json`
+- `config/rules/personnel_rules.default.json`
 
 默认文件本身带 `key`、`rule_type` 和 `version`。数据库表 `rule_definitions` 支持
 人工创建新版本、草稿/激活/退役状态以及 `manual`、`system`、`ai_generated`
@@ -128,6 +130,16 @@ python scripts/import_historical_case_pairs.py /path/to/private/pairs.json
 `template_generation.default.json`，识别招标文件末尾或单独附件中的“响应文件格式”。
 最终只有两个写作器：检测到模板使用 `strict_template_writer`；确认无模板
 使用 `planned_proposal_writer`。
+
+严格回填在原模板槽位与 Word 渲染之间使用独立的业务变量层：
+
+```text
+Document Slot → Semantic Variable → Entity/Role Binding
+  → Verified Value Resolution → Strict Template Render
+```
+
+同一事实在模板出现多次时只匹配、审核一次，再同步到全部原位置。
+详细设计和验收记录见 `docs/VARIABLE_LAYER_ARCHITECTURE_UPGRADE_REPORT.md`。
 
 - DOCX 模板保留原文件包中的样式、表格、区块顺序、页眉页脚和节设置，仅裁去模板
   章节之前的采购正文，并在明确字段或章节位置回填已核验内容。

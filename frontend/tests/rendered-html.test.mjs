@@ -96,12 +96,13 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /阻断问题必须处理后才能正式导出/);
   assert.match(page, /已自动继承原模板字体/);
   assert.match(page, /不再强制替换为系统默认字体/);
-  assert.match(page, /保存并确认/);
+  assert.match(page, /一次确认并同步/);
   assert.match(page, /人工确认来源/);
-  assert.match(page, /原模板槽位/);
-  assert.match(page, /目标角色/);
+  assert.match(page, /业务变量覆盖/);
+  assert.match(page, /原模板位置/);
   assert.match(page, /选择并建立角色绑定/);
-  assert.match(page, /查看槽位判断上下文/);
+  assert.match(page, /查看关联的/);
+  assert.doesNotMatch(page, /保存并确认/);
   assert.doesNotMatch(page, />custom_/);
   assert.match(page, /ResizeObserver/);
   assert.match(page, /--word-preview-scale/);

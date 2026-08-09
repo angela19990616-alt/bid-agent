@@ -12,6 +12,8 @@ class SemanticValueType(StrEnum):
     PERSON_NAME = "person_name"
     IDENTITY_NUMBER = "identity_number"
     JOB_TITLE = "job_title"
+    PROFESSIONAL_TITLE = "professional_title"
+    COUNT = "count"
     DATE = "date"
     ADDRESS = "address"
     POSTAL_CODE = "postal_code"
@@ -42,6 +44,10 @@ FIELD_EXPECTATIONS: dict[str, tuple[SemanticValueType, str]] = {
     "signatory_name": (SemanticValueType.PERSON_NAME, "姓名"),
     "person_id_number": (SemanticValueType.IDENTITY_NUMBER, "身份证号码"),
     "person_title": (SemanticValueType.JOB_TITLE, "职务"),
+    "person_professional_title": (
+        SemanticValueType.PROFESSIONAL_TITLE, "技术职称"
+    ),
+    "project_manager_count": (SemanticValueType.COUNT, "人数"),
     "date": (SemanticValueType.DATE, "日期"),
     "bid_response_signing_date": (SemanticValueType.DATE, "投标文件签署日期"),
     "registered_address": (SemanticValueType.ADDRESS, "地址"),
@@ -151,6 +157,8 @@ class FieldSemanticClassifier:
             return SemanticValueType.PHONE
         if re.fullmatch(r"\d{8,30}", compact):
             return SemanticValueType.BANK_ACCOUNT
+        if re.fullmatch(r"\d{1,5}(?:人|名)?", compact):
+            return SemanticValueType.COUNT
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,79}", compact):
             return SemanticValueType.PROJECT_IDENTIFIER
         if re.search(
@@ -177,7 +185,13 @@ class FieldSemanticClassifier:
         if cls.NARRATIVE_PATTERN.search(compact):
             return SemanticValueType.NARRATIVE_TEXT
         if 2 <= len(compact) <= 24 and re.search(
-            r"(?:经理|总监|主任|负责人|工程师|顾问|专员|助理|董事|监事)$",
+            r"(?:高级|中级|初级|教授级|正高级|副高级)?(?:工程师|经济师|"
+            r"会计师|审计师|咨询师|造价师)$",
+            compact,
+        ):
+            return SemanticValueType.PROFESSIONAL_TITLE
+        if 2 <= len(compact) <= 24 and re.search(
+            r"(?:经理|总监|主任|负责人|顾问|专员|助理|董事|监事)$",
             compact,
         ):
             return SemanticValueType.JOB_TITLE

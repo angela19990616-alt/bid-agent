@@ -19,6 +19,7 @@ from app.knowledge.case_fact_resolver import CaseFactResolver
 from app.services.generation_profile_service import GenerationProfileService
 from app.services.response_template_service import ResponseTemplateService
 from app.services.entity_resolution_service import EntityResolutionService
+from app.core.semantic_variables import SlotDeduplicationEngine
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -297,6 +298,18 @@ class WorkspaceService:
         profile = self.generation_profile_service.get(workspace_id)
         case_library = default_case_library_summary()
         enterprise_facts = self.enterprise_fact_resolver.resolve(workspace_id)
+        entity_context = self.entity_resolution_service.resolve_project(
+            workspace_id
+        )
+        variable_decisions = (
+            self.generation_profile_service.template_variable_decisions(
+                profile,
+                {"project_name": workspace.name},
+                enterprise_facts,
+                self.case_fact_resolver.resolve(workspace_id),
+                entity_context,
+            )
+        )
         job = WorkspaceJobService.latest_status(workspace_id)
         return {
             "id": workspace.id,
@@ -359,16 +372,12 @@ class WorkspaceService:
             ),
             "template_field_values": profile.template_field_values,
             "template_field_decisions": (
-                GenerationProfileService.template_field_decisions(
-                    profile,
-                    {"project_name": workspace.name},
-                    enterprise_facts,
-                    self.case_fact_resolver.resolve(workspace_id),
-                    self.entity_resolution_service.resolve_project(
-                        workspace_id
-                    ),
-                )
+                SlotDeduplicationEngine.fan_out(variable_decisions)
             ),
+            "template_variable_decisions": [
+                SlotDeduplicationEngine.public_snapshot(item)
+                for item in variable_decisions
+            ],
             "template_actions": profile.template_descriptor.get(
                 "actions", []
             ),

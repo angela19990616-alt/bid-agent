@@ -33,6 +33,7 @@ from app.models.sections import (
 from app.models.workspaces import OutlineUpdate, WorkspaceResponse
 from app.models.generation_profiles import (
     TemplateFieldReviewUpdate,
+    TemplateVariableReviewUpdate,
     TemplateFieldsUpdate,
     RoleBindingUpdate,
 )
@@ -257,6 +258,32 @@ def review_workspace_template_field(
         raise AppError(
             422,
             "TEMPLATE_FIELD_REVIEW_INVALID",
+            str(exc),
+        ) from exc
+
+
+@router.post(
+    "/{workspace_id}/template-variables/review",
+    response_model=WorkspaceResponse,
+)
+def review_workspace_template_variable(
+    workspace_id: UUID,
+    payload: TemplateVariableReviewUpdate,
+    _access: None = Depends(authorize_workspace),
+    service: WorkspaceService = Depends(get_workspace_service),
+):
+    try:
+        GenerationProfileService.review_template_variable(
+            workspace_id,
+            payload.variable_key,
+            payload.action,
+            payload.value,
+        )
+        return service.get(workspace_id)
+    except ValueError as exc:
+        raise AppError(
+            422,
+            "TEMPLATE_VARIABLE_REVIEW_INVALID",
             str(exc),
         ) from exc
 

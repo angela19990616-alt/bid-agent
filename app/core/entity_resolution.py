@@ -76,6 +76,10 @@ class Person:
     id_number_masked: str | None = None
     certificates: tuple[dict[str, Any], ...] = ()
     source_documents: tuple[dict[str, Any], ...] = ()
+    employment_history: tuple[dict[str, Any], ...] = ()
+    role_history: tuple[dict[str, Any], ...] = ()
+    certification_history: tuple[dict[str, Any], ...] = ()
+    project_participation: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,7 @@ class DocumentSlot:
     row: int | None
     column: int | None
     surrounding_text: str
+    source_location: str
     semantic_field: str
     canonical_key: str
     expected_entity_type: EntityType | None
@@ -137,6 +142,7 @@ class DocumentSlot:
             row=value.get("row"),
             column=value.get("column"),
             surrounding_text=str(value.get("surrounding_text") or value.get("label") or ""),
+            source_location=str(value.get("source_location") or "原响应模板"),
             semantic_field=str(value.get("semantic_field") or "text.value"),
             canonical_key=str(value.get("canonical_key") or value.get("field_key") or ""),
             expected_entity_type=(
@@ -169,6 +175,7 @@ class DocumentSlot:
             "row": self.row,
             "column": self.column,
             "surrounding_text": self.surrounding_text,
+            "source_location": self.source_location,
             "semantic_field": self.semantic_field,
             "canonical_key": self.canonical_key,
             "expected_entity_type": (
@@ -693,6 +700,7 @@ class SlotContextClassifier:
             row=row,
             column=column,
             surrounding_text=clean_context,
+            source_location=source_location,
             semantic_field=semantic_field,
             canonical_key=canonical_key,
             expected_entity_type=entity_type,

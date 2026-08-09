@@ -33,6 +33,12 @@ class TemplateFieldReviewUpdate(BaseModel):
     value: str | None = Field(default=None, min_length=1, max_length=500)
 
 
+class TemplateVariableReviewUpdate(BaseModel):
+    variable_key: str = Field(min_length=1, max_length=200)
+    action: Literal["confirm", "reset"]
+    value: str | None = Field(default=None, min_length=1, max_length=500)
+
+
 class RoleBindingUpdate(BaseModel):
     role: Literal[
         "LEGAL_REPRESENTATIVE", "AUTHORIZED_REPRESENTATIVE",
@@ -78,3 +84,53 @@ class TemplateFieldDecisionResponse(BaseModel):
     value_expression: str | None = None
     fill_strategy: str = "unresolved"
     required_actions: list[str] = Field(default_factory=list)
+    variable_key: str | None = None
+    variable_standard_name: str | None = None
+    variable_slot_count: int = 1
+
+
+class TemplateVariableSlotResponse(BaseModel):
+    field_key: str
+    label: str | None = None
+    display_name: str | None = None
+    source_location: str
+    document_section: str | None = None
+    table_index: int | None = None
+    paragraph_index: int | None = None
+    row: int | None = None
+    column: int | None = None
+    surrounding_text: str | None = None
+
+
+class TemplateVariableDecisionResponse(BaseModel):
+    variable_key: str
+    dictionary_version: str
+    standard_name: str
+    label: str
+    aliases: list[str] = Field(default_factory=list)
+    semantic_field: str
+    target_entity_type: str | None = None
+    target_relation: str | None = None
+    expected_value_type: str
+    expected_value_type_label: str = "文本"
+    source_priority: list[str] = Field(default_factory=list)
+    value: str | None = None
+    status: Literal["AUTO_FILL", "REVIEW_REQUIRED", "MISSING"]
+    reason: str
+    confidence: float = Field(ge=0, le=1)
+    required: bool = True
+    slot_count: int = Field(ge=1)
+    affected_locations: list[str] = Field(default_factory=list)
+    slots: list[TemplateVariableSlotResponse] = Field(default_factory=list)
+    source_type: str | None = None
+    source_reference: str | None = None
+    evidence_title: str | None = None
+    evidence_excerpt: str | None = None
+    evidence_location: str | None = None
+    evidence_match_count: int = 0
+    evidence_alternatives: list[str] = Field(default_factory=list)
+    binding_status: str | None = None
+    relation_path: list[str] = Field(default_factory=list)
+    entity_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    fill_strategy: str = "unresolved"
+    personnel_rule_results: list[dict[str, Any]] = Field(default_factory=list)

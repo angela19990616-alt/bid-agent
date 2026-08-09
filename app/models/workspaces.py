@@ -8,7 +8,10 @@ from pydantic import BaseModel, Field
 from app.models.documents import ProjectDocumentResponse
 from app.models.requirements import RequirementResponse
 from app.models.sections import SectionResponse
-from app.models.generation_profiles import TemplateFieldDecisionResponse
+from app.models.generation_profiles import (
+    TemplateFieldDecisionResponse,
+    TemplateVariableDecisionResponse,
+)
 
 
 class OutlineChapterUpdate(BaseModel):
@@ -74,6 +77,9 @@ class WorkspaceResponse(BaseModel):
     template_field_decisions: list[TemplateFieldDecisionResponse] = Field(
         default_factory=list
     )
+    template_variable_decisions: list[
+        TemplateVariableDecisionResponse
+    ] = Field(default_factory=list)
     template_actions: list[dict] = Field(default_factory=list)
     case_library_count: int = 5
     case_library_name: str = "大岳五案例示例库"

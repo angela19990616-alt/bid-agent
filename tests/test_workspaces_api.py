@@ -15,6 +15,7 @@ from app.models.requirements import RequirementStrategyUpdate
 from app.models.generation_profiles import (
     TemplateFieldReviewUpdate,
     TemplateFieldsUpdate,
+    TemplateVariableReviewUpdate,
 )
 from app.services.workspace_service import InvalidTenderDocumentError
 from app.services.workspace_access_service import (
@@ -216,6 +217,46 @@ def test_manual_template_field_edit_is_confirmed_through_workspace_flow(
         "field_key": "bidder_name",
         "action": "confirm",
         "value": "人工核验后的供应商名称",
+    }
+    assert result["id"] == service.id
+
+
+def test_business_variable_is_reviewed_once_through_workspace_flow(
+    monkeypatch,
+):
+    workspace_id = uuid4()
+    calls = {}
+    service = FakeWorkspaceService()
+    monkeypatch.setattr(
+        workspace_api,
+        "GenerationProfileService",
+        SimpleNamespace(
+            review_template_variable=(
+                lambda item_id, key, action, value=None: calls.update(
+                    workspace_id=item_id,
+                    variable_key=key,
+                    action=action,
+                    value=value,
+                )
+            )
+        ),
+    )
+
+    result = workspace_api.review_workspace_template_variable(
+        workspace_id,
+        TemplateVariableReviewUpdate(
+            variable_key="organization.legal_representative.name",
+            action="confirm",
+        ),
+        None,
+        service,
+    )
+
+    assert calls == {
+        "workspace_id": workspace_id,
+        "variable_key": "organization.legal_representative.name",
+        "action": "confirm",
+        "value": None,
     }
     assert result["id"] == service.id
 

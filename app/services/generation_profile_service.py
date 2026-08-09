@@ -31,6 +31,7 @@ from app.core.entity_resolution import (
     SlotContextClassifier,
 )
 from app.services.entity_resolution_service import EntityResolutionService
+from app.core.semantic_variables import SlotDeduplicationEngine
 from app.services.pdf_template_conversion_service import (
     PdfTemplateConversionService,
 )
@@ -477,7 +478,7 @@ class GenerationProfileService:
         )
 
     @staticmethod
-    def template_field_decisions(
+    def _raw_template_field_decisions(
         profile: GenerationProfile,
         fallback_values: dict[str, str] | None = None,
         enterprise_facts: list[EnterpriseFact] | None = None,
@@ -713,6 +714,59 @@ class GenerationProfileService:
                 ),
             })
         return decisions
+
+    @staticmethod
+    def template_variable_decisions(
+        profile: GenerationProfile,
+        fallback_values: dict[str, str] | None = None,
+        enterprise_facts: list[EnterpriseFact] | None = None,
+        case_candidates: dict[str, CaseFactCandidate] | None = None,
+        entity_context: EntityResolutionContext | None = None,
+    ) -> list[dict[str, Any]]:
+        raw = GenerationProfileService._raw_template_field_decisions(
+            profile,
+            fallback_values,
+            enterprise_facts,
+            case_candidates,
+            entity_context,
+        )
+        return SlotDeduplicationEngine.group_decisions(raw)
+
+    @staticmethod
+    def public_template_variable_decisions(
+        profile: GenerationProfile,
+        fallback_values: dict[str, str] | None = None,
+        enterprise_facts: list[EnterpriseFact] | None = None,
+        case_candidates: dict[str, CaseFactCandidate] | None = None,
+        entity_context: EntityResolutionContext | None = None,
+    ) -> list[dict[str, Any]]:
+        return [
+            SlotDeduplicationEngine.public_snapshot(item)
+            for item in GenerationProfileService.template_variable_decisions(
+                profile,
+                fallback_values,
+                enterprise_facts,
+                case_candidates,
+                entity_context,
+            )
+        ]
+
+    @staticmethod
+    def template_field_decisions(
+        profile: GenerationProfile,
+        fallback_values: dict[str, str] | None = None,
+        enterprise_facts: list[EnterpriseFact] | None = None,
+        case_candidates: dict[str, CaseFactCandidate] | None = None,
+        entity_context: EntityResolutionContext | None = None,
+    ) -> list[dict[str, Any]]:
+        variables = GenerationProfileService.template_variable_decisions(
+            profile,
+            fallback_values,
+            enterprise_facts,
+            case_candidates,
+            entity_context,
+        )
+        return SlotDeduplicationEngine.fan_out(variables)
 
     @staticmethod
     def _slot_for_field(
@@ -981,6 +1035,113 @@ class GenerationProfileService:
         else:
             raise ValueError("不支持的审核操作。")
         report["field_reviews"] = reviews
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE proposal_generation_profiles
+                    SET last_fill_report = %s::jsonb, updated_at = NOW()
+                    WHERE project_id = %s
+                    """,
+                    (json.dumps(report, ensure_ascii=False), project_id),
+                )
+                if cursor.rowcount == 0:
+                    raise ValueError("方案生成档案不存在。")
+        return GenerationProfileService.get(project_id)
+
+    @staticmethod
+    def review_template_variable(
+        project_id: UUID,
+        variable_key: str,
+        action: str,
+        value: str | None = None,
+    ) -> GenerationProfile:
+        """Review one business fact once and apply it to every bound slot."""
+        profile = GenerationProfileService.get(project_id)
+        variables = GenerationProfileService.template_variable_decisions(
+            profile,
+            enterprise_facts=EnterpriseFactResolver().resolve(project_id),
+            case_candidates=CaseFactResolver().resolve(project_id),
+            entity_context=EntityResolutionService().resolve_project(project_id),
+        )
+        variable = next(
+            (
+                item for item in variables
+                if item.get("variable_key") == variable_key.strip()
+            ),
+            None,
+        )
+        if variable is None:
+            raise ValueError("业务变量不存在或已随模板规则更新。")
+        field_keys = [
+            str(item.get("field_key"))
+            for item in variable.get("slots", ())
+            if item.get("field_key")
+        ]
+        if not field_keys:
+            raise ValueError("业务变量没有可回填的模板位置。")
+        if action not in {"confirm", "reset"}:
+            raise ValueError("不支持的审核操作。")
+
+        report = dict(profile.last_fill_report or {})
+        field_reviews = dict(report.get("field_reviews") or {})
+        variable_reviews = dict(report.get("variable_reviews") or {})
+        if action == "reset":
+            variable_reviews.pop(variable_key, None)
+            for field_key in field_keys:
+                field_reviews.pop(field_key, None)
+        else:
+            selected = str(value or variable.get("value") or "").strip()
+            if not selected:
+                raise ValueError(
+                    "当前业务变量没有可确认值；请先补充企业事实或建立角色绑定。"
+                )
+            if value and variable.get("fill_strategy") != "unresolved":
+                raise ValueError(
+                    "已识别业务变量不能直接输入，请更新企业事实或项目角色绑定。"
+                )
+            canonical_keys = {
+                str(item.get("canonical_key") or "")
+                for item in variable.get("_field_decisions", ())
+            }
+            if any(
+                not StrictFillDecisionEngine.value_matches_field_type(
+                    canonical_key, selected
+                )
+                for canonical_key in canonical_keys if canonical_key
+            ):
+                raise ValueError("确认内容与业务变量的数据类型不一致。")
+            values = dict(profile.template_field_values)
+            reviewed_at = datetime.now().astimezone().isoformat()
+            evidence = {
+                "source_reference": variable.get("source_reference"),
+                "evidence_title": variable.get("evidence_title"),
+                "evidence_excerpt": variable.get("evidence_excerpt"),
+                "evidence_location": variable.get("evidence_location"),
+                "input_method": "variable_review",
+            }
+            for field_key in field_keys:
+                values[field_key] = selected
+                field_reviews[field_key] = {
+                    "status": "confirmed",
+                    "value": selected,
+                    "reviewed_by": "current_session",
+                    "reviewed_at": reviewed_at,
+                    **{
+                        key: item for key, item in evidence.items() if item
+                    },
+                }
+            GenerationProfileService.update_template_fields(project_id, values)
+            variable_reviews[variable_key] = {
+                "status": "confirmed",
+                "value": selected,
+                "reviewed_by": "current_session",
+                "reviewed_at": reviewed_at,
+                "affected_slot_count": len(field_keys),
+                **{key: item for key, item in evidence.items() if item},
+            }
+        report["field_reviews"] = field_reviews
+        report["variable_reviews"] = variable_reviews
         with connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(

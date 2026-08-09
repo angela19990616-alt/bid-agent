@@ -193,6 +193,58 @@ type Workspace = {
     fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "unresolved";
     required_actions: string[];
   }>;
+  template_variable_decisions: Array<{
+    variable_key: string;
+    dictionary_version: string;
+    standard_name: string;
+    label: string;
+    aliases: string[];
+    semantic_field: string;
+    target_entity_type: "Organization" | "Person" | "Project" | null;
+    target_relation: "LEGAL_REPRESENTATIVE" | "AUTHORIZED_REPRESENTATIVE" | "PROJECT_MANAGER" | "TECHNICAL_LEAD" | "CONTACT_PERSON" | "SIGNATORY" | string | null;
+    expected_value_type: string;
+    expected_value_type_label: string;
+    source_priority: string[];
+    value: string | null;
+    status: "AUTO_FILL" | "REVIEW_REQUIRED" | "MISSING";
+    reason: string;
+    confidence: number;
+    required: boolean;
+    slot_count: number;
+    affected_locations: string[];
+    slots: Array<{
+      field_key: string;
+      label: string | null;
+      display_name: string | null;
+      source_location: string;
+      document_section: string | null;
+      table_index: number | null;
+      paragraph_index: number | null;
+      row: number | null;
+      column: number | null;
+      surrounding_text: string | null;
+    }>;
+    source_type: string | null;
+    source_reference: string | null;
+    evidence_title: string | null;
+    evidence_excerpt: string | null;
+    evidence_location: string | null;
+    evidence_match_count: number;
+    evidence_alternatives: string[];
+    binding_status: string | null;
+    relation_path: string[];
+    entity_candidates: Array<{
+      person_id: string;
+      name: string;
+      title: string | null;
+      match_basis: string;
+      source_document: string | null;
+      source_location: string | null;
+      confidence: number;
+    }>;
+    fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "unresolved";
+    personnel_rule_results: Array<Record<string, unknown>>;
+  }>;
   template_actions: Array<{
     action_id: string;
     display_name: string;
@@ -214,6 +266,8 @@ type Workspace = {
 };
 type ExportItem = { id: string; status: string; filename?: string | null };
 type TemplateFieldDecision = Workspace["template_field_decisions"][number];
+type TemplateVariableDecision = Workspace["template_variable_decisions"][number];
+type EvidenceItem = TemplateFieldDecision | TemplateVariableDecision;
 type ProposalReview = {
   overall: {
     recommended_for_delivery: boolean;
@@ -423,7 +477,7 @@ function isInternalEvidenceLabel(value: string | null | undefined) {
   return Boolean(value && /^(?:current_project|manual_verified|historical_case|tender_document|custom_)/i.test(value));
 }
 
-function visibleEvidenceSource(item: TemplateFieldDecision) {
+function visibleEvidenceSource(item: EvidenceItem) {
   if (item.evidence_title && !isInternalEvidenceLabel(item.evidence_title)) return item.evidence_title;
   if (item.source_type === "tender_document") return "当前采购文件";
   if (item.source_type === "manual_verified") return "人工已确认的机构私有资料";
@@ -431,7 +485,7 @@ function visibleEvidenceSource(item: TemplateFieldDecision) {
   return "机构私有资料库";
 }
 
-function visibleEvidenceLocation(item: TemplateFieldDecision) {
+function visibleEvidenceLocation(item: EvidenceItem) {
   if (item.evidence_location && !isInternalEvidenceLabel(item.evidence_location)) return item.evidence_location;
   return item.source_type === "tender_document"
     ? "当前采购文件（来源记录暂未提供页码或段落）"
@@ -546,9 +600,7 @@ export default function Home() {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [evidenceItem, setEvidenceItem] = useState<TemplateFieldDecision | null>(null);
-  const [editingFieldKey, setEditingFieldKey] = useState("");
-  const [editingFieldValue, setEditingFieldValue] = useState("");
+  const [evidenceItem, setEvidenceItem] = useState<EvidenceItem | null>(null);
 
   const activeSection = sections.find((item) => item.id === activeSectionId);
   const feedbackSummary = useMemo(() => ({
@@ -592,7 +644,7 @@ export default function Home() {
   const progress = workspace
     ? Math.max(20, ((visibleSteps.findIndex((item) => item.id === step) + 1) / visibleSteps.length) * 100)
     : 0;
-  const missingTemplateDecisions = (workspace?.template_field_decisions ?? []).filter(
+  const missingTemplateDecisions = (workspace?.template_variable_decisions ?? []).filter(
     (item) => item.required && item.status === "MISSING",
   );
 
@@ -1084,49 +1136,43 @@ export default function Home() {
     });
   }
 
-  async function reviewTemplateField(fieldKey: string, action: "confirm" | "reset", value?: string) {
+  async function reviewTemplateVariable(variableKey: string, action: "confirm" | "reset") {
     if (!workspace) return;
-    await run(action === "confirm" ? "正在确认字段" : "正在恢复审核", async () => {
+    await run(action === "confirm" ? "正在确认业务变量" : "正在恢复审核", async () => {
       const updated = await request<Workspace>(
-        `/workspaces/${workspace.id}/template-fields/review`,
+        `/workspaces/${workspace.id}/template-variables/review`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ field_key: fieldKey, action, value }),
+          body: JSON.stringify({ variable_key: variableKey, action }),
         },
       );
       setWorkspace(updated);
-      setEditingFieldKey("");
-      setEditingFieldValue("");
-      setNotice(action === "confirm" ? "字段已确认并记录来源。" : "字段已恢复为待审核状态。");
+      setNotice(action === "confirm" ? "业务变量已一次确认并同步全部模板位置。" : "业务变量已恢复为待审核状态。");
     });
   }
 
   async function bindEntityRole(
-    item: TemplateFieldDecision,
-    candidate: TemplateFieldDecision["entity_candidates"][number],
+    item: TemplateVariableDecision,
+    candidate: TemplateVariableDecision["entity_candidates"][number],
   ) {
-    if (!workspace || !item.expected_role) return;
-    await run(`正在绑定${item.expected_role_label ?? "项目角色"}`, async () => {
+    const role = item.target_relation;
+    if (!workspace || !role || !["LEGAL_REPRESENTATIVE", "AUTHORIZED_REPRESENTATIVE", "PROJECT_MANAGER", "TECHNICAL_LEAD", "CONTACT_PERSON", "SIGNATORY"].includes(role)) return;
+    await run(`正在绑定${item.standard_name}`, async () => {
       const updated = await request<Workspace>(
         `/workspaces/${workspace.id}/role-bindings`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            role: item.expected_role,
+            role,
             person_id: candidate.person_id,
           }),
         },
       );
       setWorkspace(updated);
-      setNotice(`已将${candidate.name}绑定为${item.expected_role_label ?? "当前角色"}。`);
+      setNotice(`已将${candidate.name}绑定到${item.standard_name}。`);
     });
-  }
-
-  function startEditingTemplateField(item: TemplateFieldDecision) {
-    setEditingFieldKey(item.field_key);
-    setEditingFieldValue(item.value ?? "");
   }
 
   if (accessState !== "authorized") {
@@ -1591,32 +1637,20 @@ export default function Home() {
                         </div>
                         <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
                         {(workspace.template_actions ?? []).length > 0 && <div className="case-library-note"><b>已识别 {(workspace.template_actions ?? []).length} 项签章动作</b><span>{workspace.template_actions.map((action) => action.display_name).filter((value, index, values) => values.indexOf(value) === index).join("、")}；动作不再冒充待填文字。</span></div>}
-                        {missingTemplateDecisions.length > 0 ? <p className="template-field-warning">企业资料库缺少 {missingTemplateDecisions.length} 项资料。系统保留空位，不允许 AI 猜写。</p> : <p className="template-field-ready">全部字段已匹配，请审核后导出。</p>}
+                        <div className="case-library-note"><b>{workspace.template_variable_decisions?.length ?? 0} 个业务变量覆盖 {workspace.template_field_decisions?.length ?? 0} 个原模板位置</b><span>相同企业事实只匹配、审核一次，确认结果自动同步到全部关联位置。</span></div>
+                        {missingTemplateDecisions.length > 0 ? <p className="template-field-warning">企业资料库缺少 {missingTemplateDecisions.length} 个业务变量。系统保留关联空位，不允许 AI 猜写。</p> : <p className="template-field-ready">全部业务变量已匹配，请审核后导出。</p>}
                         <div className="fill-decision-list">
-                          {(workspace.template_field_decisions ?? []).map((item) => (
-                            <article key={item.field_key} className={`fill-decision ${item.status.toLowerCase()}`}>
-                              <div><strong>{item.display_name || item.label}</strong><span>{fillStatusLabels[item.status]}</span></div>
-                              {editingFieldKey === item.field_key ? (
-                                <div className="field-edit-form">
-                                  <input aria-label={`修改${item.label}`} maxLength={500} value={editingFieldValue} onChange={(event) => setEditingFieldValue(event.target.value)} autoFocus />
-                                  <div>
-                                    <button className="secondary compact" disabled={Boolean(busy) || !editingFieldValue.trim()} onClick={() => reviewTemplateField(item.field_key, "confirm", editingFieldValue.trim())}>保存并确认</button>
-                                    <button className="text-button" disabled={Boolean(busy)} onClick={() => { setEditingFieldKey(""); setEditingFieldValue(""); }}>取消</button>
-                                  </div>
-                                </div>
-                              ) : <p>{item.value || "尚未提供"}</p>}
-                              <small>原模板槽位：{item.label} · 应填：{item.expected_value_type_label} · {item.type_validation === "passed" ? "类型校验已通过" : "未获得符合类型的值"}</small>
+                          {(workspace.template_variable_decisions ?? []).map((item) => (
+                            <article key={item.variable_key} className={`fill-decision ${item.status.toLowerCase()}`}>
+                              <div><strong>{item.standard_name}</strong><span>{fillStatusLabels[item.status]}</span></div>
+                              <p>{item.value || "尚未从企业资料库获得可信值"}</p>
+                              <small>业务变量覆盖 {item.slot_count} 个原模板位置 · 应填：{item.expected_value_type_label}</small>
                               {item.semantic_field && (
                                 <div className="entity-resolution-card">
-                                  <div><span>识别结果</span><strong>{item.display_name || (item.expected_role_label ? `${item.expected_role_label}${item.expected_value_type_label}` : item.label)}</strong></div>
+                                  <div><span>识别结果</span><strong>{item.standard_name}</strong></div>
                                   {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
-                                  {item.subject_organization && <div><span>所属主体</span><strong>{item.subject_organization}</strong></div>}
-                                  {item.expected_role_label && <div><span>目标角色</span><strong>{item.expected_role_label}</strong></div>}
-                                  {item.project_name && item.expected_role !== "LEGAL_REPRESENTATIVE" && <div><span>当前项目</span><strong>{item.project_name}</strong></div>}
                                   <div><span>当前状态</span><strong>{item.binding_status === "resolved" ? "已确定唯一实体和角色" : item.reason}</strong></div>
-                                  {(item.required_actions ?? []).length > 0 && <div><span>随附动作</span><strong>{item.required_actions.join("、")}</strong></div>}
-                                  {item.slot?.surrounding_text && <details><summary>查看槽位判断上下文</summary><blockquote>{item.slot.surrounding_text}</blockquote></details>}
-                                  {(item.match_path ?? []).length > 0 && <details><summary>查看匹配路径</summary><ol>{item.match_path.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol></details>}
+                                  <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}</article>)}</details>
                                   {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
                                     <div className="entity-candidates">
                                       <span>候选人员</span>
@@ -1625,21 +1659,21 @@ export default function Home() {
                                           <div><strong>{candidate.name}</strong><small>{candidate.title || "职务待核验"}</small></div>
                                           <p>{candidate.match_basis}</p>
                                           {(candidate.source_document || candidate.source_location) && <small>依据：{candidate.source_document || "已核验人员库"}{candidate.source_location ? ` · ${candidate.source_location}` : ""}</small>}
-                                          <button className="secondary compact" disabled={Boolean(busy) || !item.expected_role} onClick={() => bindEntityRole(item, candidate)}>选择并建立角色绑定</button>
+                                          <button className="secondary compact" disabled={Boolean(busy)} onClick={() => bindEntityRole(item, candidate)}>选择并建立角色绑定</button>
                                         </article>
                                       ))}
                                     </div>
                                   )}
-                                  {item.expected_entity_type === "Person" && item.binding_status !== "resolved" && (item.entity_candidates ?? []).length === 0 && <p className="template-field-warning">当前没有可选的已核验人员，需要先在受控人员库新增并核验。</p>}
+                                  {item.target_entity_type === "Person" && item.binding_status !== "resolved" && (item.entity_candidates ?? []).length === 0 && <p className="template-field-warning">当前没有可选的已核验人员，需要先在受控人员库新增并核验。</p>}
                                 </div>
                               )}
                               <small>{item.reason}</small>
                               {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
                               {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
-                              {editingFieldKey !== item.field_key && <div className="field-review-actions">
-                                {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "confirm")}>确认该字段</button>}
-                                {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateField(item.field_key, "reset")}>重新审核</button>}
-                              </div>}
+                              <div className="field-review-actions">
+                                {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "confirm")}>一次确认并同步 {item.slot_count} 处</button>}
+                                {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "reset")}>重新审核</button>}
+                              </div>
                             </article>
                           ))}
                         </div>

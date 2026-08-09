@@ -157,7 +157,9 @@ class EntityResolutionService:
         cursor.execute(
             """
             SELECT id, name, title, phone_masked, id_number_masked,
-                   certificates, source_documents
+                   certificates, source_documents, employment_history,
+                   role_history, certification_history,
+                   project_participation
             FROM enterprise_people
             WHERE organization_key = %s
               AND organization_id = %s
@@ -176,6 +178,16 @@ class EntityResolutionService:
                 id_number_masked=row.get("id_number_masked"),
                 certificates=tuple(row.get("certificates") or ()),
                 source_documents=tuple(row.get("source_documents") or ()),
+                employment_history=tuple(
+                    row.get("employment_history") or ()
+                ),
+                role_history=tuple(row.get("role_history") or ()),
+                certification_history=tuple(
+                    row.get("certification_history") or ()
+                ),
+                project_participation=tuple(
+                    row.get("project_participation") or ()
+                ),
             )
             for row in cursor.fetchall()
         ]
