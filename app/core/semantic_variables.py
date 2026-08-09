@@ -271,6 +271,18 @@ class SlotDeduplicationEngine:
         standard_name = definition.standard_name
         if definition.target_entity_type == "Person" and len(target_relations) > 1:
             standard_name = f"同一已绑定人员{primary.get('expected_value_type_label', '属性')}"
+        resolution = cls._resolution(
+            definition=definition,
+            primary=primary,
+            status=status,
+            value=value,
+            standard_name=standard_name,
+        )
+        review_group_key, review_group_label = cls._review_group(
+            definition=definition,
+            primary=primary,
+            slots=slots,
+        )
         return {
             "variable_key": definition.variable_key,
             "dictionary_version": VariableDictionary.version(),
@@ -312,8 +324,124 @@ class SlotDeduplicationEngine:
             "entity_candidates": primary.get("entity_candidates") or [],
             "fill_strategy": primary.get("fill_strategy") or "unresolved",
             "personnel_rule_results": primary.get("personnel_rule_results") or [],
+            **resolution,
+            "review_group_key": review_group_key,
+            "review_group_label": review_group_label,
             "_field_decisions": decisions,
         }
+
+    @staticmethod
+    def _resolution(
+        *,
+        definition: VariableDefinition,
+        primary: dict[str, Any],
+        status: str,
+        value: str | None,
+        standard_name: str,
+    ) -> dict[str, Any]:
+        """Explain whether semantics or only the target value is unresolved.
+
+        ``fill_strategy=unresolved`` is an execution strategy, not proof that
+        the business meaning is unknown.  Keep that internal distinction out
+        of the review UI.
+        """
+        semantic_field = (definition.semantic_field or "").strip()
+        semantics_recognized = bool(
+            semantic_field
+            and semantic_field not in {"text.value", "unknown", "unmapped"}
+            and standard_name not in {
+                "尚未识别的业务槽位",
+                "待确认业务变量",
+                "待识别字段",
+            }
+        )
+        if value and status == "AUTO_FILL":
+            return {
+                "semantics_recognized": semantics_recognized,
+                "resolution_state": "resolved",
+                "resolution_label": "已自动匹配",
+                "next_action": "请核验来源；确认无误后可直接导出。",
+            }
+        if value and status == "REVIEW_REQUIRED":
+            return {
+                "semantics_recognized": semantics_recognized,
+                "resolution_state": "review_required",
+                "resolution_label": "待人工核验",
+                "next_action": "已找到候选值，请核验来源和取值后确认。",
+            }
+        if not semantics_recognized:
+            return {
+                "semantics_recognized": False,
+                "resolution_state": "semantic_review_required",
+                "resolution_label": "需要确认字段含义",
+                "next_action": "系统无法从上下文唯一判断该空位含义，请人工确认。",
+            }
+        if semantic_field == "bid_response.content":
+            return {
+                "semantics_recognized": True,
+                "resolution_state": "response_generation_pending",
+                "resolution_label": "待生成响应内容",
+                "next_action": "系统将依据对应招标要求和已核验资料生成响应内容。",
+            }
+        if definition.target_entity_type == "Person":
+            if primary.get("binding_status") == "resolved":
+                state = "person_fact_pending"
+                label = "人员资料待补齐"
+                action = "人员已确定，系统将从该人员的受控档案继续匹配此项资料。"
+            else:
+                state = "person_binding_pending"
+                label = "待选择项目人员"
+                action = "请从已核验人员候选中确认本项目角色，其他字段将自动联动。"
+            return {
+                "semantics_recognized": True,
+                "resolution_state": state,
+                "resolution_label": label,
+                "next_action": action,
+            }
+        if definition.target_entity_type == "Organization":
+            return {
+                "semantics_recognized": True,
+                "resolution_state": "enterprise_fact_pending",
+                "resolution_label": "待匹配企业资料",
+                "next_action": "系统将从当前投标人的已核验企业资料中继续匹配。",
+            }
+        if definition.target_entity_type == "Project":
+            return {
+                "semantics_recognized": True,
+                "resolution_state": "project_fact_pending",
+                "resolution_label": "待匹配项目信息",
+                "next_action": "系统将从当前项目和招标文件中继续匹配。",
+            }
+        return {
+            "semantics_recognized": True,
+            "resolution_state": "value_resolution_pending",
+            "resolution_label": "待匹配对应资料",
+            "next_action": "字段含义已识别，系统将继续匹配对应资料。",
+        }
+
+    @staticmethod
+    def _review_group(
+        *,
+        definition: VariableDefinition,
+        primary: dict[str, Any],
+        slots: list[dict[str, Any]],
+    ) -> tuple[str, str]:
+        """Group attributes belonging to one person without merging values."""
+        if definition.target_entity_type != "Person":
+            return definition.variable_key, definition.standard_name
+        if definition.variable_key.startswith("entity_fact.person."):
+            parts = definition.variable_key.split(".")
+            return ".".join(parts[:3]), definition.entity_scope_label
+        slot = slots[0] if slots else {}
+        if slot.get("table_index") is not None and slot.get("row") is not None:
+            scope = "|".join((
+                str(slot.get("document_section") or ""),
+                str(slot.get("table_index")),
+                str(slot.get("row")),
+            ))
+            token = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:16]
+            return f"person_row.{token}", definition.entity_scope_label
+        return definition.variable_key, definition.entity_scope_label
 
     @staticmethod
     def _slot_snapshot(decision: dict[str, Any]) -> dict[str, Any]:

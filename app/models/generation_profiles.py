@@ -136,3 +136,19 @@ class TemplateVariableDecisionResponse(BaseModel):
     entity_candidates: list[dict[str, Any]] = Field(default_factory=list)
     fill_strategy: str = "unresolved"
     personnel_rule_results: list[dict[str, Any]] = Field(default_factory=list)
+    semantics_recognized: bool = True
+    resolution_state: Literal[
+        "resolved",
+        "review_required",
+        "enterprise_fact_pending",
+        "project_fact_pending",
+        "person_binding_pending",
+        "person_fact_pending",
+        "response_generation_pending",
+        "semantic_review_required",
+        "value_resolution_pending",
+    ] = "value_resolution_pending"
+    resolution_label: str = "待匹配对应资料"
+    next_action: str = "系统将继续从当前项目可用资料中匹配。"
+    review_group_key: str
+    review_group_label: str

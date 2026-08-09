@@ -50,6 +50,18 @@ def _resolved_decision(field_key: str, slot, entity_id, value: str) -> dict:
     }
 
 
+def _missing_decision(field_key: str, slot) -> dict:
+    return {
+        **_decision(field_key, slot, ""),
+        "value": None,
+        "source_type": None,
+        "source_reference": None,
+        "status": "MISSING",
+        "reason": "尚未找到可信值。",
+        "binding_status": "not_found",
+    }
+
+
 def _slot(
     label: str,
     context: str,
@@ -275,3 +287,87 @@ def test_preview_manual_override_is_project_scoped_and_wins_for_rendering():
     assert variables[0]["status"] == "AUTO_FILL"
     assert variables[0]["evidence_excerpt"] == "本项目人工修正：李四"
     assert variables[0]["evidence_location"] == "严格回填预览人工审核"
+
+
+def test_recognized_person_slot_is_pending_binding_not_unknown_semantics():
+    name = SlotContextClassifier.classify(
+        label="姓名",
+        surrounding_text="项目团队人员表 姓名：___",
+        source_location="表格1第2行第1列",
+        document_section="项目团队人员表",
+        table_index=0,
+        row=1,
+        column=0,
+    )
+    title = SlotContextClassifier.classify(
+        label="职务",
+        surrounding_text="项目团队人员表 职务：___",
+        source_location="表格1第2行第2列",
+        document_section="项目团队人员表",
+        table_index=0,
+        row=1,
+        column=1,
+    )
+
+    variables = SlotDeduplicationEngine.group_decisions([
+        _missing_decision("person_name", name),
+        _missing_decision("person_title", title),
+    ])
+
+    assert {item["resolution_state"] for item in variables} == {
+        "person_binding_pending"
+    }
+    assert all(item["semantics_recognized"] for item in variables)
+    assert len({item["review_group_key"] for item in variables}) == 1
+
+
+def test_recognized_organization_slot_is_waiting_for_enterprise_fact():
+    slot = SlotContextClassifier.classify(
+        label="投标人名称",
+        surrounding_text="投标人名称：___",
+        source_location="第2页第3段",
+        document_section="投标函",
+    )
+
+    variable = SlotDeduplicationEngine.group_decisions([
+        _missing_decision("bidder_name", slot),
+    ])[0]
+
+    assert variable["semantics_recognized"] is True
+    assert variable["resolution_state"] == "enterprise_fact_pending"
+    assert variable["resolution_label"] == "待匹配企业资料"
+
+
+def test_response_content_waits_for_generation_not_semantic_review():
+    slot = SlotContextClassifier.classify(
+        label="备注",
+        surrounding_text="商务条款响应表 备注：___",
+        source_location="表格3第2行第4列",
+        document_section="商务条款响应表",
+    )
+
+    variable = SlotDeduplicationEngine.group_decisions([
+        _missing_decision("response_notes", slot),
+    ])[0]
+
+    assert variable["semantic_field"] == "bid_response.content"
+    assert variable["resolution_state"] == "response_generation_pending"
+    assert variable["resolution_label"] == "待生成响应内容"
+
+
+def test_only_genuinely_unmapped_slot_requires_semantic_review():
+    slot = SlotContextClassifier.classify(
+        label="响应内容",
+        surrounding_text="技术要求响应表 响应内容：___",
+        source_location="表格4第2行第3列",
+        document_section="技术要求响应表",
+    )
+
+    variable = SlotDeduplicationEngine.group_decisions([
+        _missing_decision("unmapped_response", slot),
+    ])[0]
+
+    assert variable["semantic_field"] == "text.value"
+    assert variable["semantics_recognized"] is False
+    assert variable["resolution_state"] == "semantic_review_required"
+    assert variable["resolution_label"] == "需要确认字段含义"

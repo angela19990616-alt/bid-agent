@@ -246,6 +246,12 @@ type Workspace = {
     }>;
     fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "unresolved";
     personnel_rule_results: Array<Record<string, unknown>>;
+    semantics_recognized: boolean;
+    resolution_state: "resolved" | "review_required" | "enterprise_fact_pending" | "project_fact_pending" | "person_binding_pending" | "person_fact_pending" | "response_generation_pending" | "semantic_review_required" | "value_resolution_pending";
+    resolution_label: string;
+    next_action: string;
+    review_group_key: string;
+    review_group_label: string;
   }>;
   template_actions: Array<{
     action_id: string;
@@ -452,11 +458,6 @@ const importanceRank: Record<Requirement["importance"], number> = {
 function entityLabel(item: Requirement, key: string | null) {
   return item.semantic_graph?.entities.find((entity) => entity.key === key)?.label ?? "相关主体";
 }
-const fillStatusLabels = {
-  AUTO_FILL: "可自动填写",
-  REVIEW_REQUIRED: "待人工确认",
-  MISSING: "资料缺失",
-};
 const priorityRank: Record<Requirement["priority"], number> = {
   P0: 0,
   P1: 1,
@@ -700,6 +701,30 @@ export default function Home() {
   const missingTemplateDecisions = (workspace?.template_variable_decisions ?? []).filter(
     (item) => item.required && item.status === "MISSING",
   );
+  const templateVariableGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; items: TemplateVariableDecision[] }>();
+    for (const item of workspace?.template_variable_decisions ?? []) {
+      const key = item.review_group_key || item.variable_key;
+      const existing = groups.get(key);
+      if (existing) existing.items.push(item);
+      else groups.set(key, { key, label: item.review_group_label || item.entity_scope_label, items: [item] });
+    }
+    return [...groups.values()].map((group) => ({
+      ...group,
+      statusLabel: group.items.find((item) => item.resolution_state !== "resolved")?.resolution_label
+        ?? group.items[0].resolution_label,
+    }));
+  }, [workspace?.template_variable_decisions]);
+  const templateResolutionSummary = useMemo(() => {
+    const decisions = workspace?.template_variable_decisions ?? [];
+    return {
+      recognized: decisions.filter((item) => item.semantics_recognized).length,
+      semanticReview: decisions.filter((item) => item.resolution_state === "semantic_review_required").length,
+      enterprisePending: decisions.filter((item) => item.resolution_state === "enterprise_fact_pending").length,
+      personGroupsPending: templateVariableGroups.filter((group) => group.items.some((item) => ["person_binding_pending", "person_fact_pending"].includes(item.resolution_state))).length,
+      responsePending: decisions.filter((item) => item.resolution_state === "response_generation_pending").length,
+    };
+  }, [workspace?.template_variable_decisions, templateVariableGroups]);
 
   useEffect(() => {
     let active = true;
@@ -1158,7 +1183,7 @@ export default function Home() {
       setResponseSupport(support);
       setNotice(
         workspace.generation_mode === "strict_template" && missingTemplateDecisions.length > 0
-          ? `Word 已生成；${missingTemplateDecisions.length} 项资料需在企业数据库补齐，系统未猜写。`
+          ? `Word 已生成；${missingTemplateDecisions.length} 项仍待资料匹配、人员绑定或响应生成，系统未猜写。`
           : review.overall.recommended_for_delivery
           ? "校核完成，Word 文件已经生成。"
           : `Word 已生成，有 ${review.overall.blocking_risk_count} 项建议人工留意。`,
@@ -1257,6 +1282,46 @@ export default function Home() {
       setWorkspace(updated);
       setNotice(`已将${candidate.name}绑定到${item.standard_name}。`);
     });
+  }
+
+  function renderTemplateVariableDecision(item: TemplateVariableDecision) {
+    return (
+      <article key={item.variable_key} className={`fill-decision ${item.resolution_state}`}>
+        <div><strong>{item.standard_name}</strong><span>{item.resolution_label}</span></div>
+        <p>{item.value || item.next_action}</p>
+        <small>{item.entity_scope_label} · 覆盖 {item.slot_count} 个原模板位置 · 应填：{item.expected_value_type_label}</small>
+        {item.semantic_field && (
+          <div className="entity-resolution-card">
+            <div><span>识别字段</span><strong>{item.standard_name}</strong></div>
+            {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
+            <div><span>当前状态</span><strong>{item.resolution_label}</strong></div>
+            <div><span>下一步</span><strong>{item.next_action}</strong></div>
+            <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位此处</button></article>)}</details>
+            {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
+              <div className="entity-candidates">
+                <span>候选人员</span>
+                {item.entity_candidates.map((candidate) => (
+                  <article key={candidate.person_id}>
+                    <div><strong>{candidate.name}</strong><small>{candidate.title || "职务待核验"}</small></div>
+                    <p>{candidate.match_basis}</p>
+                    {(candidate.source_document || candidate.source_location) && <small>依据：{candidate.source_document || "已核验人员库"}{candidate.source_location ? ` · ${candidate.source_location}` : ""}</small>}
+                    <button className="secondary compact" disabled={Boolean(busy)} onClick={() => bindEntityRole(item, candidate)}>选择并建立角色绑定</button>
+                  </article>
+                ))}
+              </div>
+            )}
+            {item.target_entity_type === "Person" && item.binding_status !== "resolved" && (item.entity_candidates ?? []).length === 0 && <p className="template-field-warning">当前没有可选的已核验人员，系统不会随机选择；请先补充或授权人员资料。</p>}
+          </div>
+        )}
+        {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
+        {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
+        <div className="field-review-actions">
+          {item.slots.length > 0 && <button className="secondary compact preview-locate-button" disabled={Boolean(busy)} onClick={() => locatePreviewSlot(item)}>在预览中定位</button>}
+          {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "confirm")}>一次确认并同步 {item.slot_count} 处</button>}
+          {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "reset")}>重新审核</button>}
+        </div>
+      </article>
+    );
   }
 
   if (accessState !== "authorized") {
@@ -1726,46 +1791,22 @@ export default function Home() {
                         </div>
                         <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
                         {(workspace.template_actions ?? []).length > 0 && <div className="case-library-note"><b>已识别 {(workspace.template_actions ?? []).length} 项签章动作</b><span>{workspace.template_actions.map((action) => action.display_name).filter((value, index, values) => values.indexOf(value) === index).join("、")}；动作不再冒充待填文字。</span></div>}
-                        <div className="case-library-note"><b>{workspace.template_variable_decisions?.length ?? 0} 个待回填事实覆盖 {workspace.template_field_decisions?.length ?? 0} 个原模板位置</b><span>按“同一实体 + 同一属性”收敛；字段叫法不同但最终取值一致时，只匹配、审核一次。</span></div>
-                        {missingTemplateDecisions.length > 0 ? <p className="template-field-warning">企业资料库缺少 {missingTemplateDecisions.length} 个业务变量。系统保留关联空位，不允许 AI 猜写。</p> : <p className="template-field-ready">全部业务变量已匹配，请审核后导出。</p>}
+                        <div className="case-library-note"><b>{workspace.template_variable_decisions?.length ?? 0} 个业务事实覆盖 {workspace.template_field_decisions?.length ?? 0} 个原模板位置</b><span>已识别 {templateResolutionSummary.recognized} 个字段含义；按“同一实体 + 同一属性”收敛，同一人员行合并审核。</span></div>
+                        <div className="fill-resolution-summary">
+                          <span>待匹配企业资料 {templateResolutionSummary.enterprisePending}</span>
+                          <span>待处理人员 {templateResolutionSummary.personGroupsPending} 组</span>
+                          <span>待生成响应 {templateResolutionSummary.responsePending}</span>
+                          <span className={templateResolutionSummary.semanticReview ? "warning" : "ready"}>字段含义待确认 {templateResolutionSummary.semanticReview}</span>
+                        </div>
+                        {templateResolutionSummary.semanticReview > 0 ? <p className="template-field-warning">有 {templateResolutionSummary.semanticReview} 个空位无法从上下文唯一判断含义，需要人工确认；其他空位均已识别业务含义。</p> : missingTemplateDecisions.length > 0 ? <p className="template-field-ready">字段含义已全部识别。系统正在匹配对应资料，未取得可信值的空位不会猜写。</p> : <p className="template-field-ready">全部业务变量已匹配，请审核后导出。</p>}
                         <div className="fill-decision-list">
-                          {(workspace.template_variable_decisions ?? []).map((item) => (
-                            <article key={item.variable_key} className={`fill-decision ${item.status.toLowerCase()}`}>
-                              <div><strong>{item.standard_name}</strong><span>{fillStatusLabels[item.status]}</span></div>
-                              <p>{item.value || "尚未从企业资料库获得可信值"}</p>
-                              <small>{item.entity_scope_label} · 覆盖 {item.slot_count} 个原模板位置 · 应填：{item.expected_value_type_label}</small>
-                              {item.semantic_field && (
-                                <div className="entity-resolution-card">
-                                  <div><span>识别结果</span><strong>{item.standard_name}</strong></div>
-                                  {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
-                                  <div><span>当前状态</span><strong>{item.binding_status === "resolved" ? "已确定唯一实体和角色" : item.reason}</strong></div>
-                                  <details className="variable-slot-details"><summary>查看关联的 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位此处</button></article>)}</details>
-                                  {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
-                                    <div className="entity-candidates">
-                                      <span>候选人员</span>
-                                      {item.entity_candidates.map((candidate) => (
-                                        <article key={candidate.person_id}>
-                                          <div><strong>{candidate.name}</strong><small>{candidate.title || "职务待核验"}</small></div>
-                                          <p>{candidate.match_basis}</p>
-                                          {(candidate.source_document || candidate.source_location) && <small>依据：{candidate.source_document || "已核验人员库"}{candidate.source_location ? ` · ${candidate.source_location}` : ""}</small>}
-                                          <button className="secondary compact" disabled={Boolean(busy)} onClick={() => bindEntityRole(item, candidate)}>选择并建立角色绑定</button>
-                                        </article>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {item.target_entity_type === "Person" && item.binding_status !== "resolved" && (item.entity_candidates ?? []).length === 0 && <p className="template-field-warning">当前没有可选的已核验人员，需要先在受控人员库新增并核验。</p>}
-                                </div>
-                              )}
-                              <small>{item.reason}</small>
-                              {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
-                              {(item.evidence_title || item.value) && <button className="evidence-open-button" onClick={() => setEvidenceItem(item)}>查看原文定位</button>}
-                              <div className="field-review-actions">
-                                {item.slots.length > 0 && <button className="secondary compact preview-locate-button" disabled={Boolean(busy)} onClick={() => locatePreviewSlot(item)}>在预览中定位</button>}
-                                {item.status === "REVIEW_REQUIRED" && item.value && <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "confirm")}>一次确认并同步 {item.slot_count} 处</button>}
-                                {item.status === "AUTO_FILL" && item.source_type === "manual_verified" && <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "reset")}>重新审核</button>}
-                              </div>
-                            </article>
-                          ))}
+                          {templateVariableGroups.map((group) => group.items.length > 1 ? (
+                            <details key={group.key} className="fill-variable-group">
+                              <summary><span><strong>{group.label}</strong><small>{group.items.length} 个关联字段</small></span><b>{group.statusLabel}</b></summary>
+                              <p>系统已识别这一行各字段的含义；确定人员后，姓名、职务、证书等资料将从同一人员档案自动联动。</p>
+                              <div className="fill-variable-group-items">{group.items.map(renderTemplateVariableDecision)}</div>
+                            </details>
+                          ) : renderTemplateVariableDecision(group.items[0]))}
                         </div>
                         {!exportItem && <button className="primary strict-export-button" disabled={Boolean(busy)} onClick={approveTemplateAndExport}>审核已匹配内容并生成原格式 Word</button>}
                       </section>
