@@ -426,14 +426,20 @@ class SlotDeduplicationEngine:
         primary: dict[str, Any],
         slots: list[dict[str, Any]],
     ) -> tuple[str, str]:
-        """Group attributes belonging to one person without merging values."""
-        if definition.target_entity_type != "Person":
-            return definition.variable_key, definition.standard_name
-        if definition.variable_key.startswith("entity_fact.person."):
+        """Group fields by business object without merging their values."""
+        entity_type = definition.target_entity_type
+        if entity_type and definition.variable_key.startswith("entity_fact."):
             parts = definition.variable_key.split(".")
             return ".".join(parts[:3]), definition.entity_scope_label
+        if entity_type in {"Organization", "Project"}:
+            scope = f"{entity_type}|{definition.entity_scope_label}"
+            token = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:16]
+            return f"entity_scope.{token}", definition.entity_scope_label
         slot = slots[0] if slots else {}
-        if slot.get("table_index") is not None and slot.get("row") is not None:
+        if entity_type == "Person" and (
+            slot.get("table_index") is not None
+            and slot.get("row") is not None
+        ):
             scope = "|".join((
                 str(slot.get("document_section") or ""),
                 str(slot.get("table_index")),
@@ -441,6 +447,20 @@ class SlotDeduplicationEngine:
             ))
             token = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:16]
             return f"person_row.{token}", definition.entity_scope_label
+        if (
+            definition.semantic_field == "bid_response.content"
+            and slot.get("table_index") is not None
+            and slot.get("row") is not None
+        ):
+            scope = "|".join((
+                str(slot.get("document_section") or ""),
+                str(slot.get("table_index")),
+                str(slot.get("row")),
+            ))
+            token = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:16]
+            return f"response_row.{token}", (
+                f"{slot.get('document_section') or '响应表'}第 {int(slot['row']) + 1} 行"
+            )
         return definition.variable_key, definition.entity_scope_label
 
     @staticmethod

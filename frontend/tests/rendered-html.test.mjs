@@ -98,14 +98,15 @@ test("keeps the simplified V1 workflow in the client source", async () => {
   assert.match(page, /不再强制替换为系统默认字体/);
   assert.match(page, /一次确认并同步/);
   assert.match(page, /人工确认来源/);
-  assert.match(page, /业务事实覆盖/);
-  assert.match(page, /同一实体 \+ 同一属性/);
+  assert.match(page, /业务变量归并为/);
+  assert.match(page, /同一对象的不同属性横向展示/);
   assert.match(page, /待匹配企业资料/);
   assert.match(page, /person_binding_pending/);
   assert.match(page, /response_generation_pending/);
   assert.match(page, /semantic_review_required/);
-  assert.match(page, /同一人员行合并审核/);
+  assert.match(page, /同一人员档案自动联动/);
   assert.match(page, /fill-variable-group/);
+  assert.match(css, /repeat\(auto-fit, minmax\(230px, 1fr\)\)/);
   assert.match(page, /在预览中定位/);
   assert.match(page, /定位此处/);
   assert.match(page, /保存并同步/);

@@ -338,6 +338,35 @@ def test_recognized_organization_slot_is_waiting_for_enterprise_fact():
     assert variable["resolution_label"] == "待匹配企业资料"
 
 
+def test_organization_attributes_share_one_review_object_not_one_value():
+    name = SlotContextClassifier.classify(
+        label="投标人名称",
+        surrounding_text="投标人名称：___",
+        source_location="投标函第2段",
+        document_section="投标函",
+    )
+    address = SlotContextClassifier.classify(
+        label="注册地址",
+        surrounding_text="注册地址：___",
+        source_location="投标函第3段",
+        document_section="投标函",
+    )
+
+    variables = SlotDeduplicationEngine.group_decisions([
+        _missing_decision("bidder_name", name),
+        _missing_decision("registered_address", address),
+    ])
+
+    assert len(variables) == 2
+    assert {item["semantic_field"] for item in variables} == {
+        "organization.full_name", "organization.registered_address",
+    }
+    assert len({item["review_group_key"] for item in variables}) == 1
+    assert {item["review_group_label"] for item in variables} == {
+        "当前投标人"
+    }
+
+
 def test_response_content_waits_for_generation_not_semantic_review():
     slot = SlotContextClassifier.classify(
         label="备注",

@@ -1791,7 +1791,7 @@ export default function Home() {
                         </div>
                         <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
                         {(workspace.template_actions ?? []).length > 0 && <div className="case-library-note"><b>已识别 {(workspace.template_actions ?? []).length} 项签章动作</b><span>{workspace.template_actions.map((action) => action.display_name).filter((value, index, values) => values.indexOf(value) === index).join("、")}；动作不再冒充待填文字。</span></div>}
-                        <div className="case-library-note"><b>{workspace.template_variable_decisions?.length ?? 0} 个业务事实覆盖 {workspace.template_field_decisions?.length ?? 0} 个原模板位置</b><span>已识别 {templateResolutionSummary.recognized} 个字段含义；按“同一实体 + 同一属性”收敛，同一人员行合并审核。</span></div>
+                        <div className="case-library-note"><b>{workspace.template_variable_decisions?.length ?? 0} 个业务变量归并为 {templateVariableGroups.length} 个审核对象</b><span>覆盖 {workspace.template_field_decisions?.length ?? 0} 个原模板位置；同一对象的不同属性横向展示，同一实体与属性只审核一次。</span></div>
                         <div className="fill-resolution-summary">
                           <span>待匹配企业资料 {templateResolutionSummary.enterprisePending}</span>
                           <span>待处理人员 {templateResolutionSummary.personGroupsPending} 组</span>
@@ -1802,8 +1802,8 @@ export default function Home() {
                         <div className="fill-decision-list">
                           {templateVariableGroups.map((group) => group.items.length > 1 ? (
                             <details key={group.key} className="fill-variable-group">
-                              <summary><span><strong>{group.label}</strong><small>{group.items.length} 个关联字段</small></span><b>{group.statusLabel}</b></summary>
-                              <p>系统已识别这一行各字段的含义；确定人员后，姓名、职务、证书等资料将从同一人员档案自动联动。</p>
+                              <summary><span><strong>{group.label}</strong><small>{group.items.length} 个关联变量 · 点击展开横向核验</small></span><b>{group.statusLabel}</b></summary>
+                              <p>{group.items[0].target_entity_type === "Person" ? "系统已识别这一行各字段的含义；确定人员后，姓名、职务、证书等资料将从同一人员档案自动联动。" : "这些变量属于同一业务对象；系统分别匹配属性值，前端集中展示和审核，不会重复创建对象。"}</p>
                               <div className="fill-variable-group-items">{group.items.map(renderTemplateVariableDecision)}</div>
                             </details>
                           ) : renderTemplateVariableDecision(group.items[0]))}
