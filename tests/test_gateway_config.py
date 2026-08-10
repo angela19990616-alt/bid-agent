@@ -69,6 +69,19 @@ def test_host_gateway_enforces_domain_tls_and_safe_limits():
     assert "options-ssl-nginx.conf" not in host_config
 
 
+def test_host_gateway_allows_only_literal_ipv4_through_invite_gateway():
+    host_config = (
+        Path(__file__).parents[1] / "deploy" / "nginx-bid.conf"
+    ).read_text(encoding="utf-8")
+    raw_ip_server = host_config.split("server {", 2)[1]
+    assert "$host !~" in raw_ip_server
+    assert "[0-9]{1,3}" in raw_ip_server
+    assert "location = /api/v1/access/invite" in raw_ip_server
+    assert "location /api/" in raw_ip_server
+    assert "proxy_pass http://127.0.0.1:8080" in raw_ip_server
+    assert "proxy_read_timeout 300s" in raw_ip_server
+
+
 def test_bootstrap_gateway_rejects_raw_ip_and_serves_acme_challenges():
     bootstrap = (
         Path(__file__).parents[1] / "deploy" / "nginx-bid-bootstrap.conf"
