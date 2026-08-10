@@ -302,6 +302,135 @@ def test_table_columns_bind_to_business_objects_without_guessing_a_person():
     assert organization.ontology_concept.endswith(".business_license_number")
 
 
+def test_real_response_and_personnel_table_columns_have_business_semantics():
+    response = SlotContextClassifier.classify(
+        label="采购文件编号",
+        surrounding_text=(
+            "序号 | 采购文件编号 | 有偏离 | 偏离简述 | "
+            "【当前空位：采购文件编号】"
+        ),
+        source_location="表格3/第2行/第2列",
+        document_section="商务偏离表",
+        table_index=3,
+        row=2,
+        column=2,
+    )
+    certificate_number = SlotContextClassifier.classify(
+        label="证书编号",
+        surrounding_text=(
+            "序号 | 姓名 | 职务 | 职责 | 专业技术资格 | 证书编号 | "
+            "劳动合同编号 | 【当前空位：证书编号】"
+        ),
+        source_location="表格4/第2行/第6列",
+        document_section="项目人员表",
+        table_index=4,
+        row=2,
+        column=6,
+    )
+
+    assert response.expected_entity_type is EntityType.RESPONSE_ITEM
+    assert response.semantic_field == "bid_response.response_item.requirement_reference"
+    assert response.fill_strategy is FillStrategy.GENERATED_COLLECTION
+    assert certificate_number.expected_entity_type is EntityType.PERSON
+    assert certificate_number.semantic_field == "person.certificate_number"
+    assert certificate_number.fill_strategy is FillStrategy.KNOWLEDGE_COLLECTION
+
+
+def test_real_case_and_pricing_columns_are_treated_as_whole_table_tasks():
+    case_amount = SlotContextClassifier.classify(
+        label="合同总价",
+        surrounding_text=(
+            "序号 | 项目名称 | 项目地址 | 合同总价 | 实施时间 | 项目质量 | "
+            "项目单位名称及其联系人电话 | 【当前空位：合同总价】"
+        ),
+        source_location="表格8/第2行/第4列",
+        document_section="类似项目业绩表",
+        table_index=8,
+        row=2,
+        column=4,
+    )
+    unit_price = SlotContextClassifier.classify(
+        label="单价",
+        surrounding_text=(
+            "序号 | 报价项目 | 数量 | 单价 | 小计 | 备注 | "
+            "【当前空位：单价】"
+        ),
+        source_location="表格11/第2行/第4列",
+        document_section="报价明细表",
+        table_index=11,
+        row=2,
+        column=4,
+    )
+
+    assert case_amount.expected_entity_type is EntityType.BUSINESS_CASE
+    assert case_amount.semantic_field == "business_case.contract_amount"
+    assert case_amount.fill_strategy is FillStrategy.KNOWLEDGE_COLLECTION
+    assert unit_price.expected_entity_type is None
+    assert unit_price.semantic_field == "bid_response.pricing_item.unit_price"
+    assert unit_price.fill_strategy is FillStrategy.GENERATED_COLLECTION
+
+
+def test_signing_representative_name_and_title_is_one_composed_person_slot():
+    slot = SlotContextClassifier.classify(
+        label="姓名/职务",
+        surrounding_text=(
+            "签字代表【当前空位：姓名/职务】经正式授权并代表我公司提交响应文件"
+        ),
+        source_location="投标函第2段",
+        document_section="投标函",
+    )
+
+    assert slot.expected_entity_type is EntityType.PERSON
+    assert slot.expected_role is ProjectRole.SIGNATORY
+    assert slot.semantic_field == "person.name_and_title"
+    assert slot.display_name == "签字人姓名及职务"
+
+
+def test_adjacent_parenthesized_person_fields_do_not_create_broken_label():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph(
+        "现授权委托本单位在职员工________（姓名、职务）"
+        "（身份证号码：________、联系电话：________）作为采购代表人。"
+    )
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "授权委托书.docx", stream.getvalue()
+    )
+
+    assert all("）（" not in item["label"] for item in descriptor.fields)
+    id_slot = next(
+        item for item in descriptor.fields
+        if item["canonical_key"] == "person_id_number"
+    )
+    assert id_slot["label"] == "身份证号码"
+    assert id_slot["expected_role"] == "AUTHORIZED_REPRESENTATIVE"
+
+
+def test_person_role_is_inherited_from_adjacent_form_lines():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("投标人名称（盖章）：____")
+    document.add_paragraph("授权委托代理人签字或盖章：____")
+    document.add_paragraph("职务：____")
+    document.add_paragraph("日期：____")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "签署区.docx", stream.getvalue()
+    )
+    title = next(
+        item for item in descriptor.fields
+        if item["canonical_key"] == "person_title"
+    )
+
+    assert title["expected_role"] == "AUTHORIZED_REPRESENTATIVE"
+    assert title["display_name"] == "授权代表职务"
+
+
 def test_role_attribute_and_staffing_total_are_not_misread_as_person_names():
     professional_title = SlotContextClassifier.classify(
         label="技术职称",
@@ -504,7 +633,7 @@ def test_table_collections_are_reviewed_as_business_objects_not_every_cell():
 
     assert descriptor.fields
     assert descriptor.semantic_audit == {
-        "version": "1.3.0",
+        "version": SlotContextClassifier.ontology_version(),
         "status": "passed",
         "field_count": len(descriptor.fields),
         "valid_field_count": len(descriptor.fields),

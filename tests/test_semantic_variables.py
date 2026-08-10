@@ -239,6 +239,37 @@ def test_bound_entity_variable_key_never_exposes_internal_identifier():
     assert variable["variable_key"].startswith("entity_fact.person.")
 
 
+def test_bidder_name_collapses_when_only_some_slots_have_entity_resolution():
+    organization_id = uuid4()
+    first = SlotContextClassifier.classify(
+        label="投标人名称（盖章）",
+        surrounding_text="投标人名称（盖章）：___",
+        source_location="投标函第2段",
+        document_section="投标函",
+    )
+    second = SlotContextClassifier.classify(
+        label="供应商名称",
+        surrounding_text="供应商名称：___",
+        source_location="承诺函第4段",
+        document_section="承诺函",
+    )
+    bound = {
+        **_decision("bidder_name", first, "北京示例咨询有限公司"),
+        "resolved_entity_type": "Organization",
+        "resolved_entity_id": str(organization_id),
+    }
+    unbound = _missing_decision("bidder_name__second", second)
+
+    variables = SlotDeduplicationEngine.group_decisions([bound, unbound])
+
+    assert len(variables) == 1
+    assert variables[0]["variable_key"] == "organization.bidder.full_name"
+    assert variables[0]["slot_count"] == 2
+    assert variables[0]["affected_locations"] == [
+        "投标函第2段", "承诺函第4段",
+    ]
+
+
 def test_preview_manual_override_is_project_scoped_and_wins_for_rendering():
     project_id = uuid4()
     organization_id = uuid4()

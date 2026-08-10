@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from app.core.entity_resolution import DocumentSlot, FillStrategy
+from app.core.entity_resolution import DocumentSlot, FillStrategy, SubjectRole
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,9 @@ class VariableDictionary:
     ) -> VariableDefinition:
         content = cls._content()
         priorities = tuple(content.get("source_priority") or ())
+        configured = cls._configured_definition(content, slot, priorities)
+        if configured is not None:
+            return configured
         if resolved_entity_type and resolved_entity_id:
             entity_token = hashlib.sha256(
                 f"{resolved_entity_type}:{resolved_entity_id}".encode("utf-8")
@@ -108,30 +111,6 @@ class VariableDictionary:
                     entity_scope_label=str(role["standard_name"]),
                 )
 
-        for item in content.get("variables", ()):  # configured exact facts
-            aliases = {str(value) for value in item.get("aliases", ())}
-            if (
-                item.get("semantic_field") == slot.semantic_field
-                or slot.canonical_key in aliases
-            ):
-                return VariableDefinition(
-                    variable_key=str(item["variable_key"]),
-                    standard_name=str(item["standard_name"]),
-                    aliases=tuple(str(value) for value in aliases),
-                    semantic_field=str(item["semantic_field"]),
-                    target_entity_type=item.get("target_entity_type"),
-                    target_relation=item.get("target_relation"),
-                    expected_value_type=str(
-                        item.get("expected_value_type")
-                        or slot.expected_value_type
-                    ),
-                    source_priority=priorities,
-                    entity_scope_label=str(
-                        item.get("entity_scope_label")
-                        or cls._scope_label(item.get("target_relation"))
-                    ),
-                )
-
         # Collection rows represent different business objects even when they
         # share a column label.  Never merge five cases, people, certificates
         # or response rows into one value merely because each column says the
@@ -151,6 +130,53 @@ class VariableDictionary:
         ):
             return cls._fallback(slot, priorities, unique=True)
         return cls._fallback(slot, priorities, unique=False)
+
+    @classmethod
+    def _configured_definition(
+        cls,
+        content: dict[str, Any],
+        slot: DocumentSlot,
+        priorities: tuple[str, ...],
+    ) -> VariableDefinition | None:
+        """Resolve stable project facts before entity-resolution enrichment.
+
+        An entity id proves where a value came from; it must not change the
+        identity of a configured business variable.  Subject-role matching
+        keeps consortium and counterparty organizations separate from the
+        current bidder.
+        """
+        for item in content.get("variables", ()):
+            aliases = {str(value) for value in item.get("aliases", ())}
+            if not (
+                item.get("semantic_field") == slot.semantic_field
+                or slot.canonical_key in aliases
+            ):
+                continue
+            target_relation = str(item.get("target_relation") or "")
+            if (
+                slot.subject_role is not None
+                and target_relation in {role.value for role in SubjectRole}
+                and target_relation != slot.subject_role.value
+            ):
+                continue
+            return VariableDefinition(
+                variable_key=str(item["variable_key"]),
+                standard_name=str(item["standard_name"]),
+                aliases=tuple(str(value) for value in aliases),
+                semantic_field=str(item["semantic_field"]),
+                target_entity_type=item.get("target_entity_type"),
+                target_relation=item.get("target_relation"),
+                expected_value_type=str(
+                    item.get("expected_value_type")
+                    or slot.expected_value_type
+                ),
+                source_priority=priorities,
+                entity_scope_label=str(
+                    item.get("entity_scope_label")
+                    or cls._scope_label(item.get("target_relation"))
+                ),
+            )
+        return None
 
     @staticmethod
     def _fallback(

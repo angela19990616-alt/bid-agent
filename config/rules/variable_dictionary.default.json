@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "投标文件业务变量字典",
   "source_priority": [
     "current_tender",
@@ -146,6 +146,7 @@
   },
   "person_attributes": {
     "person.name": {"suffix": "name", "label": "姓名", "expected_value_type": "person_name"},
+    "person.name_and_title": {"suffix": "name_and_title", "label": "姓名及职务", "expected_value_type": "person_reference"},
     "person.id_number": {"suffix": "id_number", "label": "身份证号码", "expected_value_type": "identity_number"},
     "person.title": {"suffix": "title", "label": "职务", "expected_value_type": "job_title"},
     "person.professional_title": {"suffix": "professional_title", "label": "技术职称", "expected_value_type": "professional_title"},

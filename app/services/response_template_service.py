@@ -496,6 +496,22 @@ class ResponseTemplateService:
         seen: set[tuple[str, str]] = set()
         field_key_counts: Counter[str] = Counter()
 
+        def append_actions(slot, location: str) -> None:
+            action_labels = slot.required_actions or (
+                (slot.display_name,) if slot.fill_strategy.value == "action_only" else ()
+            )
+            for action_index, action_label in enumerate(action_labels, start=1):
+                actions.append({
+                    "action_id": f"{slot.slot_id}:{action_index}",
+                    "display_name": action_label,
+                    "source_location": location,
+                    "surrounding_text": slot.surrounding_text,
+                    "relation_path": [
+                        "当前项目", "投标文件", action_label,
+                    ],
+                    "required_actions": [action_label],
+                })
+
         def append(
             label: str,
             location: str,
@@ -542,19 +558,9 @@ class ResponseTemplateService:
                 canonical_hint=canonical,
             )
             if slot.fill_strategy.value == "action_only":
-                action_labels = slot.required_actions or (slot.display_name,)
-                for action_index, action_label in enumerate(action_labels, start=1):
-                    actions.append({
-                        "action_id": f"{slot.slot_id}:{action_index}",
-                        "display_name": action_label,
-                        "source_location": location,
-                        "surrounding_text": slot.surrounding_text,
-                        "relation_path": [
-                            "当前项目", "投标文件", action_label,
-                        ],
-                        "required_actions": [action_label],
-                    })
+                append_actions(slot, location)
                 return
+            append_actions(slot, location)
             canonical_key = slot.canonical_key
             identity = (canonical_key, location)
             if identity in seen:
@@ -600,7 +606,9 @@ class ResponseTemplateService:
         paragraph_index = 0
         current_section: str | None = None
         section_stack: dict[int, str] = {}
-        for block in blocks[start_block:end_block]:
+        for block_offset, block in enumerate(
+            blocks[start_block:end_block], start=start_block
+        ):
             if block.tag.endswith("}tbl"):
                 table_index += 1
                 table = Table(block, document)
@@ -712,8 +720,13 @@ class ResponseTemplateService:
                     append(
                         label,
                         f"第{paragraph_index}段/第{slot_index}个字段",
-                        surrounding_text=cls._marked_context(
-                            text, labeled.start(), labeled.end(), label
+                        surrounding_text=cls._paragraph_slot_context(
+                            document,
+                            blocks,
+                            block_offset,
+                            cls._marked_context(
+                                text, labeled.start(), labeled.end(), label
+                            ),
                         ),
                         document_section=current_section,
                         paragraph_index=paragraph_index,
@@ -730,15 +743,58 @@ class ResponseTemplateService:
                     append(
                         inline.group(1),
                         f"第{paragraph_index}段/第{slot_index}个空位",
-                        surrounding_text=local_context,
+                        surrounding_text=cls._paragraph_slot_context(
+                            document, blocks, block_offset, local_context
+                        ),
                         document_section=current_section,
                         paragraph_index=paragraph_index,
                         target_mode="inline_paragraph",
                     )
-        unique_actions = {
-            item["action_id"]: item for item in actions
-        }
+        unique_actions: dict[str, dict[str, Any]] = {}
+        for item in actions:
+            action_name = str(item["display_name"])
+            if action_name not in unique_actions:
+                unique_actions[action_name] = {
+                    **item,
+                    "affected_locations": [item["source_location"]],
+                }
+                continue
+            locations = unique_actions[action_name]["affected_locations"]
+            if item["source_location"] not in locations:
+                locations.append(item["source_location"])
         return tuple(fields), tuple(unique_actions.values())
+
+    @staticmethod
+    def _paragraph_slot_context(
+        document: DocumentType,
+        blocks: list[Any],
+        block_index: int,
+        marked_text: str,
+    ) -> str:
+        """Add nearby paragraphs when one-line form labels omit their subject.
+
+        Signature blocks frequently put “授权委托代理人签字” and “职务” on
+        separate lines.  The current line alone identifies only a value type;
+        the adjacent lines identify the business role.  Stop at tables and
+        keep the window small so an unrelated form cannot leak into the slot.
+        """
+        before: list[str] = []
+        after: list[str] = []
+        for direction, target in ((-1, before), (1, after)):
+            cursor = block_index + direction
+            while 0 <= cursor < len(blocks) and len(target) < 2:
+                block = blocks[cursor]
+                if block.tag.endswith("}tbl"):
+                    break
+                if block.tag.endswith("}p"):
+                    text = re.sub(
+                        r"\s+", " ", Paragraph(block, document).text
+                    ).strip()
+                    if text:
+                        target.append(text[:240])
+                cursor += direction
+        before.reverse()
+        return " | ".join((*before, marked_text, *after))
 
     @staticmethod
     def _local_slot_context(
@@ -783,7 +839,13 @@ class ResponseTemplateService:
     def _clean_labeled_field(label: str) -> str:
         cleaned = re.sub(r"\s+", " ", label).strip()
         cleaned = re.split(r"[。；;，,]", cleaned)[-1].strip()
-        return cleaned
+        # A colon inside the next parenthesised field can make the permissive
+        # labelled-blank regex consume the tail of the preceding placeholder,
+        # e.g. “（姓名、职务）（身份证号码：____）”.  The value after the last
+        # opening bracket is the actual label of this blank.
+        if "）（" in cleaned or ")(" in cleaned:
+            cleaned = re.split(r"[（(]", cleaned)[-1].strip("）) ")
+        return cleaned.strip("、/／ ")
 
     @staticmethod
     def _is_blank_target(value: str) -> bool:
@@ -804,7 +866,8 @@ class ResponseTemplateService:
             return False
         if re.search(
             r"请|应当|须|不得|^(?:说明|注)$|注[：:]|"
-            r"声明|同意|相关说明|规定的条件$|有限公司$",
+            r"声明|同意|相关说明|规定的条件$|有限公司$|"
+            r"^(?:要求|填报要求|包含并不限于以下内容)$",
             compact,
         ):
             return False

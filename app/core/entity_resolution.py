@@ -382,6 +382,10 @@ class SlotContextClassifier:
         ):
             role_matches = {ProjectRole.AUTHORIZED_REPRESENTATIVE}
         elif person_value_slot and re.search(
+            r"(?:授权委托|委托).{0,48}【当前空位", slot_context,
+        ):
+            role_matches = {ProjectRole.AUTHORIZED_REPRESENTATIVE}
+        elif person_value_slot and re.search(
             r"(?:本人.{0,18}姓名.{0,36}(?:系|为).{0,36}法定代表人|"
             r"法定代表人.{0,12}(?:姓名|身份证|职务|电话))",
             slot_context,
@@ -395,7 +399,7 @@ class SlotContextClassifier:
             role = ProjectRole.CONTACT_PERSON
         compact_label = re.sub(r"\s+", "", label)
         required_actions = cls._required_actions(
-            f"{compact_label}{surrounding_text}", role=role
+            compact_label, role=role
         )
         if cls._is_action_only(compact_label):
             return cls._build_slot(
@@ -489,7 +493,14 @@ class SlotContextClassifier:
             value_expression = None
             fill_strategy = FillStrategy.UNRESOLVED
         elif role is not None:
-            if re.search(r"身份证(?:号码|号)", compact_label):
+            if (
+                re.search(r"姓名", compact_label)
+                and re.search(r"职务|职位|岗位", compact_label)
+            ):
+                canonical_key = "person_name_and_title"
+                semantic_field = "person.name_and_title"
+                value_type = "person_reference"
+            elif re.search(r"身份证(?:号码|号)", compact_label):
                 canonical_key = "person_id_number"
                 semantic_field = "person.id_number"
                 value_type = "identity_number"
@@ -533,6 +544,34 @@ class SlotContextClassifier:
                 else f"current_project.roles.{role.value}.{semantic_field.rsplit('.', 1)[-1]}"
             )
             fill_strategy = FillStrategy.DIRECT_ATTRIBUTE
+        elif person_value_slot and canonical_hint in {
+            "legal_representative", "authorized_representative",
+            "project_manager_name", "technical_lead_name", "contact_person",
+            "signatory_name", "person_id_number", "person_title",
+        }:
+            if re.search(r"身份证(?:号码|号)", compact_label):
+                canonical_key = "person_id_number"
+                semantic_field = "person.id_number"
+                value_type = "identity_number"
+                attribute_label = "身份证号码"
+            elif re.search(r"职务|职位|岗位", compact_label):
+                canonical_key = "person_title"
+                semantic_field = "person.title"
+                value_type = "job_title"
+                attribute_label = "职务"
+            else:
+                canonical_key = "person_name"
+                semantic_field = "person.name"
+                value_type = "person_name"
+                attribute_label = "姓名"
+            entity_type = EntityType.PERSON
+            confidence = 0.65
+            ontology_concept = f"Person[AMBIGUOUS_ROLE].{semantic_field.rsplit('.', 1)[-1]}"
+            display_name = f"角色尚未确定的人员{attribute_label}"
+            subject_role = SubjectRole.CURRENT_PROJECT
+            relation_path = ("当前项目", "待确认人员角色", attribute_label)
+            value_expression = None
+            fill_strategy = FillStrategy.UNRESOLVED
         elif len(role_matches) > 1 and re.search(
             r"姓名|代表|代理人|负责人|联系人", compact_label
         ):
@@ -621,12 +660,20 @@ class SlotContextClassifier:
             "磋商文件条款描述": ("requirement_text", "采购文件条款"),
             "谈判文件条款描述": ("requirement_text", "采购文件条款"),
             "采购文件条款描述": ("requirement_text", "采购文件条款"),
+            "招标文件要求": ("requirement_text", "采购文件要求"),
+            "采购文件要求": ("requirement_text", "采购文件要求"),
+            "采购文件编号": ("requirement_reference", "采购文件条款编号"),
             "响应供应商响应描述": ("response_text", "投标响应内容"),
             "响应人响应描述": ("response_text", "投标响应内容"),
+            "投标文件响应": ("response_text", "投标响应内容"),
             "偏离情况说明": ("deviation_status", "偏离情况"),
             "偏离情况说明（正偏离/完全响应/负偏离）": (
                 "deviation_status", "偏离情况"
             ),
+            "正/负偏离": ("deviation_status", "偏离情况"),
+            "有偏离": ("deviation_status", "偏离情况"),
+            "偏离简述": ("deviation_notes", "偏离说明"),
+            "理由": ("response_reason", "响应理由"),
             "查阅/证明文件指引": ("evidence_reference", "证明材料指引"),
             "查阅/指引": ("evidence_reference", "证明材料指引"),
         }
@@ -643,18 +690,26 @@ class SlotContextClassifier:
             )
 
         case_table = (
-            "用户/业主名称" in compact_context
+            any(item in compact_context for item in (
+                "用户/业主名称", "项目单位名称及其联系人电话",
+            ))
             and any(item in compact_context for item in (
-                "合同总价", "签订时间", "完成时间", "项目内容",
+                "合同总价", "签订时间", "完成时间", "实施时间", "项目内容",
             ))
         )
         case_attributes = {
             "用户/业主名称": ("client_name", "客户名称"),
+            "项目单位名称及其联系人电话": (
+                "client_contact", "项目单位及联系人电话"
+            ),
             "项目名称": ("project_name", "项目名称"),
+            "项目地址": ("project_address", "项目地址"),
             "项目内容": ("service_content", "服务内容"),
             "合同总价": ("contract_amount", "合同金额"),
             "签订时间": ("signed_at", "合同签订时间"),
             "完成时间": ("completed_at", "项目完成时间"),
+            "实施时间": ("implementation_period", "项目实施时间"),
+            "项目质量": ("delivery_quality", "项目质量"),
             "用户/业主联系人及电话": ("client_contact", "客户联系人及电话"),
         }
         if case_table and normalized in case_attributes:
@@ -670,6 +725,7 @@ class SlotContextClassifier:
 
         personnel_table = any(item in compact_context for item in (
             "经验年限", "承担工作内容", "担任职务", "学历", "职称",
+            "专业技术资格", "劳动合同编号", "近年来主要工作业绩",
         ))
         personnel_attributes = {
             "姓名": ("name", "姓名"),
@@ -681,6 +737,18 @@ class SlotContextClassifier:
             "经验年限": ("experience_years", "经验年限"),
             "担任职务": ("title", "项目职务"),
             "承担工作内容": ("assignment", "承担工作内容"),
+            "职责": ("responsibility", "职责"),
+            "专业技术资格": ("professional_qualification", "专业技术资格"),
+            "证书编号": ("certificate_number", "证书编号"),
+            "参加本单位工作时间": ("joined_organization_at", "入职时间"),
+            "劳动合同编号": ("employment_contract_number", "劳动合同编号"),
+            "毕业时间": ("graduation_date", "毕业时间"),
+            "学校专业": ("school_and_specialty", "毕业学校及专业"),
+            "最近一年工作状况": ("recent_work_status", "最近一年工作状况"),
+            "拟在本项目中担任主要工作": (
+                "project_assignment", "本项目拟承担工作"
+            ),
+            "近年来主要工作业绩": ("project_experience", "近年来工作业绩"),
         }
         if personnel_table and normalized in personnel_attributes:
             attribute, display = personnel_attributes[normalized]
@@ -730,6 +798,39 @@ class SlotContextClassifier:
                 ("当前项目", "投标文件", "报价表", "报价金额"),
                 FillStrategy.KNOWLEDGE_COLLECTION,
             )
+
+        pricing_table = all(
+            item in compact_context for item in ("报价项目", "数量", "单价")
+        ) and any(item in compact_context for item in ("小计", "合计"))
+        pricing_attributes = {
+            "报价项目": ("item_name", "报价项目"),
+            "数量": ("quantity", "数量"),
+            "单价": ("unit_price", "单价"),
+            "小计": ("subtotal", "小计"),
+            "合计": ("total", "合计"),
+            "税率": ("tax_rate", "税率"),
+            "备注": ("notes", "备注"),
+        }
+        if pricing_table and normalized in pricing_attributes:
+            attribute, display = pricing_attributes[normalized]
+            return (
+                f"pricing_item_{attribute}",
+                f"bid_response.pricing_item.{attribute}",
+                None, attribute, f"BidResponsePricingItem.{attribute}",
+                f"报价表{display}", SubjectRole.BID_RESPONSE_DOCUMENT,
+                ("当前项目", "投标文件", "报价表", display),
+                FillStrategy.GENERATED_COLLECTION,
+            )
+        if normalized == "合计" and all(
+            item in compact_context for item in ("项目名称", "服务期")
+        ):
+            return (
+                "bid_price_total", "bid_response.pricing.total",
+                None, "money", "BidResponseDocument.Pricing.total",
+                "本项目报价合计", SubjectRole.BID_RESPONSE_DOCUMENT,
+                ("当前项目", "投标文件", "报价表", "报价合计"),
+                FillStrategy.KNOWLEDGE_COLLECTION,
+            )
         return None
 
     @staticmethod
@@ -756,6 +857,18 @@ class SlotContextClassifier:
             "经验年限": ("experience_years", "经验年限"),
             "担任职务": ("title", "项目职务"),
             "承担工作内容": ("assignment", "承担工作内容"),
+            "职责": ("responsibility", "职责"),
+            "专业技术资格": ("professional_qualification", "专业技术资格"),
+            "证书编号": ("certificate_number", "证书编号"),
+            "参加本单位工作时间": ("joined_organization_at", "入职时间"),
+            "劳动合同编号": ("employment_contract_number", "劳动合同编号"),
+            "毕业时间": ("graduation_date", "毕业时间"),
+            "学校专业": ("school_and_specialty", "毕业学校及专业"),
+            "最近一年工作状况": ("recent_work_status", "最近一年工作状况"),
+            "拟在本项目中担任主要工作": (
+                "project_assignment", "本项目拟承担工作"
+            ),
+            "近年来主要工作业绩": ("project_experience", "近年来工作业绩"),
         }
         normalized = re.sub(r"\s+", "", label)
         if normalized in person_attributes:
@@ -786,6 +899,16 @@ class SlotContextClassifier:
             "中级职称人员": ("intermediate_staff_count", "中级职称人员数量"),
             "初级职称人员": ("junior_staff_count", "初级职称人员数量"),
             "技工": ("skilled_worker_count", "技工数量"),
+            "单位性质": ("organization_nature", "单位性质"),
+            "服务网点名称": ("service_outlet_name", "服务网点名称"),
+            "注册资本金": ("registered_capital", "注册资本金"),
+            "其中投标人出资比例": ("bidder_investment_ratio", "投标人出资比例"),
+            "其中：技术人员数": ("technical_staff_count", "技术人员数量"),
+            "经营期限": ("operating_term", "经营期限"),
+            "售后服务协议": ("after_sales_agreement", "售后服务协议"),
+            "售后服务内容": ("after_sales_service", "售后服务内容"),
+            "工作业绩": ("service_outlet_experience", "服务网点工作业绩"),
+            "负责人": ("service_outlet_contact", "服务网点负责人"),
         }
         if normalized in organization_attributes:
             attribute, display = organization_attributes[normalized]
@@ -821,6 +944,8 @@ class SlotContextClassifier:
             "含税总价（元）": ("total_price_including_tax", "含税报价总额"),
             "备注": ("notes", "备注"),
             "偏离说明": ("deviation_notes", "偏离说明"),
+            "税率": ("tax_rate", "报价税率"),
+            "时间": ("document_time", "投标文件相关时间"),
         }
         if normalized in document_fields:
             key, display = document_fields[normalized]
@@ -948,7 +1073,11 @@ class SlotContextClassifier:
         if (
             re.search(r"签字|签名|签署", normalized)
             and re.search(r"法定代表人|法人代表|法人", normalized)
-            and re.search(r"委托代理人|授权代表|授权代理人", normalized)
+            and re.search(
+                r"委托代理人|授权代表|授权代理人|授权委托人|"
+                r"授权委托代理人|被授权委托人|被授权委托代理人",
+                normalized,
+            )
         ):
             return ("法定代表人或授权代表签字",)
         labels: list[str] = []
@@ -976,15 +1105,26 @@ class SlotContextClassifier:
         compact = re.sub(r"[：:()（）_＿\s]", "", label)
         if not re.search(r"公章|盖章|签章|签字|签名|签署", compact):
             return False
+        # A label which explicitly asks for a value remains a value slot with
+        # an attached action constraint (for example “投标人名称（盖章）”).
+        # A bare role plus signing/sealing wording is only an action.
+        if re.search(
+            r"名称|姓名|身份证|职务|职位|电话|手机|日期|时间|编号|金额|"
+            r"地址|账号|邮箱|邮编|网址",
+            compact,
+        ):
+            return False
         remainder = re.sub(
             r"甲方|乙方|采购人|招标人|投标人|供应商|响应人|单位|企业|"
-            r"法定代表人|委托代理人|授权代表|代理人|负责人|对应人员|本人",
+            r"法定代表人|法人代表|被授权委托代理人|被授权委托人|"
+            r"授权委托代理人|授权委托人|委托代理人|"
+            r"授权代理人|授权代表|代理人|单位负责人|负责人|对应人员|本人",
             "",
             compact,
         )
         remainder = re.sub(
             r"加盖|盖公章|公章|盖章|签章|亲笔签署|签署|签字|签名|"
-            r"或|和|及|、|由|其",
+            r"或|和|及|、|由|其|[/／]",
             "",
             remainder,
         )
@@ -994,6 +1134,7 @@ class SlotContextClassifier:
     def _attribute_label(semantic_field: str) -> str:
         return {
             "person.name": "姓名",
+            "person.name_and_title": "姓名及职务",
             "person.id_number": "身份证号码",
             "person.title": "职务",
             "person.professional_title": "技术职称",
@@ -1049,6 +1190,20 @@ class SlotContextClassifier:
                 ("当前项目", "组合项目名称与项目编号"),
                 "compose(current_project.name,current_project.number)",
                 FillStrategy.COMPOSED_VALUE,
+            ),
+            "procurer_name": (
+                "Project.procurer_name", "采购人名称",
+                SubjectRole.CURRENT_PROJECT,
+                ("当前项目", "采购人", "企业全称"),
+                "current_project.procurer.full_name",
+                FillStrategy.DIRECT_ATTRIBUTE,
+            ),
+            "procurement_agency_name": (
+                "Project.procurement_agency_name", "采购代理机构名称",
+                SubjectRole.CURRENT_PROJECT,
+                ("当前项目", "采购代理机构", "企业全称"),
+                "current_project.procurement_agency.full_name",
+                FillStrategy.DIRECT_ATTRIBUTE,
             ),
             "bid_response_signing_date": (
                 "BidResponseDocument.signing_date", "本项目投标文件签署日期",
@@ -1163,6 +1318,8 @@ class SlotContextClassifier:
                 FieldSemanticClassifier.expected_type(canonical_hint).value,
             )
         mappings = (
+            ("procurer_name", "project.procurer_name", EntityType.PROJECT, "organization_name", ("采购人名称",)),
+            ("procurement_agency_name", "project.procurement_agency_name", EntityType.PROJECT, "organization_name", ("采购代理机构名称",)),
             ("project_number", "project.project_number", EntityType.PROJECT, "project_identifier", ("项目编号", "采购编号", "招标编号")),
             ("project_name", "project.project_name", EntityType.PROJECT, "project_name", ("项目名称", "采购项目名称", "招标项目名称")),
             ("registered_address", "organization.registered_address", EntityType.ORGANIZATION, "address", ("注册地址", "地址")),

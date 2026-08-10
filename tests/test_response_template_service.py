@@ -778,6 +778,48 @@ def test_signature_choice_keeps_both_authorized_roles_in_the_action():
     ]
 
 
+def test_real_world_signature_aliases_are_actions_not_people_or_text_fields():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("法定代表人或授权委托人（签字）：____")
+    document.add_paragraph("授权委托代理人签字或盖章：____")
+    document.add_paragraph("法定代表人/负责人或被授权委托人（签字或盖章）：____")
+    document.add_paragraph("法定代表人/负责人或其授权代表（签字或盖章）：____")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "真实签章写法.docx", stream.getvalue()
+    )
+
+    assert descriptor.fields == ()
+    assert {item["display_name"] for item in descriptor.actions} == {
+        "法定代表人或授权代表签字",
+        "授权代表签字",
+        "加盖投标人公章",
+    }
+
+
+def test_value_slot_with_seal_is_one_bidder_variable_plus_document_action():
+    document = Document()
+    document.add_heading("第七章 响应文件格式", level=1)
+    document.add_paragraph("投标人名称（盖章）：____")
+    document.add_paragraph("供应商名称：____")
+    stream = BytesIO()
+    document.save(stream)
+
+    descriptor = ResponseTemplateService().detect(
+        "投标人名称模板.docx", stream.getvalue()
+    )
+
+    assert [item["canonical_key"] for item in descriptor.fields] == [
+        "bidder_name", "bidder_name",
+    ]
+    assert {item["display_name"] for item in descriptor.actions} == {
+        "加盖投标人公章",
+    }
+
+
 def test_colon_introductions_and_section_headings_are_not_fill_slots():
     document = Document()
     document.add_heading("第七章 响应文件格式", level=1)

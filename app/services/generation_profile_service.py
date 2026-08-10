@@ -819,6 +819,10 @@ class GenerationProfileService:
         if resolution.person is not None:
             values = {
                 "person.name": resolution.person.name,
+                "person.name_and_title": (
+                    f"{resolution.person.name}/{resolution.person.title}"
+                    if resolution.person.title else None
+                ),
                 "person.id_number": resolution.person.id_number,
                 "person.title": resolution.person.title,
                 "person.phone": resolution.person.phone,
