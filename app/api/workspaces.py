@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 
 from app.core.errors import AppError
 from app.models.exports import ExportResponse
+from app.models.business_reviews import BusinessReviewUpdate
 from app.models.conflicts import (
     ConflictResolutionRequest,
     ConflictResponse,
@@ -86,6 +87,10 @@ from app.services.workspace_access_service import (
 )
 from app.services.workspace_job_service import WorkspaceJobService
 from app.services.response_support_service import ResponseSupportService
+from app.services.bid_readiness_service import (
+    BidReadinessError,
+    BidReadinessService,
+)
 from app.services.generation_profile_service import GenerationProfileService
 from app.config.settings import settings
 
@@ -395,6 +400,27 @@ def get_workspace_response_support(
     return ResponseSupportService().overview(workspace_id)
 
 
+@router.post("/{workspace_id}/business-reviews")
+def review_workspace_business_item(
+    workspace_id: UUID,
+    payload: BusinessReviewUpdate,
+    _access: None = Depends(authorize_workspace),
+):
+    service = BidReadinessService()
+    try:
+        service.review(
+            workspace_id,
+            review_key=payload.review_key,
+            content_hash=payload.content_hash,
+            category=payload.category,
+            action=payload.action,
+            note=payload.note,
+        )
+        return ResponseSupportService().overview(workspace_id)
+    except BidReadinessError as exc:
+        raise AppError(422, "BUSINESS_REVIEW_INVALID", str(exc)) from exc
+
+
 @router.get(
     "/{workspace_id}/conflicts",
     response_model=list[ConflictResponse],
@@ -516,6 +542,7 @@ def generate_section(
     _access: None = Depends(authorize_workspace),
 ):
     try:
+        ResponseSupportService().assert_writing_ready(workspace_id)
         ConflictService.assert_section_unblocked(workspace_id, section_id)
         SectionService().get(workspace_id, section_id)
         WorkspaceJobService().enqueue_section_generation(
@@ -535,6 +562,8 @@ def generate_section(
         raise AppError(422, "SECTION_INVALID", str(exc)) from exc
     except ConflictResolutionError as exc:
         raise AppError(409, "SECTION_CONFLICT_PENDING", str(exc)) from exc
+    except BidReadinessError as exc:
+        raise AppError(409, "BUSINESS_REVIEW_PENDING", str(exc)) from exc
 
 
 @router.post(
@@ -546,6 +575,10 @@ def generate_complete_draft(
     workspace_id: UUID,
     _access: None = Depends(authorize_workspace),
 ):
+    try:
+        ResponseSupportService().assert_writing_ready(workspace_id)
+    except BidReadinessError as exc:
+        raise AppError(409, "BUSINESS_REVIEW_PENDING", str(exc)) from exc
     sections = SectionService().list(workspace_id)
     if not sections:
         raise AppError(422, "OUTLINE_REQUIRED", "请先确认方案目录。")

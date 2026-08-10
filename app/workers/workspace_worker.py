@@ -8,6 +8,7 @@ from app.services.workspace_job_service import WorkspaceJobService
 from app.services.workspace_service import WorkspaceService
 from app.services.autonomous_draft_service import AutonomousDraftService
 from app.services.section_service import SectionService
+from app.services.response_support_service import ResponseSupportService
 from app.services.workspace_job_service import (
     AUTONOMOUS_DRAFT_JOB,
     SECTION_GENERATION_JOB,
@@ -50,10 +51,16 @@ def run() -> None:
         LOGGER.info("Processing workspace job %s", job.id)
         try:
             if job.job_type == AUTONOMOUS_DRAFT_JOB:
+                ResponseSupportService().assert_writing_ready(
+                    job.workspace_id
+                )
                 AutonomousDraftService().run(job.workspace_id, job.id)
             elif job.job_type == SECTION_GENERATION_JOB:
                 if job.section_id is None:
                     raise ValueError("章节生成任务缺少章节引用。")
+                ResponseSupportService().assert_writing_ready(
+                    job.workspace_id
+                )
                 SectionService().generate(
                     job.workspace_id,
                     job.section_id,

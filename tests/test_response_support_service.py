@@ -2,6 +2,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app.services.response_support_service import ResponseSupportService
+from app.rules.engine import RuleEngine
+from app.services.bid_readiness_service import BidReadinessService
 
 
 def requirement(**overrides):
@@ -15,6 +17,7 @@ def requirement(**overrides):
         "proposal_mapping": "实施计划",
         "priority": "P2",
         "proposal_value": 3,
+        "scoring_impact": "no_score",
         "sources": [],
     }
     item.update(overrides)
@@ -83,6 +86,7 @@ class FakeGenerationProfile:
     @staticmethod
     def get(_project_id):
         return SimpleNamespace(
+            generation_mode="planned",
             template_descriptor={
                 "field_labels": ["项目编号", "供应商名称"],
             },
@@ -103,6 +107,12 @@ def make_service(items):
         section_service=FakeSections(),
         generation_profile_service=FakeGenerationProfile(),
         conflict_service=FakeConflicts(),
+        bid_readiness_service=BidReadinessService(
+            decision_loader=lambda _project_id: {}
+        ),
+        business_rules=RuleEngine().load_default(
+            "business_validation"
+        ).content,
     )
 
 

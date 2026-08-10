@@ -17,7 +17,7 @@ RULE_TYPES = {
     "extraction", "classification", "response_strategy", "knowledge",
     "proposal_memory", "writing", "compliance",
     "conflict_detection", "response_prioritization",
-    "template_generation", "entity_relation",
+    "template_generation", "entity_relation", "business_validation",
 }
 
 
@@ -63,6 +63,7 @@ class RuleEngine:
         "compliance": "compliance.default.json",
         "template_generation": "template_generation.default.json",
         "entity_relation": "entity_relation.default.json",
+        "business_validation": "business_validation.default.json",
     }
 
     def load(self, rule_type: str) -> RuleDocument:
@@ -284,6 +285,12 @@ class RuleEngine:
                 "entity_definitions", "credential_definitions",
                 "action_definitions", "relation_rules",
                 "generic_relations", "focus_policy", "output_policy",
+            )
+        elif rule_type == "business_validation":
+            required = (
+                "material_scoring_markers", "criterion_types",
+                "selection_buffers", "constraint_groups",
+                "approval_policy", "review_policy",
             )
         else:
             required = ("checks", "required_traceability")

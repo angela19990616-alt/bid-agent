@@ -2,6 +2,7 @@ import pytest
 from types import SimpleNamespace
 
 from app.services.export_service import ExportService, ExportValidationError
+from app.services.bid_readiness_service import BidReadinessError
 from app.services.response_template_service import TemplateFillReport
 
 
@@ -28,6 +29,19 @@ def test_unresolved_section_anchor_still_blocks_template_export():
         ExportService._validate_template_fill(report)
 
 
+def test_business_review_gate_blocks_formal_export(monkeypatch):
+    def block(_self, _project_id):
+        raise BidReadinessError("投标文件目录尚未人工确认。")
+
+    monkeypatch.setattr(
+        "app.services.export_service.ResponseSupportService.assert_delivery_ready",
+        block,
+    )
+
+    with pytest.raises(ExportValidationError, match="目录尚未人工确认"):
+        ExportService().create_full("project")
+
+
 def test_formal_export_is_blocked_when_delivery_review_fails(monkeypatch):
     loaded = False
 
@@ -40,6 +54,10 @@ def test_formal_export_is_blocked_when_delivery_review_fails(monkeypatch):
         loaded = True
         return {}
 
+    monkeypatch.setattr(
+        "app.services.export_service.ResponseSupportService.assert_delivery_ready",
+        lambda _self, _project_id: None,
+    )
     monkeypatch.setattr(
         "app.services.export_service.ProposalReviewService",
         Review,
@@ -64,6 +82,11 @@ def test_field_only_template_skips_proposal_review_and_allows_empty_sections(
     monkeypatch,
 ):
     calls = {"review": 0, "allow_empty": False}
+
+    monkeypatch.setattr(
+        "app.services.export_service.ResponseSupportService.assert_delivery_ready",
+        lambda _self, _project_id: None,
+    )
 
     monkeypatch.setattr(
         "app.services.export_service.GenerationProfileService.get",

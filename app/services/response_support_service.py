@@ -8,6 +8,11 @@ from psycopg.rows import dict_row
 
 from app.database.db import connect
 from app.knowledge.engine import EnterpriseKnowledgeEngine
+from app.rules.engine import RuleEngine
+from app.services.bid_readiness_service import (
+    BidReadinessError,
+    BidReadinessService,
+)
 from app.services.conflict_service import ConflictService
 from app.services.generation_profile_service import GenerationProfileService
 from app.services.provenance_service import content_paragraphs
@@ -34,6 +39,8 @@ class ResponseSupportService:
         section_service: SectionService | None = None,
         generation_profile_service: GenerationProfileService | None = None,
         conflict_service: ConflictService | None = None,
+        bid_readiness_service: BidReadinessService | None = None,
+        business_rules: dict[str, Any] | None = None,
     ):
         self.requirement_service = requirement_service or RequirementService()
         self.knowledge_engine = knowledge_engine or EnterpriseKnowledgeEngine()
@@ -42,12 +49,33 @@ class ResponseSupportService:
             generation_profile_service or GenerationProfileService()
         )
         self.conflict_service = conflict_service or ConflictService()
+        self.bid_readiness_service = (
+            bid_readiness_service or BidReadinessService()
+        )
+        self.business_rules = business_rules
 
     def overview(self, project_id: UUID) -> dict[str, Any]:
         requirements = self.requirement_service.list(project_id)
+        profile = self.generation_profile_service.get(project_id)
+        sections = self.section_service.list(project_id)
+        context = self.knowledge_engine.access_context(project_id)
+        knowledge = self.knowledge_engine.list_active(context)
         format_requirements = self._format_requirements(requirements)
         qualification_responses = self._qualification_responses(
-            project_id, requirements
+            requirements, knowledge
+        )
+        business_rules = self.business_rules or RuleEngine().load(
+            "business_validation"
+        ).content
+        readiness = self.bid_readiness_service.build(
+            project_id=project_id,
+            profile=profile,
+            sections=sections,
+            requirements=requirements,
+            knowledge=knowledge,
+            format_requirements=format_requirements,
+            qualification_responses=qualification_responses,
+            rules=business_rules,
         )
         return {
             "response_groups": self._groups(requirements),
@@ -55,20 +83,33 @@ class ResponseSupportService:
             "qualification_responses": qualification_responses,
             "manual_action_archive": self._manual_action_archive(
                 project_id,
-                format_requirements,
-                qualification_responses,
+                readiness,
+                profile=profile,
+                sections=sections,
             ),
             "traceability": self._traceability(project_id, requirements),
+            "bid_readiness": readiness,
         }
+
+    def assert_writing_ready(self, project_id: UUID) -> None:
+        gate = self.overview(project_id)["bid_readiness"]["writing_gate"]
+        if not gate["ready"]:
+            raise BidReadinessError("；".join(gate["blockers"][:4]))
+
+    def assert_delivery_ready(self, project_id: UUID) -> None:
+        gate = self.overview(project_id)["bid_readiness"]["delivery_gate"]
+        if not gate["ready"]:
+            raise BidReadinessError("；".join(gate["blockers"][:4]))
 
     def _manual_action_archive(
         self,
         project_id: UUID,
-        format_requirements: list[dict],
-        qualification_responses: list[dict],
+        readiness: dict[str, Any],
+        *,
+        profile: Any,
+        sections: list[dict],
     ) -> dict[str, Any]:
         """Collect every known human input/review gate in one project view."""
-        profile = self.generation_profile_service.get(project_id)
         required_fields = ResponseTemplateService.required_fields(
             profile.template_descriptor
         )
@@ -88,41 +129,39 @@ class ResponseSupportService:
                 "key": f"variable:{field}",
                 "category": "variable",
                 "title": field_labels.get(field, field),
-                "instruction": "填写并核验后，所有模板回填和导出统一使用该值。",
+                "instruction": (
+                    "系统从企业资料和项目角色关系中匹配，业务人员只审核结果与来源。"
+                ),
                 "status": "completed" if value else "pending",
                 "field_key": field,
                 "value_preview": value,
                 "blocking_scope": "仅影响引用该变量的模板位置",
             })
-        for item in format_requirements:
-            if not item["manual_check_required"]:
-                continue
+        for item in readiness["review_items"]:
+            if item["category"] == "outline":
+                category = "outline_review"
+            elif item["category"] == "format":
+                category = "format_review"
+            elif item["category"] == "commercial_deviation":
+                category = "deviation_review"
+            elif item["category"] == "scoring_evidence":
+                category = "evidence_review"
+            else:
+                category = "material_review"
             actions.append({
-                "key": f"format:{item['requirement_id']}",
-                "category": "format_review",
+                "key": item["review_key"],
+                "category": category,
                 "title": item["title"],
-                "instruction": "导出前按招标原文逐项复核版式、表格和固定文字。",
-                "status": "pending",
+                "instruction": item["instruction"],
+                "status": (
+                    "completed"
+                    if item["status"] == "confirmed" else "pending"
+                ),
                 "field_key": None,
                 "value_preview": None,
-                "blocking_scope": "最终交付复核",
+                "blocking_scope": item["blocking_scope"],
             })
-        for item in qualification_responses:
-            if item["status"] == "matched_verified":
-                continue
-            actions.append({
-                "key": f"material:{item['requirement_id']}",
-                "category": "material_review",
-                "title": item["requirement"],
-                "instruction": "选择并核验资格或证明材料，未经核验不得写入投标文件。",
-                "status": "pending",
-                "field_key": None,
-                "value_preview": None,
-                "blocking_scope": "对应资格或附件响应",
-            })
-        for index, section in enumerate(
-            self.section_service.list(project_id), start=1
-        ):
+        for index, section in enumerate(sections, start=1):
             if section.get("status") == "approved":
                 continue
             actions.append({
@@ -228,8 +267,8 @@ class ResponseSupportService:
 
     def _qualification_responses(
         self,
-        project_id: UUID,
         requirements: list[dict],
+        knowledge: list[dict],
     ) -> list[dict]:
         qualification_items = [
             item for item in requirements
@@ -238,9 +277,8 @@ class ResponseSupportService:
         ]
         if not qualification_items:
             return []
-        context = self.knowledge_engine.access_context(project_id)
         knowledge = [
-            item for item in self.knowledge_engine.list_active(context)
+            item for item in knowledge
             if item["category"] in {"qualification", "expert_experience"}
         ]
         result = []

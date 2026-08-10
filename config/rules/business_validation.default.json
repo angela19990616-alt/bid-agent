@@ -1,0 +1,37 @@
+{
+  "key": "default-business-validation",
+  "rule_type": "business_validation",
+  "name": "投标业务验收与材料组合规则",
+  "version": 1,
+  "material_scoring_markers": ["业绩", "合同", "案例", "证书", "资质", "社保", "项目组成员", "项目负责人", "技术负责人"],
+  "criterion_types": {
+    "business_case": ["业绩", "合同", "案例", "类似项目", "同类项目"],
+    "person_certificate": ["人员", "成员", "负责人", "证书", "咨询工程师", "注册会计师", "造价工程师", "建造师", "法律职业资格"],
+    "organization_qualification": ["企业资质", "公司资质", "认证", "获奖", "荣誉"]
+  },
+  "selection_buffers": {
+    "business_case": 2,
+    "person_certificate": 1,
+    "organization_qualification": 1,
+    "maximum_extra": 3
+  },
+  "constraint_groups": {
+    "government_client": ["政府方", "政府部门", "直属机构", "特设机构", "派出机构"],
+    "ppp_service": ["PPP", "建设期合同管理", "履约管理", "绩效评价"],
+    "certificate_types": ["咨询工程师", "注册会计师", "一级造价工程师", "一级建造师", "法律职业资格"],
+    "employment_relation": ["社保", "投标单位", "所属单位"],
+    "one_person_one_score": ["一人多证", "按1分计", "只计1分"]
+  },
+  "approval_policy": {
+    "full_contract_markers": ["合同全页", "完整合同", "合同全文"],
+    "required_approver": "业务发展部",
+    "approval_required": true
+  },
+  "review_policy": {
+    "outline_confirmation_required": true,
+    "strict_format_confirmation_required": true,
+    "commercial_deviation_confirmation_required": true,
+    "evidence_bundle_confirmation_required": true,
+    "missing_verified_material_blocks_export": true
+  }
+}

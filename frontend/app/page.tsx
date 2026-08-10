@@ -333,6 +333,23 @@ type ProposalReview = {
     conflict_count: number;
   };
 };
+type BusinessReviewCategory =
+  | "outline"
+  | "format"
+  | "commercial_deviation"
+  | "scoring_evidence"
+  | "qualification_material";
+type BusinessReviewItem = {
+  review_key: string;
+  category: BusinessReviewCategory;
+  title: string;
+  instruction: string;
+  content_hash: string;
+  status: "pending" | "confirmed" | "rejected";
+  confirmable: boolean;
+  blocking_scope: string;
+  blocker: string | null;
+};
 type ResponseSupport = {
   manual_action_archive: {
     total: number;
@@ -340,7 +357,7 @@ type ResponseSupport = {
     completed: number;
     items: Array<{
       key: string;
-      category: "variable" | "format_review" | "material_review" | "content_review" | "conflict_review";
+      category: "variable" | "outline_review" | "format_review" | "deviation_review" | "evidence_review" | "material_review" | "content_review" | "conflict_review";
       title: string;
       instruction: string;
       status: "pending" | "completed";
@@ -386,6 +403,48 @@ type ResponseSupport = {
       rationale: string;
     }>;
   }>;
+  bid_readiness: {
+    compilation_route: {
+      mode: string;
+      writer: string | null;
+      title: string;
+      description: string;
+      source: string;
+    };
+    outline_gate: BusinessReviewItem;
+    commercial_deviations: BusinessReviewItem[];
+    scoring_evidence_plans: Array<{
+      requirement_id: string;
+      title: string;
+      criterion_label: string;
+      points_per_item: number | null;
+      maximum_score: number | null;
+      minimum_count: number;
+      recommended_count: number;
+      selected_count: number;
+      readiness: "verified_material_insufficient" | "approval_required" | "ready_for_review";
+      constraints: Array<{ key: string; label: string; value: string }>;
+      matching_steps: string[];
+      selected_candidates: Array<{
+        title: string;
+        holder: string | null;
+        source_file: string;
+        source_location: string | null;
+        source_page: number | null;
+        source_excerpt: string | null;
+        match_basis: string;
+        approval_status: "required" | "approved" | "not_required";
+      }>;
+    }>;
+    review_items: BusinessReviewItem[];
+    writing_gate: { ready: boolean; blockers: string[] };
+    delivery_gate: {
+      ready: boolean;
+      blockers: string[];
+      confirmed: number;
+      total: number;
+    };
+  };
   traceability: {
     requirements: Array<{
       requirement_id: string;
@@ -965,31 +1024,11 @@ export default function Home() {
       form.append("file", file);
       const created = await request<Workspace>("/workspaces", { method: "POST", body: form });
       setWorkspace(created);
-      let completed = await waitForWorkspace(created.id, created);
-      if (
-        completed.generation_mode === "strict_template"
-        && completed.outline.length > 0
-      ) {
-        completed = await request<Workspace>(
-          `/workspaces/${completed.id}/generate-draft`,
-          { method: "POST" },
-        );
-        while (
-          completed.processing_job_type === "autonomous_draft"
-          && ["queued", "running"].includes(completed.processing_job_status ?? "")
-        ) {
-          setBusy(`正在按原格式自动生成 · ${completed.processing_job_progress}%`);
-          await new Promise((resolve) => window.setTimeout(resolve, 2000));
-          completed = await request<Workspace>(`/workspaces/${completed.id}`);
-        }
-        if (completed.processing_job_status === "failed") {
-          throw new Error(completed.processing_error_message ?? "自动生成失败，已保留成功结果。");
-        }
-      }
+      const completed = await waitForWorkspace(created.id, created);
       await openCompletedWorkspace(
         completed,
         completed.generation_mode === "strict_template"
-          ? "已识别可编辑响应格式并完成自动预填，请审核候选值及来源。"
+          ? "已识别可编辑响应格式和原目录；确认目录后，系统将按模板自动编制。"
           : completed.generation_mode === "planned"
             ? `已确认文件无响应模板，分析 ${completed.response_summary.total} 条响应事项。`
             : "检测到 PDF，但尚无法可靠转换为可编辑 Word。系统未进入目录生成。",
@@ -1177,8 +1216,86 @@ export default function Home() {
       });
       setSections(saved);
       setActiveSectionId(saved[0]?.id ?? "");
+      const latestSupport = await request<ResponseSupport>(
+        `/workspaces/${workspace.id}/response-support`,
+      );
+      const outlineReview = latestSupport.bid_readiness.outline_gate;
+      const confirmedSupport = outlineReview.confirmable
+        ? await request<ResponseSupport>(
+          `/workspaces/${workspace.id}/business-reviews`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              review_key: outlineReview.review_key,
+              content_hash: outlineReview.content_hash,
+              category: outlineReview.category,
+              action: "confirm",
+            }),
+          },
+        )
+        : latestSupport;
+      setResponseSupport(confirmedSupport);
       setStep("writer");
       setNotice("目录已确认，可以按章节生成。");
+    });
+  }
+
+  async function reviewBusinessItem(
+    item: BusinessReviewItem,
+    action: "confirm" | "reset",
+  ) {
+    if (!workspace) return;
+    await run(action === "confirm" ? "正在记录审核" : "正在恢复待审核", async () => {
+      const updated = await request<ResponseSupport>(
+        `/workspaces/${workspace.id}/business-reviews`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            review_key: item.review_key,
+            content_hash: item.content_hash,
+            category: item.category,
+            action,
+          }),
+        },
+      );
+      setResponseSupport(updated);
+      if (
+        action === "confirm"
+        && item.category === "outline"
+        && workspace.generation_mode === "strict_template"
+        && sections.length > 0
+        && sections.some((section) => !section.current_version)
+      ) {
+        let current = await request<Workspace>(
+          `/workspaces/${workspace.id}/generate-draft`,
+          { method: "POST" },
+        );
+        while (
+          current.processing_job_type === "autonomous_draft"
+          && ["queued", "running"].includes(current.processing_job_status ?? "")
+        ) {
+          setBusy(`目录已确认，正在按原格式自动编制 · ${current.processing_job_progress}%`);
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          current = await request<Workspace>(`/workspaces/${workspace.id}`);
+        }
+        if (current.processing_job_status === "failed") {
+          throw new Error(
+            current.processing_error_message
+            ?? "按原格式编制未完成，已保留成功结果，可继续重试。",
+          );
+        }
+        setWorkspace(current);
+        setSections(current.outline);
+        setNotice("目录已确认，系统已按原格式完成初稿，请核验预览、材料与来源。");
+        return;
+      }
+      setNotice(
+        action === "confirm"
+          ? `已记录“${item.title}”的人工审核。`
+          : `“${item.title}”已恢复为待审核。`,
+      );
     });
   }
 
@@ -1459,6 +1576,112 @@ export default function Home() {
     );
   }
 
+  function renderBusinessReadiness() {
+    const readiness = responseSupport?.bid_readiness;
+    if (!readiness) return null;
+    const categoryLabels: Record<BusinessReviewCategory, string> = {
+      outline: "目录结构",
+      format: "原格式",
+      commercial_deviation: "商务偏离",
+      scoring_evidence: "评分证据",
+      qualification_material: "资格材料",
+    };
+    const evidenceGroups = readiness.scoring_evidence_plans.reduce<
+      Record<string, typeof readiness.scoring_evidence_plans>
+    >((groups, plan) => ({
+      ...groups,
+      [plan.criterion_label]: [
+        ...(groups[plan.criterion_label] ?? []),
+        plan,
+      ],
+    }), {});
+    return (
+      <section className="panel business-readiness">
+        <header>
+          <div>
+            <span className="panel-label">BID READINESS</span>
+            <h3>{readiness.compilation_route.title}</h3>
+            <p>{readiness.compilation_route.description}</p>
+            <small>判断依据：{readiness.compilation_route.source}</small>
+          </div>
+          <div className="readiness-score">
+            <strong>{readiness.delivery_gate.confirmed}/{readiness.delivery_gate.total}</strong>
+            <span>业务审核完成</span>
+          </div>
+        </header>
+        <div className="gate-status-row">
+          <span className={readiness.writing_gate.ready ? "ready" : "pending"}>
+            {readiness.writing_gate.ready ? "可开始编制" : "编制前待确认"}
+          </span>
+          <span className={readiness.delivery_gate.ready ? "ready" : "pending"}>
+            {readiness.delivery_gate.ready ? "可正式交付" : "交付前待审核"}
+          </span>
+        </div>
+        {readiness.delivery_gate.blockers.length > 0 && (
+          <details className="readiness-blockers">
+            <summary>查看 {readiness.delivery_gate.blockers.length} 项待办</summary>
+            <ul>{readiness.delivery_gate.blockers.map((item) => <li key={item}>{item}</li>)}</ul>
+          </details>
+        )}
+        {readiness.scoring_evidence_plans.length > 0 && (
+          <div className="evidence-plans">
+            <h4>评分材料组合</h4>
+            {Object.entries(evidenceGroups).map(([label, plans]) => (
+              <details key={label} className="evidence-plan-group">
+                <summary><span><strong>{label}</strong><small>同类合并展示，展开查看每个采分点</small></span><b>{plans.length} 项</b></summary>
+                <div>{plans.map((plan) => (
+                  <article key={plan.requirement_id}>
+                    <div className="evidence-plan-head">
+                      <div><strong>{plan.title}</strong><span>{plan.criterion_label}</span></div>
+                      <b>{plan.readiness === "ready_for_review" ? "材料待审核" : plan.readiness === "approval_required" ? "等待内部审批" : "核验材料不足"}</b>
+                    </div>
+                    <div className="evidence-counts">
+                      <span>满分至少 <b>{plan.minimum_count}</b> 份</span>
+                      <span>建议准备 <b>{plan.recommended_count}</b> 份</span>
+                      <span>已选 <b>{plan.selected_count}</b> 份</span>
+                      {plan.maximum_score !== null && <span>最高 <b>{plan.maximum_score}</b> 分</span>}
+                    </div>
+                    {plan.constraints.length > 0 && <p>匹配条件：{plan.constraints.map((item) => `${item.label}（${item.value}）`).join("；")}</p>}
+                    <ol>{plan.matching_steps.map((step) => <li key={step}>{step}</li>)}</ol>
+                    {plan.selected_candidates.map((candidate, index) => (
+                      <details key={`${candidate.title}-${index}`}>
+                        <summary>{index + 1}. {candidate.title}{candidate.holder ? ` · ${candidate.holder}` : ""}</summary>
+                        <p>来源：{candidate.source_file}{candidate.source_page ? ` · 第 ${candidate.source_page} 页` : ""}{candidate.source_location ? ` · ${candidate.source_location}` : ""}</p>
+                        {candidate.match_basis && <p>匹配依据：{candidate.match_basis}</p>}
+                        {candidate.source_excerpt && <blockquote>{candidate.source_excerpt}</blockquote>}
+                        {candidate.approval_status === "required" && <strong className="warning">合同全页需完成内部审批后方可使用。</strong>}
+                      </details>
+                    ))}
+                  </article>
+                ))}</div>
+              </details>
+            ))}
+          </div>
+        )}
+        <div className="business-review-list">
+          {readiness.review_items.map((item) => (
+            <article key={item.review_key} className={item.status}>
+              <div>
+                <span>{categoryLabels[item.category]}</span>
+                <strong>{item.title}</strong>
+              </div>
+              <p>{item.instruction}</p>
+              {item.blocker && <small className="warning">{item.blocker}</small>}
+              <div>
+                <small>影响：{item.blocking_scope}</small>
+                {item.status === "confirmed" ? (
+                  <button className="text-button" disabled={Boolean(busy)} onClick={() => reviewBusinessItem(item, "reset")}>重新审核</button>
+                ) : (
+                  <button className="secondary compact" disabled={Boolean(busy) || !item.confirmable} onClick={() => reviewBusinessItem(item, "confirm")}>{item.confirmable ? item.category === "outline" && workspace?.generation_mode === "strict_template" ? "确认结构并按模板编制" : "确认资料与处理方式" : "资料尚未满足"}</button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
   if (accessState !== "authorized") {
     return (
       <main className="invite-shell">
@@ -1611,6 +1834,7 @@ export default function Home() {
                   {feedbackSummary.issues > 0 && <span className="warning"><b>{feedbackSummary.issues}</b> 条问题反馈</span>}
                 </div>
               </div>
+              {renderBusinessReadiness()}
               {responseSupport && (responseSupport.format_requirements.length > 0 || responseSupport.qualification_responses.length > 0) && (
                 <div className="support-overview">
                   <details open={responseSupport.format_requirements.some((item) => item.fidelity === "exact_template")}>
@@ -1812,7 +2036,7 @@ export default function Home() {
                 <h3>技术方案目录</h3>
                 <button
                   className="primary"
-                  disabled={Boolean(busy) || sections.length === 0}
+                  disabled={Boolean(busy) || sections.length === 0 || !responseSupport?.bid_readiness.writing_gate.ready}
                   onClick={generateCompleteDraft}
                 >一键生成整本初稿</button>
                 <p>后台按章生成和校核，断线不丢失；不会自动代替人工确认。</p>
@@ -1829,7 +2053,7 @@ export default function Home() {
                   <div className="editor-bar">
                     <div><strong>{activeSection.title}</strong><span>响应 {activeSection.requirement_ids.length} 条要求</span></div>
                     <div>
-                      <button className="primary" onClick={() => generateSection(activeSection)}>{activeSection.current_version ? "按要求重新生成" : "生成本章"}</button>
+                      <button className="primary" disabled={Boolean(busy) || !responseSupport?.bid_readiness.writing_gate.ready} onClick={() => generateSection(activeSection)}>{activeSection.current_version ? "按要求重新生成" : "生成本章"}</button>
                       {activeSection.current_version && <button className="secondary" onClick={saveSection}>保存修改</button>}
                       {activeSection.current_version && <button className="primary" onClick={approveSection}>人工确认</button>}
                     </div>
@@ -1886,25 +2110,7 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-                {responseSupport?.manual_action_archive && workspace?.generation_mode === "planned" && (
-                  <details className="manual-archive" open={responseSupport.manual_action_archive.pending > 0}>
-                    <summary>
-                      人工事项档案
-                      <b>{responseSupport.manual_action_archive.pending} 项待处理</b>
-                    </summary>
-                    <p>系统集中记录需要补充到企业数据库或人工审核的内容；业务人员只审核，不在此页重复录入。</p>
-                    <div>
-                      {responseSupport.manual_action_archive.items.map((item) => (
-                        <article key={item.key} className={item.status}>
-                          <span>{item.status === "completed" ? "已完成" : "待处理"}</span>
-                          <strong>{item.title}</strong>
-                          <p>{item.instruction}</p>
-                          <small>影响范围：{item.blocking_scope}</small>
-                        </article>
-                      ))}
-                    </div>
-                  </details>
-                )}
+                {renderBusinessReadiness()}
                 {workspace?.generation_mode === "strict_template" && (
                   <div className="template-fields">
                     <div className="strict-fill-workbench">
@@ -1945,7 +2151,7 @@ export default function Home() {
                             </details>
                           ) : renderTemplateVariableDecision(group.items[0]))}
                         </div>
-                        {!exportItem && <button className="primary strict-export-button" disabled={Boolean(busy)} onClick={approveTemplateAndExport}>审核已匹配内容并生成原格式 Word</button>}
+                        {!exportItem && <button className="primary strict-export-button" disabled={Boolean(busy) || !responseSupport?.bid_readiness.delivery_gate.ready} onClick={approveTemplateAndExport}>审核已匹配内容并生成原格式 Word</button>}
                       </section>
                     </div>
                   </div>
@@ -1997,7 +2203,7 @@ export default function Home() {
                     </details>
                   </details>
                 )}
-                {workspace?.generation_mode === "planned" && <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved")} onClick={createExport}>校核并生成 Word</button>}
+                {workspace?.generation_mode === "planned" && <button className="primary large" disabled={!sections.length || sections.some((item) => item.status !== "approved") || !responseSupport?.bid_readiness.delivery_gate.ready} onClick={createExport}>校核并生成 Word</button>}
                 {exportItem?.status === "succeeded" && workspace && (
                   <a className="download-button" href={`${API_BASE}/workspaces/${workspace.id}/exports/${exportItem.id}/download`}>下载 {exportItem.filename}</a>
                 )}

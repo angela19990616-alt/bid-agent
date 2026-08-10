@@ -36,6 +36,8 @@ Document Upload
   → Load Enterprise Knowledge
   → Knowledge Matching
   → Proposal Memory Matching
+  → Bid Readiness（目录、格式、商务偏离、评分证据、资格材料）
+  → Human Review Gate
   → Load Proposal Writing Rules
   → Proposal Planner
   → Chapter Writer
@@ -57,6 +59,7 @@ Git 中的默认规则：
 - `config/rules/compliance.default.json`
 - `config/rules/variable_dictionary.default.json`
 - `config/rules/personnel_rules.default.json`
+- `config/rules/business_validation.default.json`
 
 默认文件本身带 `key`、`rule_type` 和 `version`。数据库表 `rule_definitions` 支持
 人工创建新版本、草稿/激活/退役状态以及 `manual`、`system`、`ai_generated`
@@ -156,8 +159,8 @@ Document Slot → Semantic Variable → Entity/Role Binding
   章节及页码或段落，缺少精确定位的企业事实只进入人工审核。
 - 资格图片和扫描件必须同时具备已授权真实文件、材料类型和原文件位置，才进入严格映射
   审核；知识库暂未返回文件位置时保留待审核，不由模型猜测附件。
-- 缺失企业字段保持原占位符并进入“人工事项档案”；用户可先生成草稿，系统不会
-  猜测企业事实。找不到章节回填位置时仍阻止导出，避免破坏模板结构。
+- 缺失企业字段保持原占位符并进入“人工事项档案”，系统不会猜测企业事实。
+  目录确认后可以继续无关章节；缺少正式交付所需材料或找不到章节回填位置时阻止导出。
 - 正式交付文件名以 `AI投标文件_项目名称_时间.docx` 开头，文档标题为
   `《AI投标文件+项目名称》`。严格模板保留原目录、页眉页脚和分页；无模板分支自动
   生成目录后再写入各章节。
@@ -171,6 +174,10 @@ Document Slot → Semantic Variable → Entity/Role Binding
 
 当前 MVP 的租户边界是单机构部署边界；多租户上线前必须增加真实身份认证、
 organization_id 行级隔离和权限审计，不能仅依赖前端隐藏。
+
+评分材料、商务偏离与人工门禁的完整业务口径见
+`docs/BUSINESS_VALIDATION_WORKFLOW.md`。这些判断优先在本地规则层完成，不增加模型
+调用；业务人员只审核系统匹配出的证据组合和来源，不在工作台重复录入企业资料。
 
 ## 产品 API
 

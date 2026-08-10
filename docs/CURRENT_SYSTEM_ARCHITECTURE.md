@@ -1,6 +1,6 @@
 # Bid Agent 当前完整架构与知识图谱演进图
 
-> 更新日期：2026-08-08  
+> 更新日期：2026-08-10
 > 口径：已实现与未实现能力分开标注，本文可直接提供给 ChatGPT 或其他架构评审人员。
 
 ## 1. 产品定位
@@ -50,7 +50,8 @@ flowchart TB
     PIPE --> REQ["Requirement Decision Engine"]
     PIPE --> KNOW["Knowledge + Proposal Memory Engine"]
     PIPE --> WRITE["Planner + Chapter Writer"]
-    PIPE --> REVIEW["Review + Delivery Gate"]
+    PIPE --> READY["Bid Readiness + 人工审核档案"]
+    READY --> REVIEW["Review + Delivery Gate"]
 
     RULE --> PG[("PostgreSQL + pgvector")]
     TMPL --> PG
@@ -115,7 +116,8 @@ flowchart TD
     STRAT --> CONFLICT["Conflict Detection"]
     CONFLICT --> PRIORITY["Risk + Proposal Value Ranking"]
 
-    PRIORITY --> ACTION{"Response Action"}
+    PRIORITY --> SCORE["评分证据组合：数量、去重、证明材料、审批"]
+    SCORE --> ACTION{"Response Action"}
     ACTION -->|"write_into_proposal"| MAP["Proposal Mapping"]
     ACTION -->|"response_table"| RT["响应表"]
     ACTION -->|"compliance / risk"| RC["合规清单 / 风险报告"]
@@ -128,17 +130,19 @@ flowchart TD
 
     STRICT --> TP["模板标题成为唯一写作骨架"]
     PLAN --> RP["推荐技术方案目录"]
-    TP --> HUMAN["人工确认目录 / 变量 / 材料"]
+    TP --> HUMAN["人工只审核目录 / 来源 / 材料组合 / 偏离口径"]
     RP --> HUMAN
     KM --> HUMAN
     PM --> HUMAN
 
-    HUMAN --> WRITE["分章生成"]
+    HUMAN --> WGATE{"编制门禁"}
+    WGATE -->|"目录已确认"| WRITE["分章生成"]
+    WGATE -->|"未确认"| WAIT["保留结果，不调用写作模型"]
     WRITE --> CRED["章节来源与 Requirement 覆盖记录"]
     CRED --> CHREV["Chapter Review"]
     CHREV --> EDIT["人工编辑 / Prompt 微调"]
     EDIT --> FULL["Proposal Review"]
-    FULL --> GATE["Delivery Gate"]
+    FULL --> GATE["Delivery Gate：格式 / 偏离 / 评分证据 / 资格材料"]
     GATE --> FILL["原表格字段回填 + 原章节正文插入"]
     FILL --> DOCX["Word 导出"]
 ```
@@ -210,6 +214,7 @@ erDiagram
     PROJECT ||--|| GENERATION_PROFILE : configures
     GENERATION_PROFILE }o--|| DOCUMENT : template_source
     PROJECT ||--o{ EXPORT_RECORD : produces
+    PROJECT ||--o{ PROJECT_BUSINESS_REVIEW : records
     ENTERPRISE_KNOWLEDGE }o--o{ REQUIREMENT : matches
     PROPOSAL_MEMORY }o--o{ SECTION : guides_structure
     RULE_DEFINITION ||--o{ WORKFLOW_RUN : snapshotted_in
@@ -228,7 +233,8 @@ erDiagram
 | 分章生成、校核、人工编辑、Word 导出 | 已实现 | 支持来源追溯和交付门禁 |
 | 五组历史中标案例结构参考 | 已实现 | 仅限机构私有结构学习，禁止转化为企业事实 |
 | 企业事实严格三态回填 | 已实现底层 | 真实企业数据 API 未接入，因此许多字段仍是待审核或缺失 |
-| 业绩、人员、证书、社保和评分数量自动配组 | 部分实现 | 策略和接口边界已有，待真实台账和钉钉 API |
+| 评分数量计算、业绩/人员去重和材料组合 | 已实现规则层 | 已支持满分最低数量、安全余量、人员/合同去重、来源完整性和合同全页审批门禁；真实台账仍待钉钉 API |
+| 目录、格式、商务偏离和材料审核持久化 | 已实现 | 内容变化会自动使旧确认失效；API 与 Worker 双重阻止越过编制门禁 |
 | 扫描 PDF 坐标级保真回填 | 未实现 | 当前不伪称可自动回填，保持人工门禁 |
 | 企业知识图谱 | 未实现 | 现有追溯数据可作为图谱迁移基础 |
 

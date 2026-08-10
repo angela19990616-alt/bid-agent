@@ -98,6 +98,11 @@ test("keeps the consolidated V2 workflow in the client source", async () => {
   assert.match(page, /校核并生成 Word/);
   assert.doesNotMatch(page, /执行交付审查/);
   assert.match(page, /阻断问题必须处理后才能正式导出/);
+  assert.match(page, /评分材料组合/);
+  assert.match(page, /满分至少/);
+  assert.match(page, /确认结构并按模板编制/);
+  assert.match(page, /bid_readiness\.delivery_gate\.ready/);
+  assert.match(page, /目录已确认，正在按原格式自动编制/);
   assert.match(page, /已自动继承原模板字体/);
   assert.match(page, /不再强制替换为系统默认字体/);
   assert.match(page, /一次确认并同步/);

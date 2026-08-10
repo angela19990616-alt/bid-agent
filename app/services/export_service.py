@@ -23,6 +23,8 @@ from app.knowledge.case_fact_resolver import CaseFactResolver
 from app.services.response_template_service import ResponseTemplateService
 from app.services.section_service import SectionService
 from app.services.entity_resolution_service import EntityResolutionService
+from app.services.bid_readiness_service import BidReadinessError
+from app.services.response_support_service import ResponseSupportService
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -82,6 +84,10 @@ class ExportService:
         return destination
 
     def create_full(self, project_id: UUID) -> dict:
+        try:
+            ResponseSupportService().assert_delivery_ready(project_id)
+        except BidReadinessError as exc:
+            raise ExportValidationError(str(exc)) from exc
         profile_service = GenerationProfileService()
         profile = profile_service.get(project_id)
         field_only_template = (
