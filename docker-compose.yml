@@ -77,6 +77,7 @@ services:
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-bid-ontology-local-only}
       NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+      AI_SLOT_SEMANTIC_RESOLUTION_ENABLED: ${AI_SLOT_SEMANTIC_RESOLUTION_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -120,6 +121,7 @@ services:
       APP_ENV: production
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
+      AI_SLOT_SEMANTIC_RESOLUTION_ENABLED: ${AI_SLOT_SEMANTIC_RESOLUTION_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy

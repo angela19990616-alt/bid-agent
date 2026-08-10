@@ -20,6 +20,7 @@ from app.services.generation_profile_service import GenerationProfileService
 from app.services.response_template_service import ResponseTemplateService
 from app.services.entity_resolution_service import EntityResolutionService
 from app.core.semantic_variables import SlotDeduplicationEngine
+from app.config.settings import settings
 from app.workflows.controlled_pipeline import ControlledPipeline
 
 
@@ -168,12 +169,28 @@ class WorkspaceService:
                 run_id,
                 document_id,
             )
-            pipeline.record(run_id, "requirement_extractor")
             pipeline.record(
                 run_id,
                 "model_budget",
                 details=budget,
             )
+            semantic_report = (
+                self.generation_profile_service.refine_template_semantics(
+                    workspace_id,
+                    workflow_run_id=run_id,
+                )
+                if settings.ai_slot_semantic_resolution_enabled
+                else {
+                    "status": "disabled",
+                    "reviewed_slot_count": 0,
+                }
+            )
+            pipeline.record(
+                run_id,
+                "slot_semantic_resolution",
+                details=semantic_report,
+            )
+            pipeline.record(run_id, "requirement_extractor")
             classification_rules = self.rule_engine.load("classification")
             response_strategy_rules = self.rule_engine.load(
                 "response_strategy"
@@ -371,6 +388,15 @@ class WorkspaceService:
                 profile.template_descriptor
             ),
             "template_field_values": profile.template_field_values,
+            "slot_semantic_resolution": {
+                key: value
+                for key, value in (
+                    profile.template_descriptor.get(
+                        "ai_semantic_resolution", {}
+                    ) or {}
+                ).items()
+                if key != "failure_type"
+            },
             "template_field_decisions": (
                 SlotDeduplicationEngine.fan_out(variable_decisions)
             ),

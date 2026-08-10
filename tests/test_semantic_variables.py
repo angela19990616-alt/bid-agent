@@ -431,3 +431,66 @@ def test_only_genuinely_unmapped_slot_requires_semantic_review():
     assert variable["semantics_recognized"] is False
     assert variable["resolution_state"] == "semantic_review_required"
     assert variable["resolution_label"] == "需要确认字段含义"
+
+
+def test_ai_uncertain_slot_blocks_auto_fill_after_variable_deduplication():
+    slot = SlotContextClassifier.classify(
+        label="日期",
+        surrounding_text="日期：___",
+        source_location="投标函第8段",
+        document_section="投标函",
+    )
+    decision = {
+        **_decision("bid_response_signing_date", slot, "2026年8月10日"),
+        "semantic_resolution": {
+            "source": "human_review_required",
+            "confidence": 0.72,
+            "reason": "无法判断具体日期口径。",
+            "requires_human_review": True,
+        },
+    }
+
+    variable = SlotDeduplicationEngine.group_decisions([decision])[0]
+
+    assert variable["status"] == "REVIEW_REQUIRED"
+    assert variable["semantics_recognized"] is False
+    assert variable["resolution_state"] == "semantic_review_required"
+    assert variable["resolution_label"] == "需要确认字段含义"
+
+
+def test_generation_profile_preserves_ai_semantic_review_gate():
+    slot = SlotContextClassifier.classify(
+        label="日期",
+        surrounding_text="日期：___",
+        source_location="投标函第8段",
+        document_section="投标函",
+    )
+    profile = GenerationProfile(
+        project_id=uuid4(),
+        generation_mode="strict_template",
+        historical_case_mode="closest_case",
+        template_descriptor={
+            "fields": [{
+                **slot.snapshot(),
+                "field_key": "bid_response_signing_date",
+                "label": "日期",
+                "required": True,
+                "semantic_resolution": {
+                    "source": "human_review_required",
+                    "confidence": 0.7,
+                    "reason": "无法判断日期口径。",
+                    "requires_human_review": True,
+                },
+            }]
+        },
+        template_field_values={
+            "bid_response_signing_date": "2026年8月10日"
+        },
+    )
+
+    variable = GenerationProfileService.template_variable_decisions(
+        profile
+    )[0]
+
+    assert variable["status"] == "REVIEW_REQUIRED"
+    assert variable["resolution_state"] == "semantic_review_required"

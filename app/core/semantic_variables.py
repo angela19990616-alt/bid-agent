@@ -317,6 +317,18 @@ class SlotDeduplicationEngine:
             item[0].target_relation
             for item in items if item[0].target_relation
         ))
+        semantic_review_required = any(
+            bool((item.get("semantic_resolution") or {}).get(
+                "requires_human_review"
+            ))
+            for item in decisions
+        )
+        if semantic_review_required:
+            status = "REVIEW_REQUIRED"
+            reason = (
+                "系统结合原文上下文后仍无法唯一判断该业务变量，"
+                "需人工确认字段含义后再回填。"
+            )
         standard_name = definition.standard_name
         if definition.target_entity_type == "Person" and len(target_relations) > 1:
             standard_name = f"同一已绑定人员{primary.get('expected_value_type_label', '属性')}"
@@ -326,6 +338,7 @@ class SlotDeduplicationEngine:
             status=status,
             value=value,
             standard_name=standard_name,
+            semantic_review_required=semantic_review_required,
         )
         review_group_key, review_group_label = cls._review_group(
             definition=definition,
@@ -387,6 +400,7 @@ class SlotDeduplicationEngine:
         status: str,
         value: str | None,
         standard_name: str,
+        semantic_review_required: bool = False,
     ) -> dict[str, Any]:
         """Explain whether semantics or only the target value is unresolved.
 
@@ -404,6 +418,16 @@ class SlotDeduplicationEngine:
                 "待识别字段",
             }
         )
+        if semantic_review_required:
+            return {
+                "semantics_recognized": False,
+                "resolution_state": "semantic_review_required",
+                "resolution_label": "需要确认字段含义",
+                "next_action": (
+                    "系统无法从原文上下文唯一判断该空位含义，"
+                    "请确认一次，所有同类位置将同步更新。"
+                ),
+            }
         if value and status == "AUTO_FILL":
             return {
                 "semantics_recognized": semantics_recognized,

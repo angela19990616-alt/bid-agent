@@ -109,6 +109,9 @@ test("keeps the consolidated V2 workflow in the client source", async () => {
   assert.match(page, /person_binding_pending/);
   assert.match(page, /response_generation_pending/);
   assert.match(page, /semantic_review_required/);
+  assert.match(page, /AI 已结合上下文理解/);
+  assert.match(page, /低置信结果只进入人工审核/);
+  assert.doesNotMatch(page, /failure_type/);
   assert.match(page, /同一人员档案自动联动/);
   assert.match(page, /fill-variable-group/);
   assert.match(css, /repeat\(auto-fit, minmax\(230px, 1fr\)\)/);

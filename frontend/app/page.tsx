@@ -263,6 +263,14 @@ type Workspace = {
     relation_path: string[];
     required_actions: string[];
   }>;
+  slot_semantic_resolution: {
+    status?: "completed" | "review_required" | "failed_fallback" | "skipped" | "disabled";
+    reviewed_slot_count?: number;
+    reviewed_group_count?: number;
+    applied_slot_count?: number;
+    rejected_slot_count?: number;
+    uncertain_slot_count?: number;
+  };
   case_library_count: number;
   case_library_name: string;
   case_library_scope: string;
@@ -1925,6 +1933,7 @@ export default function Home() {
                           <small>回填字段和生成正文均继承所在模板样式，不再强制替换为系统默认字体。</small>
                         </div>
                         <div className="case-library-note"><b>{workspace.case_library_name}：{workspace.case_library_count} 组真实案例</b><span>机构私有；系统自动匹配，业务人员只做角色绑定与人工确认来源。</span></div>
+                        {workspace.slot_semantic_resolution?.status && !["disabled", "skipped"].includes(workspace.slot_semantic_resolution.status) && <div className="case-library-note"><b>{workspace.slot_semantic_resolution.status === "failed_fallback" ? "AI 语义复核暂未完成" : `AI 已结合上下文理解 ${workspace.slot_semantic_resolution.reviewed_slot_count ?? 0} 处空位`}</b><span>{workspace.slot_semantic_resolution.status === "failed_fallback" ? "系统已保留通过 Ontology 校验的安全结果，不会猜填；可从断点重试。" : `已按章节、整句、表格行列和项目角色识别，并收敛为 ${workspace.slot_semantic_resolution.reviewed_group_count ?? 0} 组语义；低置信结果只进入人工审核。`}</span></div>}
                         {(workspace.template_actions ?? []).length > 0 && <div className="case-library-note"><b>已识别 {(workspace.template_actions ?? []).length} 项签章动作</b><span>{workspace.template_actions.map((action) => action.display_name).filter((value, index, values) => values.indexOf(value) === index).join("、")}；动作不再冒充待填文字。</span></div>}
                         <div className="case-library-note"><b>{templateVariableGroups.length} 个待审核业务对象</b><span>表格按整表或业务对象处理，不要求逐格确认；页眉、页脚和原版式只继承保真，不进入回填清单。</span></div>
                         <div className="fill-resolution-summary">

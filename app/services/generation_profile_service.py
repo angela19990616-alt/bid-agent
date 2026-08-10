@@ -35,6 +35,9 @@ from app.core.semantic_variables import SlotDeduplicationEngine
 from app.services.pdf_template_conversion_service import (
     PdfTemplateConversionService,
 )
+from app.services.slot_semantic_resolution_service import (
+    SlotSemanticResolutionService,
+)
 
 
 TEMPLATE_FIELD_LABELS = {
@@ -84,10 +87,16 @@ class GenerationProfileService:
         self,
         template_service: ResponseTemplateService | None = None,
         conversion_service: PdfTemplateConversionService | None = None,
+        semantic_resolution_service: (
+            SlotSemanticResolutionService | None
+        ) = None,
     ):
         self.template_service = template_service or ResponseTemplateService()
         self.conversion_service = (
             conversion_service or PdfTemplateConversionService()
+        )
+        self.semantic_resolution_service = (
+            semantic_resolution_service or SlotSemanticResolutionService()
         )
 
     def inspect_document(
@@ -281,6 +290,61 @@ class GenerationProfileService:
                     ),
                 )
         return self.get(project_id)
+
+    def refine_template_semantics(
+        self,
+        project_id: UUID,
+        *,
+        workflow_run_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """AI-review template slot meaning without ever generating values."""
+        profile = self.get(project_id)
+        descriptor = dict(profile.template_descriptor)
+        fields = list(descriptor.get("fields") or ())
+        existing_report = descriptor.get("ai_semantic_resolution") or {}
+        if (
+            existing_report.get("status") in {
+                "completed", "review_required",
+            }
+            and existing_report.get("rule_version")
+            == self.semantic_resolution_service.rule_version()
+        ):
+            return dict(existing_report)
+        if profile.generation_mode != "strict_template" or not fields:
+            report = {
+                "status": "skipped",
+                "reviewed_slot_count": 0,
+                "reason": "当前文件没有需要 AI 识别的严格回填空位。",
+            }
+            descriptor["ai_semantic_resolution"] = report
+        else:
+            result = self.semantic_resolution_service.resolve(
+                fields,
+                list(descriptor.get("actions") or ()),
+                workflow_run_id=workflow_run_id,
+            )
+            descriptor["fields"] = list(result.fields)
+            descriptor["actions"] = list(result.actions)
+            descriptor["semantic_audit"] = result.report.get(
+                "semantic_audit", {}
+            )
+            descriptor["ai_semantic_resolution"] = result.report
+            report = result.report
+        with connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE proposal_generation_profiles
+                    SET template_descriptor = %s::jsonb,
+                        updated_at = NOW()
+                    WHERE project_id = %s
+                    """,
+                    (
+                        json.dumps(descriptor, ensure_ascii=False),
+                        project_id,
+                    ),
+                )
+        return report
 
     @staticmethod
     def record_pdf_conversion_failure(
@@ -681,6 +745,9 @@ class GenerationProfileService:
                     "evidence_location": candidate.source_location,
                     "evidence_match_count": candidate.match_count,
                     "evidence_alternatives": list(candidate.alternatives),
+                    "semantic_resolution": metadata.get(
+                        "semantic_resolution"
+                    ) or {},
                     **GenerationProfileService._resolution_snapshot(
                         slot, entity_resolution, entity_context
                     ),
@@ -730,6 +797,9 @@ class GenerationProfileService:
                 "evidence_alternatives": reviews.get(key, {}).get(
                     "evidence_alternatives", []
                 ),
+                "semantic_resolution": metadata.get(
+                    "semantic_resolution"
+                ) or {},
                 **GenerationProfileService._resolution_snapshot(
                     slot, entity_resolution, entity_context
                 ),

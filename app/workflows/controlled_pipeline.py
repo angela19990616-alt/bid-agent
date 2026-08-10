@@ -20,6 +20,7 @@ STAGES = (
     "pdf_to_docx_conversion",
     "generation_mode_decision",
     "model_budget",
+    "slot_semantic_resolution",
     "requirement_extractor",
     "response_item_normalizer",
     "requirement_semantic_analysis",
