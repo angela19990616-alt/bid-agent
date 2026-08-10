@@ -112,13 +112,14 @@ test("keeps the consolidated V2 workflow in the client source", async () => {
   assert.match(page, /AI 已结合上下文理解/);
   assert.match(page, /低置信结果只进入人工审核/);
   assert.doesNotMatch(page, /failure_type/);
+  assert.doesNotMatch(page, /在当前项目中修正该回填值/);
+  assert.match(page, /请在右侧核验匹配值和来源/);
   assert.match(page, /同一人员档案自动联动/);
   assert.match(page, /fill-variable-group/);
   assert.match(css, /repeat\(auto-fit, minmax\(230px, 1fr\)\)/);
   assert.match(page, /在产出预览中定位/);
   assert.match(page, /定位产出文件/);
   assert.match(page, /打开采购原文/);
-  assert.match(page, /保存并同步/);
   assert.match(page, /word-slot-highlight/);
   assert.match(page, /原模板位置/);
   assert.match(page, /选择并建立角色绑定/);

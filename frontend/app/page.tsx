@@ -540,17 +540,12 @@ function highlightedEvidence(text: string, value: string | null) {
 function WordDocumentPreview({
   workspace,
   target,
-  busy,
-  onSave,
 }: {
   workspace: Workspace;
   target: PreviewTarget | null;
-  busy: boolean;
-  onSave: (variableKey: string, value: string) => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [previewState, setPreviewState] = useState<"loading" | "ready" | "error">("loading");
-  const [editValue, setEditValue] = useState("");
   const revision = (workspace.template_field_decisions ?? [])
     .map((item) => `${item.field_key}:${item.status}:${item.value ?? ""}`)
     .join("|");
@@ -604,7 +599,6 @@ function WordDocumentPreview({
   }, [workspace.id, revision]);
 
   useEffect(() => {
-    setEditValue(target?.variable.value ?? "");
     if (!target || previewState !== "ready" || !containerRef.current) return;
     const container = containerRef.current;
     container.querySelectorAll(".word-slot-highlight").forEach((element) => {
@@ -633,11 +627,9 @@ function WordDocumentPreview({
   return <div className="word-preview-shell">
     {previewState === "loading" && <div className="word-preview-status">正在生成 Word 页面预览…</div>}
     {previewState === "error" && <div className="word-preview-status error">Word 预览暂时未生成，请刷新重试；原格式导出不受影响。</div>}
-    {target && <section className="preview-inline-editor">
-      <div><strong>{target.variable.standard_name}</strong><small>{target.slot.source_location}</small></div>
-      <input aria-label={`修改${target.variable.standard_name}`} value={editValue} maxLength={500} onChange={(event) => setEditValue(event.target.value)} placeholder="在当前项目中修正该回填值" />
-      <button className="primary compact" disabled={busy || !editValue.trim()} onClick={() => void onSave(target.variable.variable_key, editValue.trim())}>保存并同步 {target.variable.slot_count} 处</button>
-      <small>人工修正仅用于当前项目，会记录修正人、时间和原模板位置，不会改写企业知识库。</small>
+    {target && <section className="preview-locate-summary">
+      <strong>{target.variable.standard_name}</strong>
+      <small>{target.slot.source_location} · 已在下方产出文件中定位；请在右侧核验匹配值和来源。</small>
     </section>}
     <div ref={containerRef} className="word-preview-canvas" aria-label="实际回填 Word 文档预览" />
   </div>;
@@ -1921,8 +1913,6 @@ export default function Home() {
                         <WordDocumentPreview
                           workspace={workspace}
                           target={previewTarget}
-                          busy={Boolean(busy)}
-                          onSave={(variableKey, value) => reviewTemplateVariable(variableKey, "confirm", value)}
                         />
                       </section>
                       <section className="fill-review-pane">
