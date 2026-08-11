@@ -36,6 +36,18 @@ def test_frontend_consumes_backend_review_group_contract():
     assert "candidate_key" in frontend
 
 
+def test_word_preview_supports_direct_variable_edit_and_slot_sync():
+    frontend = (
+        Path(__file__).resolve().parents[1] / "frontend" / "app" / "page.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "locateRenderedTemplateSlot" in frontend
+    assert "word-slot-editable" in frontend
+    assert "preview-inline-edit" in frontend
+    assert "保存并同步全部位置" in frontend
+    assert 'reviewTemplateVariable(variable.variable_key, "confirm", value)' in frontend
+
+
 def test_release_guard_runs_frontend_tests_not_build_only():
     root = Path(__file__).resolve().parents[1]
     release_guard = (root / "scripts" / "verify_release.sh").read_text(

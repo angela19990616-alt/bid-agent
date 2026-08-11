@@ -611,18 +611,48 @@ function highlightedEvidence(text: string, value: string | null) {
   return <>{text.slice(0, index)}<mark>{text.slice(index, index + value.length)}</mark>{text.slice(index + value.length)}</>;
 }
 
+function locateRenderedTemplateSlot(
+  container: HTMLElement,
+  slot: TemplateVariableSlot,
+) {
+  if (slot.table_index != null && slot.row != null && slot.column != null) {
+    const table = container.querySelectorAll<HTMLTableElement>("table")[slot.table_index];
+    const cell = table?.rows[slot.row]?.cells[slot.column];
+    if (cell) return cell;
+  }
+  if (slot.paragraph_index != null) {
+    const paragraph = container.querySelectorAll<HTMLElement>("p")[slot.paragraph_index];
+    if (paragraph) return paragraph;
+  }
+  const hint = (slot.label || slot.display_name || "").replace(/\s+/g, "");
+  return [...container.querySelectorAll<HTMLElement>("td, p")].find(
+    (element) => hint && (element.textContent || "").replace(/\s+/g, "").includes(hint),
+  ) ?? null;
+}
+
 function WordDocumentPreview({
   workspace,
   target,
+  disabled,
+  onSelectSlot,
+  onSaveValue,
 }: {
   workspace: Workspace;
   target: PreviewTarget | null;
+  disabled: boolean;
+  onSelectSlot: (variable: TemplateVariableDecision, slot: TemplateVariableSlot) => void;
+  onSaveValue: (variable: TemplateVariableDecision, value: string) => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [previewState, setPreviewState] = useState<"loading" | "ready" | "error">("loading");
-  const revision = (workspace.template_field_decisions ?? [])
-    .map((item) => `${item.field_key}:${item.status}:${item.value ?? ""}`)
+  const [editValue, setEditValue] = useState("");
+  const revision = (workspace.template_variable_decisions ?? [])
+    .map((item) => `${item.variable_key}:${item.status}:${item.value ?? ""}`)
     .join("|");
+
+  useEffect(() => {
+    setEditValue(target?.variable.value ?? "");
+  }, [target?.requestId, target?.variable.value]);
 
   useEffect(() => {
     let cancelled = false;
@@ -673,26 +703,67 @@ function WordDocumentPreview({
   }, [workspace.id, revision]);
 
   useEffect(() => {
+    if (previewState !== "ready" || !containerRef.current) return;
+    const container = containerRef.current;
+    const targetsByElement = new Map<HTMLElement, Array<{
+      variable: TemplateVariableDecision;
+      slot: TemplateVariableSlot;
+    }>>();
+    for (const variable of workspace.template_variable_decisions ?? []) {
+      for (const slot of variable.slots) {
+        const element = locateRenderedTemplateSlot(container, slot);
+        if (!element) continue;
+        targetsByElement.set(element, [
+          ...(targetsByElement.get(element) ?? []),
+          { variable, slot },
+        ]);
+      }
+    }
+    const cleanups: Array<() => void> = [];
+    for (const [element, targets] of targetsByElement) {
+      element.classList.add("word-slot-editable");
+      element.tabIndex = 0;
+      element.setAttribute("role", "button");
+      element.setAttribute("aria-label", `修改${targets[0].variable.standard_name}`);
+      element.title = `点击修改：${targets.map((item) => item.variable.standard_name).join("、")}`;
+      const selectTarget = () => {
+        const currentIndex = targets.findIndex(
+          (item) => item.variable.variable_key === target?.variable.variable_key,
+        );
+        const next = targets[currentIndex >= 0 ? (currentIndex + 1) % targets.length : 0];
+        onSelectSlot(next.variable, next.slot);
+      };
+      const onClick = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        selectTarget();
+      };
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        onClick(event);
+      };
+      element.addEventListener("click", onClick);
+      element.addEventListener("keydown", onKeyDown);
+      cleanups.push(() => {
+        element.removeEventListener("click", onClick);
+        element.removeEventListener("keydown", onKeyDown);
+        element.classList.remove("word-slot-editable");
+        element.removeAttribute("role");
+        element.removeAttribute("aria-label");
+        element.removeAttribute("title");
+        element.removeAttribute("tabindex");
+      });
+    }
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [onSelectSlot, previewState, revision, target?.variable.variable_key, workspace.template_variable_decisions]);
+
+  useEffect(() => {
     if (!target || previewState !== "ready" || !containerRef.current) return;
     const container = containerRef.current;
     container.querySelectorAll(".word-slot-highlight").forEach((element) => {
       element.classList.remove("word-slot-highlight");
     });
-    const slot = target.slot;
-    let located: HTMLElement | null = null;
-    if (slot.table_index != null && slot.row != null && slot.column != null) {
-      const table = container.querySelectorAll<HTMLTableElement>("table")[slot.table_index];
-      located = table?.rows[slot.row]?.cells[slot.column] ?? null;
-    }
-    if (!located && slot.paragraph_index != null) {
-      located = container.querySelectorAll<HTMLElement>("p")[slot.paragraph_index] ?? null;
-    }
-    if (!located) {
-      const hint = (slot.label || slot.display_name || "").replace(/\s+/g, "");
-      located = [...container.querySelectorAll<HTMLElement>("td, p")].find(
-        (element) => hint && (element.textContent || "").replace(/\s+/g, "").includes(hint),
-      ) ?? null;
-    }
+    const located = locateRenderedTemplateSlot(container, target.slot);
     if (!located) return;
     located.classList.add("word-slot-highlight");
     located.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
@@ -701,9 +772,31 @@ function WordDocumentPreview({
   return <div className="word-preview-shell">
     {previewState === "loading" && <div className="word-preview-status">正在生成 Word 页面预览…</div>}
     {previewState === "error" && <div className="word-preview-status error">Word 预览暂时未生成，请刷新重试；原格式导出不受影响。</div>}
+    {previewState === "ready" && !target && <div className="word-preview-edit-hint">点击文档中带浅绿色边框的回填位置，可在预览里直接修改。</div>}
     {target && <section className="preview-locate-summary">
-      <strong>{target.variable.standard_name}</strong>
-      <small>{target.slot.source_location} · 已在下方产出文件中定位；请在右侧核验匹配值和来源。</small>
+      <div>
+        <strong>{target.variable.standard_name}</strong>
+        <small>{target.slot.source_location} · 可在此直接修改；如需核对依据，请在右侧核验匹配值和来源。保存后同步 {target.variable.slot_count} 个关联位置并记录人工审核。</small>
+      </div>
+      <form
+        className="preview-inline-edit"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const value = editValue.trim();
+          if (value) void onSaveValue(target.variable, value);
+        }}
+      >
+        <label htmlFor="preview-variable-value">{target.variable.expected_value_type_label}</label>
+        <input
+          id="preview-variable-value"
+          value={editValue}
+          maxLength={500}
+          disabled={disabled}
+          placeholder={`请输入${target.variable.standard_name}`}
+          onChange={(event) => setEditValue(event.target.value)}
+        />
+        <button className="secondary compact" type="submit" disabled={disabled || !editValue.trim() || editValue.trim() === (target.variable.value ?? "").trim()}>保存并同步全部位置</button>
+      </form>
     </section>}
     <div ref={containerRef} className="word-preview-canvas" aria-label="实际回填 Word 文档预览" />
   </div>;
@@ -2217,6 +2310,11 @@ export default function Home() {
                         <WordDocumentPreview
                           workspace={workspace}
                           target={previewTarget}
+                          disabled={Boolean(busy)}
+                          onSelectSlot={(variable, slot) => locatePreviewSlot(variable, slot)}
+                          onSaveValue={async (variable, value) => {
+                            await reviewTemplateVariable(variable.variable_key, "confirm", value);
+                          }}
                         />
                       </section>
                       <section className="fill-review-pane">
