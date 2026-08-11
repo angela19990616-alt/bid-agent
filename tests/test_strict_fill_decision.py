@@ -207,6 +207,10 @@ def test_conflicting_values_require_human_decision():
     assert decision.status == FillStatus.REVIEW_REQUIRED
     assert decision.value is None
     assert "多个不同值" in decision.reason
+    assert {item.value for item in decision.value_candidates} == {
+        "张三", "李四",
+    }
+    assert all(item.candidate_key for item in decision.value_candidates)
 
 
 def test_historical_case_cannot_be_used_as_enterprise_fact():

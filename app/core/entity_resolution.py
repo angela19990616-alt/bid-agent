@@ -222,9 +222,32 @@ class EntityCandidate:
 
     def snapshot(self) -> dict[str, Any]:
         return {
+            "candidate_type": "Person",
             "person_id": str(self.person_id),
             "name": self.name,
             "title": self.title,
+            "match_basis": self.match_basis,
+            "source_document": self.source_document,
+            "source_location": self.source_location,
+            "confidence": self.confidence,
+        }
+
+
+@dataclass(frozen=True)
+class OrganizationCandidate:
+    organization_id: UUID
+    name: str
+    match_basis: str
+    source_document: str | None
+    source_location: str | None
+    confidence: float
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "candidate_type": "Organization",
+            "organization_id": str(self.organization_id),
+            "name": self.name,
+            "title": None,
             "match_basis": self.match_basis,
             "source_document": self.source_document,
             "source_location": self.source_location,
@@ -242,6 +265,7 @@ class EntityResolutionContext:
     candidates_by_role: dict[ProjectRole, tuple[EntityCandidate, ...]] = field(
         default_factory=dict
     )
+    organization_candidates: tuple[OrganizationCandidate, ...] = ()
 
     def person(self, person_id: UUID) -> Person | None:
         return next(
@@ -271,7 +295,7 @@ class SlotResolution:
     status: str
     person: Person | None
     organization: Organization | None
-    candidates: tuple[EntityCandidate, ...]
+    candidates: tuple[EntityCandidate | OrganizationCandidate, ...]
     reason: str
     match_path: tuple[str, ...]
 
@@ -1499,12 +1523,18 @@ class EntityResolutionEngine:
                 )
             if context.organization is None:
                 return SlotResolution(
-                    "missing_organization", None, None, (),
-                    "当前项目尚未绑定投标主体。",
-                    ("槽位识别为组织属性", "等待绑定当前投标人"),
+                    "missing_organization", None, None,
+                    context.organization_candidates,
+                    "当前项目尚未绑定投标主体，请选择一个已核验候选。",
+                    (
+                        "槽位识别为组织属性",
+                        "检索同一机构的已核验企业实体",
+                        "等待绑定当前投标人",
+                    ),
                 )
             return SlotResolution(
-                "resolved", None, context.organization, (),
+                "resolved", None, context.organization,
+                context.organization_candidates,
                 "已绑定当前项目投标主体。",
                 ("槽位识别为组织属性", "命中当前项目投标人"),
             )

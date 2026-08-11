@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -50,6 +51,28 @@ class EnterpriseFact:
 
 
 @dataclass(frozen=True)
+class FillValueCandidate:
+    candidate_key: str
+    value: str
+    source_reference: str
+    evidence_title: str | None
+    evidence_excerpt: str | None
+    evidence_location: str | None
+    confidence: float
+
+    def snapshot(self) -> dict[str, str | float | None]:
+        return {
+            "candidate_key": self.candidate_key,
+            "value": self.value,
+            "source_reference": self.source_reference,
+            "evidence_title": self.evidence_title,
+            "evidence_excerpt": self.evidence_excerpt,
+            "evidence_location": self.evidence_location,
+            "confidence": self.confidence,
+        }
+
+
+@dataclass(frozen=True)
 class FillDecision:
     field: TemplateField
     value: str | None
@@ -63,6 +86,7 @@ class FillDecision:
     evidence_location: str | None = None
     binding_status: str | None = None
     match_path: tuple[str, ...] = ()
+    value_candidates: tuple[FillValueCandidate, ...] = ()
 
 
 class StrictFillDecisionEngine:
@@ -205,6 +229,7 @@ class StrictFillDecisionEngine:
             )
 
         distinct_values = {fact.value.strip() for fact in candidates}
+        value_candidates = self._value_candidates(field, candidates)
         if len(distinct_values) > 1:
             return FillDecision(
                 field=field,
@@ -222,6 +247,7 @@ class StrictFillDecisionEngine:
                     entity_resolution.match_path
                     if entity_resolution is not None else ()
                 ),
+                value_candidates=value_candidates,
             )
 
         candidate = max(
@@ -262,4 +288,34 @@ class StrictFillDecisionEngine:
                 entity_resolution.match_path
                 if entity_resolution is not None else ()
             ),
+            value_candidates=value_candidates,
+        )
+
+    @staticmethod
+    def _value_candidates(
+        field: TemplateField,
+        facts: list[EnterpriseFact],
+    ) -> tuple[FillValueCandidate, ...]:
+        """Expose one auditable option per value, never a raw database id."""
+        best_by_value: dict[str, EnterpriseFact] = {}
+        for fact in facts:
+            value = fact.value.strip()
+            current = best_by_value.get(value)
+            if current is None or (
+                fact.verified, fact.confidence
+            ) > (current.verified, current.confidence):
+                best_by_value[value] = fact
+        return tuple(
+            FillValueCandidate(
+                candidate_key=hashlib.sha256(
+                    f"{field.canonical_key}\0{value}".encode("utf-8")
+                ).hexdigest()[:24],
+                value=value,
+                source_reference=fact.source_reference,
+                evidence_title=fact.evidence_title,
+                evidence_excerpt=fact.evidence_excerpt,
+                evidence_location=fact.evidence_location,
+                confidence=fact.confidence,
+            )
+            for value, fact in sorted(best_by_value.items())
         )

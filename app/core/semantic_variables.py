@@ -313,6 +313,8 @@ class SlotDeduplicationEngine:
             if item.get("display_name") or item.get("label")
         ))
         slots = [cls._slot_snapshot(item) for item in decisions]
+        value_candidates = cls._value_candidates(decisions)
+        entity_candidates = cls._entity_candidates(decisions)
         target_relations = list(dict.fromkeys(
             item[0].target_relation
             for item in items if item[0].target_relation
@@ -381,9 +383,10 @@ class SlotDeduplicationEngine:
             "evidence_location": primary.get("evidence_location"),
             "evidence_match_count": primary.get("evidence_match_count", 0),
             "evidence_alternatives": primary.get("evidence_alternatives") or [],
+            "value_candidates": value_candidates,
             "binding_status": primary.get("binding_status"),
             "relation_path": primary.get("relation_path") or [],
-            "entity_candidates": primary.get("entity_candidates") or [],
+            "entity_candidates": entity_candidates,
             "fill_strategy": primary.get("fill_strategy") or "unresolved",
             "personnel_rule_results": primary.get("personnel_rule_results") or [],
             **resolution,
@@ -391,6 +394,34 @@ class SlotDeduplicationEngine:
             "review_group_label": review_group_label,
             "_field_decisions": decisions,
         }
+
+    @staticmethod
+    def _value_candidates(
+        decisions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        by_key: dict[str, dict[str, Any]] = {}
+        for decision in decisions:
+            for candidate in decision.get("value_candidates") or ():
+                key = str(candidate.get("value") or "").strip()
+                if key and key not in by_key:
+                    by_key[key] = dict(candidate)
+        return list(by_key.values())
+
+    @staticmethod
+    def _entity_candidates(
+        decisions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        by_key: dict[str, dict[str, Any]] = {}
+        for decision in decisions:
+            for candidate in decision.get("entity_candidates") or ():
+                key = str(
+                    candidate.get("organization_id")
+                    or candidate.get("person_id")
+                    or ""
+                ).strip()
+                if key and key not in by_key:
+                    by_key[key] = dict(candidate)
+        return list(by_key.values())
 
     @staticmethod
     def _resolution(

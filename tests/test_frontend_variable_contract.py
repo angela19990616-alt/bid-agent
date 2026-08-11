@@ -30,6 +30,10 @@ def test_frontend_consumes_backend_review_group_contract():
         assert field in frontend
     assert "templateVariableGroups" in frontend
     assert "同一对象的不同属性横向展示" in frontend
+    assert "renderEntityCandidateSelector(group.items)" in frontend
+    assert "查看并逐处核对" in frontend
+    assert "选择并同步全部关联位置" in frontend
+    assert "candidate_key" in frontend
 
 
 def test_release_guard_runs_frontend_tests_not_build_only():

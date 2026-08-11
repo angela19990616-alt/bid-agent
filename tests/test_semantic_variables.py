@@ -96,6 +96,29 @@ def test_dictionary_collapses_legal_representative_aliases_into_one_variable():
     ]
 
 
+def test_one_variable_keeps_all_slots_and_deduplicates_value_candidates():
+    first = _slot("法人代表姓名", "法人代表姓名：___", "第3页")
+    second = _slot("法定代表人", "法定代表人：___", "第5页")
+    decisions = [
+        _decision("legal_representative", first, "张三"),
+        _decision("legal_representative__second", second, "张三"),
+    ]
+    for decision in decisions:
+        decision["value_candidates"] = [
+            {"candidate_key": "candidate-a", "value": "张三"},
+            {"candidate_key": "candidate-b", "value": "李四"},
+            {"candidate_key": "alias-candidate-a", "value": "张三"},
+        ]
+
+    variable = SlotDeduplicationEngine.group_decisions(decisions)[0]
+
+    assert variable["slot_count"] == 2
+    assert len(variable["slots"]) == 2
+    assert [item["value"] for item in variable["value_candidates"]] == [
+        "张三", "李四",
+    ]
+
+
 def test_legal_and_authorized_representatives_never_merge():
     legal = _slot("法定代表人姓名", "法定代表人姓名：___", "第3页")
     authorized = SlotContextClassifier.classify(

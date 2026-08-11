@@ -797,6 +797,9 @@ class GenerationProfileService:
                 "evidence_alternatives": reviews.get(key, {}).get(
                     "evidence_alternatives", []
                 ),
+                "value_candidates": [
+                    item.snapshot() for item in decision.value_candidates
+                ],
                 "semantic_resolution": metadata.get(
                     "semantic_resolution"
                 ) or {},
@@ -1037,7 +1040,24 @@ class GenerationProfileService:
                 list(resolution.match_path) if resolution is not None else []
             ),
             "entity_candidates": (
-                [item.snapshot() for item in resolution.candidates]
+                [
+                    {
+                        **item.snapshot(),
+                        "selected": bool(
+                            (
+                                resolution.person is not None
+                                and getattr(item, "person_id", None)
+                                == resolution.person.id
+                            )
+                            or (
+                                resolution.organization is not None
+                                and getattr(item, "organization_id", None)
+                                == resolution.organization.id
+                            )
+                        ),
+                    }
+                    for item in resolution.candidates
+                ]
                 if resolution is not None else []
             ),
             "ontology_concept": slot.ontology_concept,
@@ -1180,6 +1200,7 @@ class GenerationProfileService:
         variable_key: str,
         action: str,
         value: str | None = None,
+        candidate_key: str | None = None,
     ) -> GenerationProfile:
         """Review one business fact once and apply it to every bound slot."""
         profile = GenerationProfileService.get(project_id)
@@ -1216,7 +1237,21 @@ class GenerationProfileService:
             for field_key in field_keys:
                 field_reviews.pop(field_key, None)
         else:
-            selected = str(value or variable.get("value") or "").strip()
+            candidate = next(
+                (
+                    item for item in variable.get("value_candidates", ())
+                    if item.get("candidate_key") == candidate_key
+                ),
+                None,
+            ) if candidate_key else None
+            if candidate_key and candidate is None:
+                raise ValueError("候选值已失效，请刷新后重新选择。")
+            selected = str(
+                (candidate or {}).get("value")
+                or value
+                or variable.get("value")
+                or ""
+            ).strip()
             if not selected:
                 raise ValueError(
                     "当前业务变量没有可确认值；请先补充企业事实或建立角色绑定。"
@@ -1237,22 +1272,28 @@ class GenerationProfileService:
             evidence = {
                 "source_reference": (
                     "本项目人工修正"
-                    if value else variable.get("source_reference")
+                    if value else (candidate or {}).get("source_reference")
+                    or variable.get("source_reference")
                 ),
                 "evidence_title": (
                     "本项目人工修正"
-                    if value else variable.get("evidence_title")
+                    if value else (candidate or {}).get("evidence_title")
+                    or variable.get("evidence_title")
                 ),
                 "evidence_excerpt": (
                     f"本项目人工修正：{selected}"
-                    if value else variable.get("evidence_excerpt")
+                    if value else (candidate or {}).get("evidence_excerpt")
+                    or variable.get("evidence_excerpt")
                 ),
                 "evidence_location": (
                     "严格回填预览人工审核"
-                    if value else variable.get("evidence_location")
+                    if value else (candidate or {}).get("evidence_location")
+                    or variable.get("evidence_location")
                 ),
                 "input_method": (
-                    "preview_manual_override" if value else "variable_review"
+                    "preview_manual_override"
+                    if value else "candidate_selection"
+                    if candidate_key else "variable_review"
                 ),
             }
             for field_key in field_keys:

@@ -10,6 +10,7 @@ from app.core.entity_resolution import (
     EntityResolutionEngine,
     FillStrategy,
     Organization,
+    OrganizationCandidate,
     Person,
     ProjectRole,
     ProjectRoleAssignment,
@@ -20,6 +21,7 @@ from app.services.generation_profile_service import (
     GenerationProfile,
     GenerationProfileService,
 )
+from app.services.entity_resolution_service import EntityResolutionService
 from app.services.response_template_service import ResponseTemplateService
 
 
@@ -140,6 +142,67 @@ def test_multiple_people_are_candidates_but_never_randomly_selected():
     assert result.person is None
     assert len(result.candidates) == 2
     assert "不会随机选择" in result.reason
+
+
+def test_multiple_organizations_are_candidates_but_never_randomly_selected():
+    candidates = tuple(
+        OrganizationCandidate(
+            organization_id=uuid4(),
+            name=name,
+            match_basis="同一机构企业库中的已核验投标主体候选",
+            source_document=f"{name}营业执照.pdf",
+            source_location="第1页",
+            confidence=1.0,
+        )
+        for name in ("北京示例公司", "陕西示例公司")
+    )
+    context = EntityResolutionContext(
+        project_id=uuid4(),
+        organization_candidates=candidates,
+    )
+    slot = SlotContextClassifier.classify(
+        label="投标人名称",
+        surrounding_text="投标人名称：___",
+        source_location="投标函/第1段",
+        document_section="投标函",
+    )
+
+    result = EntityResolutionEngine().resolve(slot, context)
+
+    assert result.status == "missing_organization"
+    assert result.organization is None
+    assert result.candidates == candidates
+    assert "请选择" in result.reason
+
+
+def test_entity_switch_clears_only_bound_entity_fields():
+    descriptor = {
+        "fields": [
+            {
+                "field_key": "bidder_name",
+                "expected_entity_type": "Organization",
+            },
+            {
+                "field_key": "authorized_representative",
+                "expected_entity_type": "Person",
+                "expected_role": "AUTHORIZED_REPRESENTATIVE",
+            },
+            {
+                "field_key": "project_name",
+                "expected_entity_type": "Project",
+            },
+        ]
+    }
+
+    assert EntityResolutionService._entity_field_keys(
+        descriptor,
+        entity_types={"Organization", "Person"},
+    ) == {"bidder_name", "authorized_representative"}
+    assert EntityResolutionService._entity_field_keys(
+        descriptor,
+        entity_types={"Person"},
+        roles={"AUTHORIZED_REPRESENTATIVE"},
+    ) == {"authorized_representative"}
 
 
 def test_role_binding_keeps_all_person_attributes_on_one_person_id():

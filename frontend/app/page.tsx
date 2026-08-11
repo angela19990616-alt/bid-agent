@@ -179,7 +179,10 @@ type Workspace = {
     binding_status: string | null;
     match_path: string[];
     entity_candidates: Array<{
-      person_id: string;
+      candidate_type?: "Person" | "Organization";
+      person_id?: string;
+      organization_id?: string;
+      selected?: boolean;
       name: string;
       title: string | null;
       match_basis: string;
@@ -238,12 +241,24 @@ type Workspace = {
     binding_status: string | null;
     relation_path: string[];
     entity_candidates: Array<{
-      person_id: string;
+      candidate_type?: "Person" | "Organization";
+      person_id?: string;
+      organization_id?: string;
+      selected?: boolean;
       name: string;
       title: string | null;
       match_basis: string;
       source_document: string | null;
       source_location: string | null;
+      confidence: number;
+    }>;
+    value_candidates: Array<{
+      candidate_key: string;
+      value: string;
+      source_reference: string;
+      evidence_title: string | null;
+      evidence_excerpt: string | null;
+      evidence_location: string | null;
       confidence: number;
     }>;
     fill_strategy: "direct_attribute" | "composed_value" | "action_only" | "auto_layout" | "generated_collection" | "knowledge_collection" | "unresolved";
@@ -1461,6 +1476,7 @@ export default function Home() {
     variableKey: string,
     action: "confirm" | "reset",
     value?: string,
+    candidateKey?: string,
   ) {
     if (!workspace) return;
     await run(action === "confirm" ? "正在确认业务变量" : "正在恢复审核", async () => {
@@ -1469,7 +1485,12 @@ export default function Home() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ variable_key: variableKey, action, value }),
+          body: JSON.stringify({
+            variable_key: variableKey,
+            action,
+            value,
+            candidate_key: candidateKey,
+          }),
         },
       );
       setWorkspace(updated);
@@ -1488,7 +1509,9 @@ export default function Home() {
       }
       setNotice(
         action === "confirm"
-          ? value
+          ? candidateKey
+            ? "已采用所选候选值，并同步到全部关联位置。"
+            : value
             ? "已保存本项目人工修正，并同步到全部关联位置。"
             : "业务变量已一次确认并同步全部模板位置。"
           : "业务变量已恢复为待审核状态。",
@@ -1517,7 +1540,7 @@ export default function Home() {
     candidate: TemplateVariableDecision["entity_candidates"][number],
   ) {
     const role = item.target_relation;
-    if (!workspace || !role || !["LEGAL_REPRESENTATIVE", "AUTHORIZED_REPRESENTATIVE", "PROJECT_MANAGER", "TECHNICAL_LEAD", "CONTACT_PERSON", "SIGNATORY"].includes(role)) return;
+    if (!workspace || !candidate.person_id || !role || !["LEGAL_REPRESENTATIVE", "AUTHORIZED_REPRESENTATIVE", "PROJECT_MANAGER", "TECHNICAL_LEAD", "CONTACT_PERSON", "SIGNATORY"].includes(role)) return;
     await run(`正在绑定${item.standard_name}`, async () => {
       const updated = await request<Workspace>(
         `/workspaces/${workspace.id}/role-bindings`,
@@ -1535,7 +1558,82 @@ export default function Home() {
     });
   }
 
-  function renderTemplateVariableDecision(item: TemplateVariableDecision) {
+  async function bindBidderOrganization(
+    candidate: TemplateVariableDecision["entity_candidates"][number],
+  ) {
+    if (!workspace || !candidate.organization_id) return;
+    await run("正在切换当前投标主体", async () => {
+      const updated = await request<Workspace>(
+        `/workspaces/${workspace.id}/organization-binding`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organization_id: candidate.organization_id }),
+        },
+      );
+      setWorkspace(updated);
+      setNotice(`已选择${candidate.name}作为本项目投标主体，关联位置将自动联动。`);
+    });
+  }
+
+  function renderEntityCandidateSelector(items: TemplateVariableDecision[]) {
+    const candidateMap = new Map<string, TemplateVariableDecision["entity_candidates"][number]>();
+    for (const item of items) {
+      for (const candidate of item.entity_candidates ?? []) {
+        const key = candidate.organization_id
+          ? `organization:${candidate.organization_id}`
+          : candidate.person_id
+            ? `person:${candidate.person_id}`
+            : `${candidate.candidate_type ?? "entity"}:${candidate.name}`;
+        if (!candidateMap.has(key)) candidateMap.set(key, candidate);
+      }
+    }
+    const candidates = [...candidateMap.values()];
+    if (candidates.length === 0) return null;
+    const personItem = items.find((item) => item.target_entity_type === "Person");
+    const organizationCandidates = candidates.filter((item) => item.organization_id);
+    const isOrganization = organizationCandidates.length > 0;
+    return (
+      <section className="entity-candidate-panel">
+        <header>
+          <strong>{isOrganization ? "选择本项目投标主体" : "选择本项目人员"}</strong>
+          <span>{candidates.length} 个已核验候选；只选一次，相关属性和全部回填位置自动联动</span>
+        </header>
+        <div>
+          {candidates.map((candidate) => {
+            const selected = Boolean(candidate.selected) || items.some((item) => (
+              item.value === candidate.name
+              || (
+                Boolean(candidate.organization_id)
+                && item.subject_organization === candidate.name
+              )
+            ));
+            return (
+              <article key={candidate.organization_id || candidate.person_id || candidate.name} className={selected ? "selected" : ""}>
+                <div><strong>{candidate.name}</strong><small>{candidate.title || (isOrganization ? "企业主体" : "职务待核验")}</small></div>
+                <p>{candidate.match_basis}</p>
+                {(candidate.source_document || candidate.source_location) && <small>依据：{candidate.source_document || "已核验实体库"}{candidate.source_location ? ` · ${candidate.source_location}` : ""}</small>}
+                <button
+                  className="secondary compact"
+                  disabled={Boolean(busy) || selected}
+                  onClick={() => candidate.organization_id
+                    ? bindBidderOrganization(candidate)
+                    : personItem
+                      ? bindEntityRole(personItem, candidate)
+                      : undefined}
+                >{selected ? "当前已采用" : "选择并同步全部关联位置"}</button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
+
+  function renderTemplateVariableDecision(
+    item: TemplateVariableDecision,
+    showEntityCandidates = true,
+  ) {
     return (
       <article key={item.variable_key} className={`fill-decision ${variableResolutionClass(item)}`} data-resolution-state={item.resolution_state}>
         <div><strong>{item.standard_name}</strong><span>{variableResolutionLabel(item)}</span></div>
@@ -1547,21 +1645,21 @@ export default function Home() {
             {(item.relation_path ?? []).length > 0 && <div><span>实际取值关系</span><strong>{item.relation_path.join(" → ")}</strong></div>}
             <div><span>当前状态</span><strong>{variableResolutionLabel(item)}</strong></div>
             <div><span>下一步</span><strong>{variableNextAction(item)}</strong></div>
-            <details className="variable-slot-details"><summary>需要抽查时查看 {item.slot_count} 个原模板位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>{slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位产出文件</button><button className="text-button" onClick={() => openSourceSlot(item, slot)}>打开采购原文</button></article>)}</details>
-            {(item.entity_candidates ?? []).length > 0 && item.binding_status !== "resolved" && (
-              <div className="entity-candidates">
-                <span>候选人员</span>
-                {item.entity_candidates.map((candidate) => (
-                  <article key={candidate.person_id}>
-                    <div><strong>{candidate.name}</strong><small>{candidate.title || "职务待核验"}</small></div>
-                    <p>{candidate.match_basis}</p>
-                    {(candidate.source_document || candidate.source_location) && <small>依据：{candidate.source_document || "已核验人员库"}{candidate.source_location ? ` · ${candidate.source_location}` : ""}</small>}
-                    <button className="secondary compact" disabled={Boolean(busy)} onClick={() => bindEntityRole(item, candidate)}>选择并建立角色绑定</button>
-                  </article>
-                ))}
-              </div>
-            )}
+            <details className="variable-slot-details"><summary>查看并逐处核对 {item.slot_count} 个回填位置</summary>{item.slots.map((slot, index) => <article key={`${slot.field_key}-${index}`}><strong>位置 {index + 1} · {slot.document_section || slot.display_name || slot.label || "原模板位置"}</strong><small>{slot.source_location}{slot.table_index !== null ? ` · 表格 ${slot.table_index + 1}` : ""}{slot.row !== null ? ` 第 ${slot.row + 1} 行` : ""}{slot.paragraph_index !== null ? ` · 第 ${slot.paragraph_index + 1} 段` : ""}</small>{slot.surrounding_text && <blockquote>{slot.surrounding_text}</blockquote>}<button className="text-button" onClick={() => locatePreviewSlot(item, slot)}>定位产出文件</button><button className="text-button" onClick={() => openSourceSlot(item, slot)}>打开采购原文</button></article>)}</details>
+            {showEntityCandidates && renderEntityCandidateSelector([item])}
             {item.target_entity_type === "Person" && item.binding_status !== "resolved" && (item.entity_candidates ?? []).length === 0 && <p className="template-field-warning">当前没有可选的已核验人员，系统不会随机选择；请先补充或授权人员资料。</p>}
+          </div>
+        )}
+        {(item.value_candidates ?? []).length > 1 && (
+          <div className="value-candidates">
+            <strong>请选择本变量采用的值</strong>
+            {item.value_candidates.map((candidate) => (
+              <article key={candidate.candidate_key}>
+                <div><b>{candidate.value}</b><small>可信度 {(candidate.confidence * 100).toFixed(0)}%</small></div>
+                <small>依据：{candidate.evidence_title || candidate.source_reference}{candidate.evidence_location ? ` · ${candidate.evidence_location}` : ""}</small>
+                <button className="secondary compact" disabled={Boolean(busy)} onClick={() => reviewTemplateVariable(item.variable_key, "confirm", undefined, candidate.candidate_key)}>采用并同步 {item.slot_count} 处</button>
+              </article>
+            ))}
           </div>
         )}
         {(item.source_reference || item.evidence_title) && <small>来源：{visibleEvidenceSource(item)} · {visibleEvidenceLocation(item)}</small>}
@@ -2147,7 +2245,8 @@ export default function Home() {
                             <details key={group.key} className="fill-variable-group">
                               <summary><span><strong>{group.label}</strong><small>{group.items.length} 个关联变量 · 点击展开横向核验</small></span><b>{group.statusLabel}</b></summary>
                               <p>{group.items[0].target_entity_type === "Person" ? "同一对象的不同属性横向展示；确定人员后，姓名、职务、证书等资料将从同一人员档案自动联动。" : "同一对象的不同属性横向展示；系统分别匹配属性值，前端集中审核，不会重复创建对象。"}</p>
-                              <div className="fill-variable-group-items">{group.items.map(renderTemplateVariableDecision)}</div>
+                              {renderEntityCandidateSelector(group.items)}
+                              <div className="fill-variable-group-items">{group.items.map((item) => renderTemplateVariableDecision(item, false))}</div>
                             </details>
                           ) : renderTemplateVariableDecision(group.items[0]))}
                         </div>

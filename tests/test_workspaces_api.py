@@ -13,6 +13,7 @@ from app.api.workspaces import (
 from app.main import app
 from app.models.requirements import RequirementStrategyUpdate
 from app.models.generation_profiles import (
+    OrganizationBindingUpdate,
     TemplateFieldReviewUpdate,
     TemplateFieldsUpdate,
     TemplateVariableReviewUpdate,
@@ -232,11 +233,12 @@ def test_business_variable_is_reviewed_once_through_workspace_flow(
         "GenerationProfileService",
         SimpleNamespace(
             review_template_variable=(
-                lambda item_id, key, action, value=None: calls.update(
+                lambda item_id, key, action, value=None, candidate_key=None: calls.update(
                     workspace_id=item_id,
                     variable_key=key,
                     action=action,
                     value=value,
+                    candidate_key=candidate_key,
                 )
             )
         ),
@@ -247,6 +249,7 @@ def test_business_variable_is_reviewed_once_through_workspace_flow(
         TemplateVariableReviewUpdate(
             variable_key="organization.legal_representative.name",
             action="confirm",
+            candidate_key="1234567890abcdef",
         ),
         None,
         service,
@@ -257,6 +260,38 @@ def test_business_variable_is_reviewed_once_through_workspace_flow(
         "variable_key": "organization.legal_representative.name",
         "action": "confirm",
         "value": None,
+        "candidate_key": "1234567890abcdef",
+    }
+    assert result["id"] == service.id
+
+
+def test_verified_organization_candidate_can_be_bound(monkeypatch):
+    workspace_id = uuid4()
+    organization_id = uuid4()
+    calls = {}
+    service = FakeWorkspaceService()
+    resolver = SimpleNamespace(
+        bind_organization=lambda item_id, organization_id: calls.update(
+            workspace_id=item_id,
+            organization_id=organization_id,
+        )
+    )
+    monkeypatch.setattr(
+        workspace_api,
+        "EntityResolutionService",
+        lambda: resolver,
+    )
+
+    result = workspace_api.bind_workspace_organization(
+        workspace_id,
+        OrganizationBindingUpdate(organization_id=organization_id),
+        None,
+        service,
+    )
+
+    assert calls == {
+        "workspace_id": workspace_id,
+        "organization_id": organization_id,
     }
     assert result["id"] == service.id
 

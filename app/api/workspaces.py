@@ -38,6 +38,7 @@ from app.models.generation_profiles import (
     TemplateVariableReviewUpdate,
     TemplateFieldsUpdate,
     RoleBindingUpdate,
+    OrganizationBindingUpdate,
 )
 from app.core.entity_resolution import ProjectRole
 from app.services.entity_resolution_service import EntityResolutionService
@@ -286,6 +287,7 @@ def review_workspace_template_variable(
             payload.variable_key,
             payload.action,
             payload.value,
+            payload.candidate_key,
         )
         return service.get(workspace_id)
     except ValueError as exc:
@@ -315,6 +317,28 @@ def bind_workspace_role(
         return service.get(workspace_id)
     except ValueError as exc:
         raise AppError(422, "ROLE_BINDING_INVALID", str(exc)) from exc
+
+
+@router.post(
+    "/{workspace_id}/organization-binding",
+    response_model=WorkspaceResponse,
+)
+def bind_workspace_organization(
+    workspace_id: UUID,
+    payload: OrganizationBindingUpdate,
+    _access: None = Depends(authorize_workspace),
+    service: WorkspaceService = Depends(get_workspace_service),
+):
+    try:
+        EntityResolutionService().bind_organization(
+            workspace_id,
+            organization_id=payload.organization_id,
+        )
+        return service.get(workspace_id)
+    except ValueError as exc:
+        raise AppError(
+            422, "ORGANIZATION_BINDING_INVALID", str(exc)
+        ) from exc
 
 
 @router.post(

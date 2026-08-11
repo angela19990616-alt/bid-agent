@@ -127,8 +127,8 @@ test("keeps the consolidated V2 workflow in the client source", async () => {
   assert.match(page, /打开采购原文/);
   assert.match(page, /word-slot-highlight/);
   assert.match(page, /原模板位置/);
-  assert.match(page, /选择并建立角色绑定/);
-  assert.match(page, /需要抽查时查看/);
+  assert.match(page, /选择并同步全部关联位置/);
+  assert.match(page, /查看并逐处核对/);
   assert.doesNotMatch(page, /保存并确认/);
   assert.doesNotMatch(page, />custom_/);
   assert.match(page, /ResizeObserver/);

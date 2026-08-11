@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Any
 from uuid import UUID
@@ -10,6 +11,7 @@ from app.core.entity_resolution import (
     EntityCandidate,
     EntityResolutionContext,
     Organization,
+    OrganizationCandidate,
     Person,
     ProjectRole,
     ProjectRoleAssignment,
@@ -45,6 +47,9 @@ class EntityResolutionService:
                 if project is None:
                     raise ValueError("项目不存在，无法解析实体关系。")
                 organization = self._organization(project)
+                organization_candidates = self._organization_candidates(
+                    cursor, project
+                )
                 people = self._people(cursor, project, organization)
                 assignments = self._assignments(
                     cursor, project_id, organization
@@ -57,7 +62,62 @@ class EntityResolutionService:
             people=tuple(people),
             assignments=tuple(assignments),
             candidates_by_role=candidates,
+            organization_candidates=tuple(organization_candidates),
         )
+
+    def bind_organization(
+        self,
+        project_id: UUID,
+        *,
+        organization_id: UUID,
+    ) -> None:
+        """Bind one verified organization without guessing from its name."""
+        with connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT p.bidder_organization_id, o.id AS candidate_id
+                    FROM projects p
+                    LEFT JOIN enterprise_organizations o
+                      ON o.id = %s
+                     AND o.organization_key = p.organization_key
+                     AND o.permission_scope = 'organization_private'
+                     AND o.verification_status = 'verified'
+                    WHERE p.id = %s
+                    FOR UPDATE OF p
+                    """,
+                    (organization_id, project_id),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise ValueError("项目不存在。")
+                if row["candidate_id"] is None:
+                    raise ValueError(
+                        "所选企业不属于当前机构或尚未完成资料核验。"
+                    )
+                if row["bidder_organization_id"] == organization_id:
+                    return
+                self._clear_entity_reviews(
+                    cursor,
+                    project_id,
+                    entity_types={"Organization", "Person"},
+                )
+                cursor.execute(
+                    """
+                    UPDATE project_role_assignments
+                    SET status = 'revoked', updated_at = NOW()
+                    WHERE project_id = %s AND status = 'active'
+                    """,
+                    (project_id,),
+                )
+                cursor.execute(
+                    """
+                    UPDATE projects
+                    SET bidder_organization_id = %s, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (organization_id, project_id),
+                )
 
     def bind_role(
         self,
@@ -129,6 +189,12 @@ class EntityResolutionService:
                         """,
                         (person_id, organization_id),
                     )
+                self._clear_entity_reviews(
+                    cursor,
+                    project_id,
+                    entity_types={"Person"},
+                    roles={role.value},
+                )
 
     @staticmethod
     def _organization(row: dict[str, Any]) -> Organization | None:
@@ -148,6 +214,109 @@ class EntityResolutionService:
             source_document=location.get("document"),
             source_location=location.get("location"),
             confidence=float(row.get("confidence") or 0),
+        )
+
+    @staticmethod
+    def _organization_candidates(
+        cursor,
+        project: dict[str, Any],
+    ) -> list[OrganizationCandidate]:
+        cursor.execute(
+            """
+            SELECT o.id, o.full_name, o.source_location, o.confidence,
+                   d.filename AS source_document
+            FROM enterprise_organizations o
+            LEFT JOIN documents d ON d.id = o.source_document_id
+            WHERE o.organization_key = %s
+              AND o.permission_scope = 'organization_private'
+              AND o.verification_status = 'verified'
+            ORDER BY o.full_name
+            """,
+            (project["organization_key"],),
+        )
+        return [
+            OrganizationCandidate(
+                organization_id=row["id"],
+                name=str(row["full_name"]),
+                match_basis="同一机构企业库中的已核验投标主体候选",
+                source_document=row.get("source_document"),
+                source_location=(
+                    (row.get("source_location") or {}).get("location")
+                ),
+                confidence=float(row.get("confidence") or 0),
+            )
+            for row in cursor.fetchall()
+        ]
+
+    @staticmethod
+    def _entity_field_keys(
+        descriptor: dict[str, Any],
+        *,
+        entity_types: set[str],
+        roles: set[str] | None = None,
+    ) -> set[str]:
+        return {
+            str(field.get("field_key"))
+            for field in descriptor.get("fields") or ()
+            if field.get("field_key")
+            and str(field.get("expected_entity_type") or "") in entity_types
+            and (
+                roles is None
+                or str(field.get("expected_role") or "") in roles
+            )
+        }
+
+    @classmethod
+    def _clear_entity_reviews(
+        cls,
+        cursor,
+        project_id: UUID,
+        *,
+        entity_types: set[str],
+        roles: set[str] | None = None,
+    ) -> None:
+        """Prevent a newly selected entity from inheriting old confirmed data."""
+        cursor.execute(
+            """
+            SELECT template_descriptor, template_field_values,
+                   last_fill_report
+            FROM proposal_generation_profiles
+            WHERE project_id = %s
+            FOR UPDATE
+            """,
+            (project_id,),
+        )
+        profile = cursor.fetchone()
+        if profile is None:
+            return
+        field_keys = cls._entity_field_keys(
+            profile.get("template_descriptor") or {},
+            entity_types=entity_types,
+            roles=roles,
+        )
+        values = dict(profile.get("template_field_values") or {})
+        report = dict(profile.get("last_fill_report") or {})
+        field_reviews = dict(report.get("field_reviews") or {})
+        for field_key in field_keys:
+            values.pop(field_key, None)
+            field_reviews.pop(field_key, None)
+        report["field_reviews"] = field_reviews
+        # Variable reviews are an audit summary only. Rebuild them from the
+        # still-valid field reviews instead of risking a stale entity label.
+        report["variable_reviews"] = {}
+        cursor.execute(
+            """
+            UPDATE proposal_generation_profiles
+            SET template_field_values = %s::jsonb,
+                last_fill_report = %s::jsonb,
+                updated_at = NOW()
+            WHERE project_id = %s
+            """,
+            (
+                json.dumps(values, ensure_ascii=False),
+                json.dumps(report, ensure_ascii=False),
+                project_id,
+            ),
         )
 
     @staticmethod

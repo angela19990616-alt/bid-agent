@@ -37,6 +37,9 @@ class TemplateVariableReviewUpdate(BaseModel):
     variable_key: str = Field(min_length=1, max_length=200)
     action: Literal["confirm", "reset"]
     value: str | None = Field(default=None, min_length=1, max_length=500)
+    candidate_key: str | None = Field(
+        default=None, min_length=16, max_length=64
+    )
 
 
 class RoleBindingUpdate(BaseModel):
@@ -46,6 +49,10 @@ class RoleBindingUpdate(BaseModel):
         "SIGNATORY",
     ]
     person_id: UUID
+
+
+class OrganizationBindingUpdate(BaseModel):
+    organization_id: UUID
 
 
 class TemplateFieldDecisionResponse(BaseModel):
@@ -77,6 +84,7 @@ class TemplateFieldDecisionResponse(BaseModel):
     binding_status: str | None = None
     match_path: list[str] = Field(default_factory=list)
     entity_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    value_candidates: list[dict[str, Any]] = Field(default_factory=list)
     ontology_concept: str = "unmapped"
     display_name: str = "待识别字段"
     subject_role: str | None = None
@@ -134,6 +142,7 @@ class TemplateVariableDecisionResponse(BaseModel):
     binding_status: str | None = None
     relation_path: list[str] = Field(default_factory=list)
     entity_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    value_candidates: list[dict[str, Any]] = Field(default_factory=list)
     fill_strategy: str = "unresolved"
     personnel_rule_results: list[dict[str, Any]] = Field(default_factory=list)
     semantics_recognized: bool = True
